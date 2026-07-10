@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 600;
+export const maxDuration = 300;
 
 const API_ORIGIN = process.env.SAQUA_API_ORIGIN || "http://127.0.0.1:8000";
 const PROXY_TIMEOUT_MS = 10 * 60 * 1000;
