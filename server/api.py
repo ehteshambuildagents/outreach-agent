@@ -76,6 +76,15 @@ ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _STORE_BASE = str(Path(__file__).resolve().parent.parent / "conversations")
 
 
+@app.on_event("startup")
+def _log_oauth_configuration() -> None:
+    log.info(
+        "oauth_config provider=gmail client_id_present=%s redirect_uri_present=%s",
+        bool(os.environ.get("GOOGLE_CLIENT_ID", "").strip()),
+        bool(os.environ.get("GOOGLE_REDIRECT_URI", "").strip()),
+    )
+
+
 def _store_for(user_id: str) -> ConversationStore:
     safe = re.sub(r"[^A-Za-z0-9_-]", "", user_id or "") or "anonymous"
     return ConversationStore(directory=str(Path(_STORE_BASE) / safe))

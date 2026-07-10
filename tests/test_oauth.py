@@ -15,6 +15,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ["AUTOMATION_ENC_KEY"] = "unit-test-fixed-key"   # stable ciphertext
+os.environ["AUTOMATION_FORCE_SQLITE"] = "1"                # never hit live DB in tests
 
 from automation import crypto, oauth, redis  # noqa: E402
 
@@ -157,6 +158,20 @@ class TokenStoreTests(unittest.TestCase):
 
 
 class OAuthFlowTests(unittest.TestCase):
+    def test_gmail_uses_railway_google_env_names(self):
+        cfg = oauth.PROVIDERS["gmail"]
+        self.assertEqual(cfg["client_id_env"], "GOOGLE_CLIENT_ID")
+        self.assertEqual(cfg["client_secret_env"], "GOOGLE_CLIENT_SECRET")
+        self.assertEqual(cfg["redirect_env"], "GOOGLE_REDIRECT_URI")
+
+    def test_gmail_redirect_uri_prefers_google_redirect_uri_env(self):
+        with mock.patch.dict(
+            os.environ,
+            {"GOOGLE_REDIRECT_URI": "http://localhost:8000/api/oauth/gmail/callback"},
+        ):
+            redirect = oauth.redirect_uri("gmail", default="https://derived.example/callback")
+        self.assertEqual(redirect, "http://localhost:8000/api/oauth/gmail/callback")
+
     def test_authorize_url_google(self):
         with mock.patch.dict(os.environ, {"GOOGLE_CLIENT_ID": "gid"}):
             url = oauth.build_authorize_url("gmail", "STATE", "https://app/cb")

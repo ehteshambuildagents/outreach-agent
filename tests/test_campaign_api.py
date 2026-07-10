@@ -13,6 +13,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+os.environ["AUTOMATION_FORCE_SQLITE"] = "1"
+
 from starlette.testclient import TestClient  # noqa: E402
 
 from automation import db as automation_db  # noqa: E402

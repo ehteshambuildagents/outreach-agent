@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ["AUTOMATION_ENC_KEY"] = "unit-test-fixed-key"
+os.environ["AUTOMATION_FORCE_SQLITE"] = "1"
 
 from automation import redis  # noqa: E402
 
@@ -22,6 +23,7 @@ redis.configured = lambda: False               # in-memory coordination (state s
 
 _GOOGLE = {"GOOGLE_CLIENT_ID": "gid", "GOOGLE_CLIENT_SECRET": "gsec"}
 _MS = {"MICROSOFT_CLIENT_ID": "mid", "MICROSOFT_CLIENT_SECRET": "msec"}
+_FRONTEND = {"FRONTEND_URL": "https://saqua.io"}
 
 
 class _Base(unittest.TestCase):
@@ -51,6 +53,21 @@ class OAuthLoginTests(_Base):
         url = r.json()["url"]
         self.assertIn("accounts.google.com", url)
         self.assertIn("state=", url)
+
+    def test_gmail_login_uses_google_redirect_uri_env(self):
+        c = self._client(self._uid())
+        env = {
+            **_GOOGLE,
+            "GOOGLE_REDIRECT_URI": "https://api.saqua.io/api/oauth/gmail/callback",
+        }
+        with mock.patch.dict(os.environ, env):
+            r = c.get("/api/oauth/gmail/login")
+        self.assertEqual(r.status_code, 200)
+        query = parse_qs(urlparse(r.json()["url"]).query)
+        self.assertEqual(
+            query["redirect_uri"],
+            ["https://api.saqua.io/api/oauth/gmail/callback"],
+        )
 
     def test_login_unconfigured_503(self):
         c = self._client(self._uid())
@@ -87,7 +104,7 @@ class OAuthCallbackTests(_Base):
         user = self._uid()
         c = self._client(user)
         state = self._login_state(c, "gmail", _GOOGLE)
-        with mock.patch.dict(os.environ, _GOOGLE), \
+        with mock.patch.dict(os.environ, {**_GOOGLE, **_FRONTEND}), \
                 mock.patch("automation.oauth.exchange_code",
                            return_value={"access_token": "AT", "refresh_token": "RT",
                                          "expires_in": 3600, "scope": "gmail.send"}), \
@@ -95,7 +112,7 @@ class OAuthCallbackTests(_Base):
             r = c.get(f"/api/oauth/gmail/callback?code=abc&state={state}",
                       follow_redirects=False)
         self.assertEqual(r.status_code, 302)
-        self.assertIn("connected=gmail", r.headers["location"])
+        self.assertEqual(r.headers["location"], "https://saqua.io/settings?connected=gmail")
         # accounts now lists the connected mailbox (no token material)
         accts = c.get("/api/oauth/accounts").json()["accounts"]
         self.assertEqual(len(accts), 1)
@@ -114,20 +131,21 @@ class OAuthCallbackTests(_Base):
 
     def test_callback_denied_redirects(self):
         c = self._client(self._uid())
-        r = c.get("/api/oauth/gmail/callback?error=access_denied", follow_redirects=False)
+        with mock.patch.dict(os.environ, _FRONTEND):
+            r = c.get("/api/oauth/gmail/callback?error=access_denied", follow_redirects=False)
         self.assertEqual(r.status_code, 302)
-        self.assertIn("denied", r.headers["location"])
+        self.assertEqual(r.headers["location"], "https://saqua.io/settings?error=gmail")
 
     def test_callback_exchange_failure_redirects_error(self):
         user = self._uid()
         c = self._client(user)
         state = self._login_state(c, "gmail", _GOOGLE)
         from automation.oauth import OAuthError
-        with mock.patch.dict(os.environ, _GOOGLE), \
+        with mock.patch.dict(os.environ, {**_GOOGLE, **_FRONTEND}), \
                 mock.patch("automation.oauth.exchange_code", side_effect=OAuthError("bad")):
             r = c.get(f"/api/oauth/gmail/callback?code=x&state={state}", follow_redirects=False)
         self.assertEqual(r.status_code, 302)
-        self.assertIn("connected=error", r.headers["location"])
+        self.assertEqual(r.headers["location"], "https://saqua.io/settings?error=gmail")
 
     def test_multiple_accounts_listed(self):
         user = self._uid()

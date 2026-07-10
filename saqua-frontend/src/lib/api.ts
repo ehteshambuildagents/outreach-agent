@@ -60,6 +60,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<ApiResult<T>> {
       ...init,
       headers,
       cache: "no-store",
+      credentials: "same-origin",
     });
     if (!res.ok) {
       if (res.status === 401) {

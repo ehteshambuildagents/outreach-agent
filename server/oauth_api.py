@@ -20,6 +20,7 @@ webhook by ``clientState`` — both are duplicate-safe.
 
 import logging
 import os
+from urllib.parse import urlencode, urljoin
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
@@ -44,10 +45,26 @@ def _provider_or_404(provider: str) -> str:
 
 def _redirect_uri(request: Request, provider: str) -> str:
     """The redirect URI must be byte-identical at authorize and callback. Prefer an
-    explicit env value (what's registered with the provider); else derive from the
-    request origin."""
-    derived = f"{str(request.base_url).rstrip('/')}/api/oauth/{provider}/callback"
+    explicit env value (what's registered with the provider); else derive from
+    APP_BASE_URL (the API origin), then finally from the request origin."""
+    app_base = (os.environ.get("APP_BASE_URL") or "").strip()
+    base = app_base or str(request.base_url).rstrip("/")
+    derived = f"{base.rstrip('/')}/api/oauth/{provider}/callback"
     return oauth.redirect_uri(provider, default=derived)
+
+
+def _frontend_redirect(request: Request, path: str, params: dict[str, str]) -> str:
+    """Return a browser-facing redirect URL on FRONTEND_URL.
+
+    The provider callback lands on the API origin. After token handling, the
+    browser must return to the product frontend, not stay on api.saqua.io.
+    """
+    frontend = (os.environ.get("FRONTEND_URL") or "").strip()
+    base = frontend.rstrip("/") if frontend else str(request.base_url).rstrip("/")
+    safe_path = path if path.startswith("/") else "/settings"
+    url = urljoin(f"{base}/", safe_path.lstrip("/"))
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}{urlencode(params)}"
 
 
 def register(app, rl_read=None, rl_write=None):
@@ -66,9 +83,9 @@ def register(app, rl_read=None, rl_write=None):
         if not oauth.configured(provider):
             raise HTTPException(status_code=503,
                                 detail=f"{provider} sign-in is not configured.")
-        return_to = request.query_params.get("return_to", "/app.html")
+        return_to = request.query_params.get("return_to", "/settings")
         if not return_to.startswith("/"):        # only same-origin returns
-            return_to = "/app.html"
+            return_to = "/settings"
         state = oauth.make_state(user, provider, return_to)
         url = oauth.build_authorize_url(provider, state, _redirect_uri(request, provider))
         return {"url": url}
@@ -84,7 +101,10 @@ def register(app, rl_read=None, rl_write=None):
         _provider_or_404(provider)
         params = request.query_params
         if params.get("error"):
-            return RedirectResponse("/app.html?connected=denied", status_code=302)
+            return RedirectResponse(
+                _frontend_redirect(request, "/settings", {"error": provider}),
+                status_code=302,
+            )
         ctx = oauth.consume_state(params.get("state"))
         if ctx is None or ctx["provider"] != provider:
             raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
@@ -96,7 +116,10 @@ def register(app, rl_read=None, rl_write=None):
             email = oauth.account_email(provider, tok["access_token"])
         except oauth.OAuthError as exc:
             log.info("oauth callback failed for %s: %s", provider, exc)
-            return RedirectResponse("/app.html?connected=error", status_code=302)
+            return RedirectResponse(
+                _frontend_redirect(request, "/settings", {"error": provider}),
+                status_code=302,
+            )
         import time
         _tokens.upsert(
             user_id=ctx["user_id"], provider=provider,
@@ -105,7 +128,10 @@ def register(app, rl_read=None, rl_write=None):
             expires_at=time.time() + tok.get("expires_in", 3600),
             scopes=tok.get("scope", ""))
         log.info("connected %s account for user (email hidden in logs)", provider)
-        return RedirectResponse(f"{ctx['return_to']}?connected={provider}", status_code=302)
+        return RedirectResponse(
+            _frontend_redirect(request, ctx["return_to"], {"connected": provider}),
+            status_code=302,
+        )
 
     @app.get("/api/oauth/accounts")
     def oauth_accounts(request: Request, _=Depends(_read),
