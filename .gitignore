@@ -1,0 +1,63 @@
+# Secrets and local environment
+.env
+.env.local
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Node / frontend
+node_modules/
+package-lock.json.tmp
+.next/
+.next-dev/
+saqua-frontend/.next/
+saqua-frontend/.next-dev/
+saqua-frontend/node_modules/
+
+# Build artifacts
+dist/
+build/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local app state / generated output
+automation.db
+automation.db-wal
+automation.db-shm
+*.db
+results.txt
+eval/results.jsonl
+eval/report.md
+conversations/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

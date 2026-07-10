@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Security — Saqua</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/theme.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <div data-nav></div>
+  <div class="container page-head">
+    <span class="eyebrow reveal"><span class="dot"></span> Security</span>
+    <h1 class="reveal" style="margin-top:16px">Built to be trusted with your pipeline.</h1>
+    <p class="lede reveal" style="margin-top:18px;max-width:62ch">A plain account of how Saqua handles data and secrets. We describe only what's actually true today — no badges we haven't earned.</p>
+  </div>
+
+  <div class="container" style="padding-bottom:40px">
+    <div class="grid grid-2 reveal" style="margin-top:12px">
+      <div class="tile"><div class="ic"><i data-lucide="key-round"></i></div>
+        <h3>Secrets from the environment</h3><p>API keys are read only from environment variables (or the host's secret store) at runtime. They're never hard-coded, never shown in the UI, and never written to logs.</p></div>
+      <div class="tile"><div class="ic"><i data-lucide="lock"></i></div>
+        <h3>Encryption in transit</h3><p>All model and research traffic runs over TLS/HTTPS. Deploy behind your own HTTPS termination for end-to-end encryption to the browser.</p></div>
+      <div class="tile"><div class="ic"><i data-lucide="database"></i></div>
+        <h3>Minimal data handling</h3><p>Saqua stores conversations you create so you can return to them. It only researches public web pages you point it at — no scraping of private data.</p></div>
+      <div class="tile"><div class="ic"><i data-lucide="shield"></i></div>
+        <h3>Injection-resistant</h3><p>Researched page text is treated as untrusted data, not instructions. The model is told never to obey content found inside a page, and rendered output is escaped.</p></div>
+      <div class="tile"><div class="ic"><i data-lucide="server"></i></div>
+        <h3>Your infrastructure</h3><p>Saqua runs as a self-contained app you can host yourself, so data stays within infrastructure you control.</p></div>
+      <div class="tile"><div class="ic"><i data-lucide="brain"></i></div>
+        <h3>Responsible AI</h3><p>Every claim is grounded in a quote from a page that was actually read. When there isn't enough verified detail, Saqua declines to write rather than guess.</p></div>
+    </div>
+    <div class="prose reveal" style="margin-top:44px">
+      <h3>Responsible disclosure</h3>
+      <p>Found something? Reach us via the <a href="/contact.html">contact page</a>. We'll respond promptly and credit good-faith reports.</p>
+      <p class="faint" style="font-size:14px">We don't display SOC 2, ISO, or other certifications we don't hold. As formal attestations are completed, they'll appear here.</p>
+    </div>
+  </div>
+
+  <div data-footer></div>
+  <script src="/assets/site.js"></script>
+</body>
+</html>

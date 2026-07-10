@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Connections — Saqua</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/theme.css" />
+  <link rel="stylesheet" href="/assets/app.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Protected page: auth.js redirects to /login.html when signed out and exposes
+       window.saquaAuth (tokened requests, sign out). Only the publishable key is
+       ever in the browser; OAuth secrets stay server-side. -->
+  <script>window.saquaAuthReady = new Promise(function (r) { window.__saquaResolveAuth = r; });</script>
+  <script type="module" src="/assets/auth.js"></script>
+  <style>
+    .set-main{ overflow-y:auto; overscroll-behavior:contain; }
+    .set-wrap{ max-width:var(--w-prose); margin:0 auto; padding:var(--sp-8) var(--sp-6) var(--sp-11); }
+    .set-h1{ font-size:var(--fs-8); font-weight:var(--fw-semibold); letter-spacing:-.025em; }
+    .set-sub{ color:var(--muted); font-size:var(--fs-3); margin-top:var(--sp-2); }
+    .set-sec{ margin-top:var(--sp-7); }
+    .set-sec > h2{ font-size:var(--fs-1); letter-spacing:.1em; text-transform:uppercase; color:var(--muted);
+      font-weight:var(--fw-semibold); margin-bottom:var(--sp-3); }
+    .set-card{ background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg); overflow:hidden; }
+    .set-row{ display:flex; align-items:center; justify-content:space-between; gap:var(--sp-5); padding:var(--sp-4) var(--sp-4);
+      border-bottom:1px solid var(--border-faint); }
+    .set-row:last-child{ border-bottom:0; }
+    .set-row .l{ font-size:var(--fs-3); color:var(--text); font-weight:var(--fw-medium); }
+    .set-row .s{ font-size:var(--fs-2); color:var(--muted); margin-top:3px; }
+    .set-row .r{ flex-shrink:0; display:flex; align-items:center; gap:var(--sp-3); }
+    .status{ font-size:var(--fs-1); color:var(--muted); display:inline-flex; align-items:center; gap:var(--sp-2); }
+    .status .d{ width:7px; height:7px; border-radius:50%; background:var(--faint); }
+    .status.ok .d{ background:var(--accent); }
+    .status.warn .d{ background:var(--danger); }
+    .prov-ico{ width:34px; height:34px; border-radius:var(--r-sm); display:grid; place-items:center;
+      background:var(--raised); border:1px solid var(--border); flex-shrink:0; }
+    .prov-ico i{ width:18px; height:18px; }
+    .provhdr{ display:flex; align-items:center; gap:var(--sp-3); }
+    .acct{ display:flex; align-items:center; justify-content:space-between; gap:var(--sp-4);
+      padding:var(--sp-3) var(--sp-4); border-top:1px solid var(--border-faint); }
+    .acct .em{ font-size:var(--fs-2); color:var(--text-2); }
+    .empty{ color:var(--faint); font-size:var(--fs-2); padding:var(--sp-3) var(--sp-4); }
+  </style>
+</head>
+<body data-saqua-mode="app">
+  <div class="app" style="grid-template-columns:var(--rail-w) 1fr">
+    <aside class="rail">
+      <div class="rail-top">
+        <a class="wordmark" href="/index.html">Saqua</a>
+        <a class="newchat" href="/app.html"><i data-lucide="arrow-left"></i> Back to workspace</a>
+      </div>
+      <div class="rail-label">Automation</div>
+      <div class="rail-list">
+        <a class="thread active" href="/connections.html"><i data-lucide="plug"></i><span class="t-name">Connections</span></a>
+        <a class="thread" href="/automation.html"><i data-lucide="workflow"></i><span class="t-name">Sequences</span></a>
+        <a class="thread" href="/settings.html"><i data-lucide="settings"></i><span class="t-name">Settings</span></a>
+      </div>
+      <div class="rail-bottom">
+        <div class="rail-item" id="logoutBtn" role="button" tabindex="0"><i data-lucide="log-out"></i> Log out</div>
+      </div>
+    </aside>
+
+    <main class="work set-main">
+      <div class="set-wrap">
+        <div class="set-h1">Connections</div>
+        <div class="set-sub">Connect a mailbox so Saqua can send your sequences and stop them the moment someone replies.</div>
+
+        <div class="set-sec"><h2>Email accounts</h2>
+          <div id="providers"></div>
+        </div>
+
+        <div class="set-sec"><h2>System health</h2>
+          <div class="set-card" id="healthCard">
+            <div class="empty">Checking…</div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // ---- text-safe DOM helpers ----
+    const el = (tag, cls, txt) => { const n = document.createElement(tag); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
+    function toast(msg){
+      let w=document.querySelector('.toast-wrap'); if(!w){ w=document.createElement('div'); w.className='toast-wrap'; document.body.appendChild(w); }
+      const t=el('div','toast',msg); w.appendChild(t);
+      setTimeout(()=>{ t.classList.add('out'); setTimeout(()=>t.remove(),240); },2800);
+    }
+    async function authedFetch(url,opts){
+      opts=opts||{}; const token=window.saquaAuth?await window.saquaAuth.getToken():null;
+      const headers=Object.assign({},opts.headers||{}); if(token) headers['Authorization']='Bearer '+token;
+      const r=await fetch(url,Object.assign({},opts,{headers}));
+      if(r.status===401){ location.replace('/login.html'); throw new Error('Session expired.'); }
+      return r;
+    }
+
+    const PROVIDERS = [
+      { id:'gmail',   name:'Gmail',   sub:'Send and detect replies from your Google inbox',  icon:'mail' },
+      { id:'outlook', name:'Outlook', sub:'Send and detect replies from Microsoft 365',      icon:'inbox' },
+    ];
+
+    function fmtExpiry(a){
+      if(a.status==='reconnect_required') return 'Reconnect needed';
+      if(a.expired) return 'Access expired — will refresh on next send';
+      if(!a.expires_at) return 'Connected';
+      const mins = Math.round((a.expires_at*1000 - Date.now())/60000);
+      if(mins < 0) return 'Refreshing…';
+      if(mins < 90) return 'Token valid ~'+mins+' min';
+      return 'Token valid ~'+Math.round(mins/60)+' h';
+    }
+
+    async function connect(provider){
+      try{
+        const r = await authedFetch('/api/oauth/'+provider+'/login?return_to=/connections.html');
+        if(r.status===503){ toast(PROVIDERS.find(p=>p.id===provider).name+' sign-in isn’t configured on the server yet.'); return; }
+        const data = await r.json();
+        if(data.url){ window.location.href = data.url; }        // full-page redirect to the provider
+      }catch(e){ toast('Couldn’t start sign-in. Please try again.'); }
+    }
+    async function reconnect(provider){
+      try{
+        const r = await authedFetch('/api/oauth/'+provider+'/reconnect?return_to=/connections.html');
+        const data = await r.json(); if(data.url) window.location.href = data.url;
+      }catch(e){ toast('Couldn’t start reconnect.'); }
+    }
+    async function disconnect(provider, email){
+      try{
+        const r = await authedFetch('/api/oauth/'+provider+'/disconnect?account_email='+encodeURIComponent(email), {method:'POST'});
+        if(r.ok){ toast('Disconnected '+email); render(); }
+        else toast('Couldn’t disconnect. Please try again.');
+      }catch(e){ toast('Couldn’t disconnect.'); }
+    }
+
+    function providerCard(p, accounts){
+      const card = el('div','set-card');
+      const head = el('div','set-row');
+      const left = el('div','provhdr');
+      const ico = el('div','prov-ico'); const i=el('i'); i.setAttribute('data-lucide',p.icon); ico.appendChild(i);
+      const meta = el('div'); meta.append(el('div','l',p.name), el('div','s',p.sub));
+      left.append(ico, meta);
+      const right = el('div','r');
+      const btn = el('button','btn btn-primary', accounts.length?'Add account':'Connect');
+      btn.addEventListener('click',()=>connect(p.id));
+      right.appendChild(btn);
+      head.append(left,right); card.appendChild(head);
+
+      if(!accounts.length){ card.appendChild(el('div','empty','No account connected.')); }
+      accounts.forEach(a=>{
+        const row = el('div','acct');
+        const info = el('div');
+        info.appendChild(el('div','em', a.account_email));
+        const st = el('div','status'+(a.status==='connected'&&!a.expired?' ok':(a.status==='reconnect_required'?' warn':'')));
+        st.append(el('span','d'), el('span',null, fmtExpiry(a)));
+        info.appendChild(st);
+        const acts = el('div','r');
+        if(a.status==='reconnect_required'){ const rc=el('button','btn btn-secondary','Reconnect'); rc.addEventListener('click',()=>reconnect(p.id)); acts.appendChild(rc); }
+        const dc = el('button','btn btn-ghost','Disconnect'); dc.addEventListener('click',()=>disconnect(p.id, a.account_email)); acts.appendChild(dc);
+        row.append(info, acts);
+        card.appendChild(row);
+      });
+      return card;
+    }
+
+    function healthRow(label, obj){
+      const row = el('div','set-row');
+      const l = el('div'); l.appendChild(el('div','l',label));
+      const detail = obj.detail || obj.mode || (obj.connected_accounts!=null?obj.connected_accounts+' account(s)':'');
+      if(detail) l.appendChild(el('div','s', String(detail)));
+      const ok = ['ok','connected'].includes(obj.status);
+      const warnStates = ['error','stale','stopped','reconnect_required'];
+      const st = el('div','status'+(ok?' ok':(warnStates.includes(obj.status)?' warn':'')));
+      st.append(el('span','d'), el('span',null, obj.status));
+      const r = el('div','r'); r.appendChild(st);
+      row.append(l,r); return row;
+    }
+
+    async function render(){
+      const host = document.getElementById('providers'); host.textContent='';
+      let accounts = [];
+      try{ accounts = (await (await authedFetch('/api/oauth/accounts')).json()).accounts || []; }catch(e){}
+      PROVIDERS.forEach(p=>{
+        host.appendChild(providerCard(p, accounts.filter(a=>a.provider===p.id)));
+      });
+      if(window.lucide) lucide.createIcons();
+
+      const hc = document.getElementById('healthCard'); hc.textContent='';
+      try{
+        const h = (await (await authedFetch('/api/automation/health')).json());
+        const c = h.checks || {};
+        [['Database',c.database],['Coordination (Redis)',c.redis],['Gmail',c.gmail],['Outlook',c.outlook],['Background worker',c.worker]]
+          .forEach(([label,obj])=>{ if(obj) hc.appendChild(healthRow(label,obj)); });
+      }catch(e){ hc.appendChild(el('div','empty','Couldn’t load health.')); }
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      if (window.saquaAuthReady) { try { await window.saquaAuthReady; } catch (e) {} }
+      if (window.lucide) lucide.createIcons();
+      const logout = document.getElementById('logoutBtn');
+      logout.addEventListener('click', () => window.saquaAuth && window.saquaAuth.signOut());
+      logout.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); window.saquaAuth && window.saquaAuth.signOut(); } });
+
+      // Surface the OAuth round-trip result (?connected=gmail|error|denied).
+      const q = new URLSearchParams(location.search).get('connected');
+      if(q==='gmail'||q==='outlook') toast((q==='gmail'?'Gmail':'Outlook')+' connected.');
+      else if(q==='error') toast('Connection failed. Please try again.');
+      else if(q==='denied') toast('Connection cancelled.');
+      if(q) history.replaceState({}, '', '/connections.html');
+
+      render();
+    });
+  </script>
+</body>
+</html>

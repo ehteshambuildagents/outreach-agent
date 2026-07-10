@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Log in — Saqua</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/theme.css" />
+  <!-- Real authentication: Clerk mounts email/password + Google sign-in (and
+       sign-up) into #clerkAuth. Only the publishable key is used here. -->
+  <script type="module" src="/assets/auth.js"></script>
+</head>
+<body data-saqua-mode="signin">
+  <div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;gap:22px">
+    <a class="wordmark" href="/index.html" style="font-size:22px">Saqua</a>
+
+    <!-- Clerk's Sign-in / Sign-up component renders here. -->
+    <div id="clerkAuth"></div>
+    <div id="authFallback" class="muted center" style="font-size:13.5px;max-width:340px;display:none">
+      Couldn't load the sign-in form. Check your connection and refresh the page.
+    </div>
+
+    <p class="faint" style="font-size:12px">Protected workspace · secrets stay server-side</p>
+  </div>
+
+  <script>
+    // If Clerk hasn't rendered after a few seconds (e.g. offline), tell the user
+    // instead of leaving a blank page.
+    setTimeout(function () {
+      var c = document.getElementById('clerkAuth');
+      if (c && !c.childElementCount) {
+        var f = document.getElementById('authFallback');
+        if (f) f.style.display = 'block';
+      }
+    }, 4500);
+  </script>
+</body>
+</html>

@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Saqua — design tokens, mapped from the reference image (single source of truth).
+  Dark-only, luxury, minimal. One purple accent; everything else neutral.
+  Spacing / radius / type / motion scales reuse the product's existing system.
+*/
+:root {
+  --font-inter: "Inter";
+  /* Surfaces — near-black canvas up a precise neutral ramp */
+  --bg: #08080b;            /* app canvas */
+  --panel: #0c0c10;         /* sidebar / sunken rails */
+  --card: #131318;          /* cards / surfaces */
+  --card-2: #17171e;        /* hover / raised surface */
+  --raised: #1e1e26;        /* overlay controls, inputs */
+
+  /* Hairline borders (white at fixed opacities) */
+  --border-faint: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  /* Ink ramp */
+  --text: #ececef;
+  --text-2: #9a9ba4;
+  --muted: #6e6f79;
+  --faint: #4c4d56;
+
+  /* Accent — the single hue (purple), used only for signal */
+  --accent: #7c5cff;
+  --accent-hi: #9277ff;
+  --accent-soft: rgba(124, 92, 255, 0.12);
+  --accent-line: rgba(124, 92, 255, 0.32);
+  --accent-ink: #ffffff;
+
+  /* Status */
+  --success: #3ecf8e;
+  --success-soft: rgba(62, 207, 142, 0.12);
+  --warn: #f5a623;
+  --warn-soft: rgba(245, 166, 35, 0.13);
+  --danger: #f2777a;
+  --danger-soft: rgba(242, 119, 122, 0.12);
+
+  --nav-h: 60px;
+  --rail-w: 232px;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: #fff;
+}
+
+/* Custom scrollbar — quiet, premium */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+  background-clip: content-box;
+}
+
+@layer components {
+  /* Card — the base surface for the whole app */
+  .surface {
+    @apply rounded-lg border border-border bg-card;
+  }
+
+  /* Soft radial purple glow used behind the landing hero + AI orbs */
+  .accent-glow {
+    background: radial-gradient(
+      60% 60% at 50% 40%,
+      rgba(124, 92, 255, 0.35) 0%,
+      rgba(124, 92, 255, 0.08) 45%,
+      transparent 70%
+    );
+  }
+
+  /* Loading skeleton shimmer */
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-white/[0.04];
+  }
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+    animation: shimmer 1.4s infinite;
+    transform: translateX(-100%);
+  }
+
+  /* Grid backdrop for the workflow canvas */
+  .canvas-grid {
+    background-color: var(--bg);
+    background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+}

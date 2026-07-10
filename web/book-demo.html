@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Book a demo — Saqua</title>
+  <meta name="description" content="See Saqua research a company you know and draft a grounded email, live." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/theme.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <div data-nav></div>
+
+  <section class="section" style="padding-top:80px">
+    <div class="container split" style="gap:64px">
+      <div style="max-width:460px">
+        <span class="eyebrow reveal"><span class="dot"></span> Book a demo</span>
+        <h1 class="reveal" style="font-size:clamp(32px,4vw,46px);margin:18px 0 0">See it work on a company you know.</h1>
+        <p class="lede reveal" style="margin:20px 0 0">
+          Bring a real prospect. We'll watch Saqua research them and draft an email in
+          real time, then walk through how your team would use it. 20 minutes, no slides.
+        </p>
+        <div class="reveal" style="margin-top:34px;display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;gap:12px;align-items:flex-start"><i data-lucide="search" style="color:var(--accent);margin-top:3px"></i>
+            <div><div style="font-weight:500">Live research</div><p class="muted" style="font-size:14px">On a company you pick.</p></div></div>
+          <div style="display:flex;gap:12px;align-items:flex-start"><i data-lucide="pen-line" style="color:var(--accent);margin-top:3px"></i>
+            <div><div style="font-weight:500">A real draft</div><p class="muted" style="font-size:14px">Grounded in what it found — nothing invented.</p></div></div>
+          <div style="display:flex;gap:12px;align-items:flex-start"><i data-lucide="workflow" style="color:var(--accent);margin-top:3px"></i>
+            <div><div style="font-weight:500">Your workflow</div><p class="muted" style="font-size:14px">How it fits how your team already works.</p></div></div>
+        </div>
+      </div>
+
+      <div class="card card-pad reveal" id="formCard" style="padding:30px">
+        <form id="demoForm" novalidate>
+          <div style="display:flex;flex-direction:column;gap:18px">
+            <div class="grid grid-2" style="gap:16px">
+              <div class="field"><label class="label" for="name">Name</label>
+                <input class="input" id="name" name="name" placeholder="Jane Doe" required /></div>
+              <div class="field"><label class="label" for="company">Company</label>
+                <input class="input" id="company" name="company" placeholder="Acme Inc." required /></div>
+            </div>
+            <div class="field"><label class="label" for="email">Work email</label>
+              <input class="input" id="email" name="email" type="email" placeholder="jane@acme.com" required /></div>
+            <div class="field"><label class="label" for="team">Team size</label>
+              <select class="select" id="team" name="team">
+                <option value="">Select…</option><option>Just me</option><option>2–10</option>
+                <option>11–50</option><option>51–200</option><option>200+</option>
+              </select></div>
+            <div class="field"><label class="label" for="message">What would you like to see?</label>
+              <textarea class="textarea" id="message" name="message" placeholder="We do outbound to Series A founders and want it to sound human…"></textarea></div>
+            <button class="btn btn-primary btn-lg btn-block" type="submit">Book demo</button>
+            <p class="faint center" style="font-size:12.5px">We'll only use this to schedule your demo.</p>
+          </div>
+        </form>
+      </div>
+
+      <div class="card card-pad reveal" id="confirmCard" style="padding:44px 30px;text-align:center;display:none">
+        <div style="width:52px;height:52px;border-radius:50%;border:1px solid var(--accent-line);background:var(--accent-soft);display:flex;align-items:center;justify-content:center;margin:0 auto 20px">
+          <i data-lucide="check" style="color:var(--accent);width:24px;height:24px"></i></div>
+        <h3 style="font-size:22px">You're on the list.</h3>
+        <p class="muted" style="margin:12px auto 0;max-width:34ch">Thanks — we've got your request and will reach out to schedule. In the meantime, you can try Saqua yourself.</p>
+        <div style="display:flex;gap:10px;justify-content:center;margin-top:26px">
+          <a class="btn btn-secondary" href="/index.html">Back home</a>
+          <a class="btn btn-primary" href="/app.html">Try Saqua</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div data-footer></div>
+  <script src="/assets/site.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const form = document.getElementById('demoForm');
+      form && form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (!form.checkValidity()){ form.reportValidity(); return; }
+        document.getElementById('formCard').style.display = 'none';
+        const c = document.getElementById('confirmCard');
+        c.style.display = 'block';
+        if (window.lucide) lucide.createIcons();
+        c.scrollIntoView({behavior:'smooth', block:'center'});
+      });
+    });
+  </script>
+</body>
+</html>

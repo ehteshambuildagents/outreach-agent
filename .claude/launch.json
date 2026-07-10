@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "saqua",
+      "autoPort": false,
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "server.api:app", "--host", "127.0.0.1", "--port", "8613"],
+      "port": 8613
+    }
+  ]
+}

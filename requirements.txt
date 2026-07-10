@@ -1,0 +1,11 @@
+requests==2.34.2
+beautifulsoup4==4.15.0
+anthropic==0.112.0
+python-dotenv==1.2.2
+playwright==1.60.0
+streamlit==1.58.0
+fastapi==0.115.6
+uvicorn==0.49.0
+PyJWT[crypto]==2.10.1
+cryptography==49.0.0      # at-rest encryption of OAuth tokens (automation/crypto.py)
+psycopg[binary]==3.3.4    # Postgres driver (automation/db.py); used when DATABASE_URL is set

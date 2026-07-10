@@ -1,0 +1,14 @@
+# Streamlit theme + server defaults (safe to commit — no secrets here).
+# These base tokens match chat_app.py's CSS so the widgets Streamlit renders
+# itself (focus rings, dividers, spinners) stay on-palette. All detailed
+# styling lives in chat_app.py.
+[theme]
+base = "dark"
+primaryColor = "#6D5EF7"
+backgroundColor = "#0B0C0E"
+secondaryBackgroundColor = "#111217"
+textColor = "#ECEEF1"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false

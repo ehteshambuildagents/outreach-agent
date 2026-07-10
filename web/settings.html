@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Settings — Saqua</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/theme.css" />
+  <link rel="stylesheet" href="/assets/app.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Protected page: auth.js redirects to /login.html if signed out and exposes
+       window.saquaAuth (sign out, delete account, tokened requests). -->
+  <script>window.saquaAuthReady = new Promise(function (r) { window.__saquaResolveAuth = r; });</script>
+  <script type="module" src="/assets/auth.js"></script>
+  <style>
+    .set-main{ overflow-y:auto; overscroll-behavior:contain; }
+    .set-wrap{ max-width:var(--w-prose); margin:0 auto; padding:var(--sp-8) var(--sp-6) var(--sp-11); }
+    .set-h1{ font-size:var(--fs-8); font-weight:var(--fw-semibold); letter-spacing:-.025em; }
+    .set-sec{ margin-top:var(--sp-7); }
+    .set-sec > h2{ font-size:var(--fs-1); letter-spacing:.1em; text-transform:uppercase; color:var(--muted);
+      font-weight:var(--fw-semibold); margin-bottom:var(--sp-3); }
+    .set-card{ background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg); overflow:hidden; }
+    .set-row{ display:flex; align-items:center; justify-content:space-between; gap:var(--sp-5); padding:var(--sp-4) var(--sp-4);
+      border-bottom:1px solid var(--border-faint); }
+    .set-row:last-child{ border-bottom:0; }
+    .set-row .l{ font-size:var(--fs-3); color:var(--text); font-weight:var(--fw-medium); }
+    .set-row .s{ font-size:var(--fs-2); color:var(--muted); margin-top:3px; }
+    .set-row .r{ flex-shrink:0; display:flex; align-items:center; gap:var(--sp-3); }
+    .toggle{ width:40px; height:23px; border-radius:var(--r-full); background:var(--raised); border:1px solid var(--border);
+      position:relative; cursor:pointer; transition:background var(--dur-2) var(--ease); }
+    .toggle::after{ content:""; position:absolute; top:2px; left:2px; width:17px; height:17px; border-radius:50%;
+      background:var(--text-2); transition:transform var(--dur-2) var(--ease); }
+    .toggle.on{ background:var(--accent-soft); border-color:var(--accent-line); }
+    .toggle.on::after{ transform:translateX(17px); background:var(--accent); }
+    .status{ font-size:var(--fs-1); color:var(--muted); display:inline-flex; align-items:center; gap:var(--sp-2); }
+    .status .d{ width:7px; height:7px; border-radius:50%; background:var(--accent); }
+    .danger{ border-color:var(--danger-line); }
+    .segwrap{ display:flex; gap:6px; flex-wrap:wrap; margin-top:var(--sp-5); }
+    .seg{ font-size:var(--fs-2); color:var(--text-2); padding:7px var(--sp-3); border:1px solid var(--border); border-radius:var(--r-sm); cursor:pointer; }
+    .seg.active{ background:var(--w-05); color:var(--text); border-color:var(--border-strong); }
+  </style>
+</head>
+<body data-saqua-mode="app">
+  <div class="app" style="grid-template-columns:var(--rail-w) 1fr">
+    <aside class="rail">
+      <div class="rail-top">
+        <a class="wordmark" href="/index.html">Saqua</a>
+        <a class="newchat" href="/app.html"><i data-lucide="arrow-left"></i> Back to workspace</a>
+      </div>
+      <div class="rail-label">Settings</div>
+      <div class="rail-list">
+        <a class="thread active"><i data-lucide="user"></i><span class="t-name">Profile</span></a>
+        <a class="thread"><i data-lucide="briefcase"></i><span class="t-name">Workspace</span></a>
+        <a class="thread"><i data-lucide="key-round"></i><span class="t-name">API keys</span></a>
+        <a class="thread"><i data-lucide="blocks"></i><span class="t-name">Integrations</span></a>
+        <a class="thread"><i data-lucide="credit-card"></i><span class="t-name">Billing</span></a>
+        <a class="thread"><i data-lucide="palette"></i><span class="t-name">Theme</span></a>
+      </div>
+      <div class="rail-bottom">
+        <div class="rail-item" id="logoutBtn" role="button" tabindex="0"><i data-lucide="log-out"></i> Log out</div>
+      </div>
+    </aside>
+
+    <main class="work set-main">
+      <div class="set-wrap">
+        <div class="set-h1">Settings</div>
+
+        <div class="set-sec"><h2>Profile</h2>
+          <div class="set-card">
+            <div class="set-row"><div><div class="l">Name</div><div class="s">Shown in your workspace</div></div>
+              <div class="r"><input class="input" style="width:220px" value="" placeholder="Your name" /></div></div>
+            <div class="set-row"><div><div class="l">Work email</div><div class="s">Used to sign in</div></div>
+              <div class="r"><input class="input" style="width:220px" value="" placeholder="you@company.com" /></div></div>
+          </div>
+        </div>
+
+        <div class="set-sec"><h2>Workspace</h2>
+          <div class="set-card">
+            <div class="set-row"><div><div class="l">Workspace name</div><div class="s">Your team's space</div></div>
+              <div class="r"><input class="input" style="width:220px" placeholder="Acme GTM" /></div></div>
+            <div class="set-row"><div><div class="l">Default sender voice</div><div class="s">How drafts sound by default</div></div>
+              <div class="r"><select class="select" style="width:200px"><option>Founder</option><option>Concise</option><option>Warm</option></select></div></div>
+          </div>
+        </div>
+
+        <div class="set-sec"><h2>API keys</h2>
+          <div class="set-card">
+            <div class="set-row"><div><div class="l">Model provider</div><div class="s">Read from the server environment — never shown or logged</div></div>
+              <div class="r"><span class="status"><span class="d"></span> Connected</span></div></div>
+            <div class="set-row"><div><div class="l">Company search</div><div class="s">Optional web search for name → website</div></div>
+              <div class="r"><span class="status" style="color:var(--faint)"><span class="d" style="background:var(--faint)"></span> Not configured</span></div></div>
+          </div>
+        </div>
+
+        <div class="set-sec"><h2>Integrations</h2>
+          <div class="set-card">
+            <div class="set-row"><div><div class="l">Email accounts</div><div class="s">Connect Gmail or Outlook to send sequences from your inbox</div></div>
+              <div class="r"><a class="btn btn-secondary" href="/connections.html">Manage connections</a></div></div>
+            <div class="set-row"><div><div class="l">Sequences</div><div class="s">Monitor automated outreach and delivery</div></div>
+              <div class="r"><a class="btn btn-secondary" href="/automation.html">Open dashboard</a></div></div>
+            <div class="set-row"><div><div class="l">LinkedIn outreach</div><div class="s">Draft and send on LinkedIn</div></div>
+              <div class="r"><span class="badge">Coming soon</span></div></div>
+            <div class="set-row"><div><div class="l">CRM sync</div><div class="s">Push contacts and activity</div></div>
+              <div class="r"><span class="badge">Coming soon</span></div></div>
+          </div>
+        </div>
+
+        <div class="set-sec"><h2>Billing</h2>
+          <div class="set-card">
+            <div class="set-row"><div><div class="l">Plan</div><div class="s">You're on the free Starter plan</div></div>
+              <div class="r"><a class="btn btn-secondary" href="/pricing.html">View plans</a></div></div>
+          </div>
+        </div>
+
+        <div class="set-sec"><h2>Theme</h2>
+          <div class="set-card">
+            <div class="set-row"><div><div class="l">Appearance</div><div class="s">Saqua is designed for dark</div></div>
+              <div class="r"><div class="segwrap" style="margin:0"><span class="seg active">Dark</span><span class="seg">System</span></div></div></div>
+            <div class="set-row"><div><div class="l">Reduce motion</div><div class="s">Minimize animations</div></div>
+              <div class="r"><div class="toggle" data-toggle></div></div></div>
+          </div>
+        </div>
+
+        <div class="set-sec"><h2 style="color:var(--danger)">Danger zone</h2>
+          <div class="set-card danger">
+            <div class="set-row"><div><div class="l">Delete all conversations</div><div class="s">Permanently remove your research history</div></div>
+              <div class="r"><button class="btn btn-danger" id="delConvBtn">Delete</button></div></div>
+            <div class="set-row"><div><div class="l">Delete account</div><div class="s">This cannot be undone</div></div>
+              <div class="r"><button class="btn btn-danger" id="delAcctBtn">Delete account</button></div></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // Minimal confirm modal + toast reusing the design-system classes.
+    function confirmModal(o){
+      const scrim=document.createElement('div'); scrim.className='modal-scrim';
+      const m=document.createElement('div'); m.className='modal';
+      const h=document.createElement('h3'); h.textContent=o.title; m.appendChild(h);
+      if(o.body){ const p=document.createElement('p'); p.textContent=o.body; m.appendChild(p); }
+      const a=document.createElement('div'); a.className='modal-actions';
+      const c=document.createElement('button'); c.className='btn btn-ghost'; c.textContent='Cancel';
+      const ok=document.createElement('button'); ok.className='btn '+(o.danger?'btn-danger':'btn-primary'); ok.textContent=o.confirmLabel||'Confirm';
+      const close=()=>scrim.remove(); c.onclick=close;
+      ok.onclick=()=>{ close(); o.onConfirm&&o.onConfirm(); };
+      scrim.addEventListener('click',e=>{ if(e.target===scrim) close(); });
+      a.append(c,ok); m.appendChild(a); scrim.appendChild(m); document.body.appendChild(scrim); ok.focus();
+    }
+    function toast(msg){
+      let w=document.querySelector('.toast-wrap'); if(!w){ w=document.createElement('div'); w.className='toast-wrap'; document.body.appendChild(w); }
+      const t=document.createElement('div'); t.className='toast'; t.textContent=msg; w.appendChild(t);
+      setTimeout(()=>{ t.classList.add('out'); setTimeout(()=>t.remove(),240); },2600);
+    }
+    async function authedFetch(url,opts){
+      opts=opts||{}; const token=window.saquaAuth?await window.saquaAuth.getToken():null;
+      const headers=Object.assign({},opts.headers||{}); if(token) headers['Authorization']='Bearer '+token;
+      const r=await fetch(url,Object.assign({},opts,{headers}));
+      if(r.status===401){ location.replace('/login.html'); throw new Error('Session expired.'); }
+      return r;
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      // Gate: wait for Clerk to confirm a session (auth.js redirects if signed out).
+      if (window.saquaAuthReady) { try { await window.saquaAuthReady; } catch (e) {} }
+      if (window.lucide) lucide.createIcons();
+
+      document.querySelectorAll('[data-toggle]').forEach(t => t.addEventListener('click', () => t.classList.toggle('on')));
+      document.querySelectorAll('.segwrap .seg').forEach(s => s.addEventListener('click', () => {
+        s.parentElement.querySelectorAll('.seg').forEach(x => x.classList.remove('active')); s.classList.add('active');
+      }));
+
+      const logout = document.getElementById('logoutBtn');
+      logout.addEventListener('click', () => window.saquaAuth && window.saquaAuth.signOut());
+      logout.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); window.saquaAuth && window.saquaAuth.signOut(); } });
+
+      document.getElementById('delConvBtn').addEventListener('click', () => confirmModal({
+        title:'Delete all conversations?', body:'This permanently removes every thread and its research. This can’t be undone.',
+        confirmLabel:'Delete all', danger:true,
+        onConfirm: async () => {
+          try {
+            const data = await (await authedFetch('/api/conversations')).json();
+            await Promise.all((data.conversations||[]).map(c => authedFetch('/api/conversations/'+c.id, {method:'DELETE'})));
+            toast('All conversations deleted.');
+          } catch (e) { toast('Couldn’t delete conversations. Please try again.'); }
+        }
+      }));
+
+      document.getElementById('delAcctBtn').addEventListener('click', () => confirmModal({
+        title:'Delete your account?', body:'This permanently deletes your Saqua account and signs you out. This cannot be undone.',
+        confirmLabel:'Delete account', danger:true,
+        onConfirm: async () => {
+          try { await window.saquaAuth.deleteAccount(); }
+          catch (e) { toast('Account deletion isn’t enabled for this workspace yet.'); }
+        }
+      }));
+    });
+  </script>
+</body>
+</html>

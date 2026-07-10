@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sequences — Saqua</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/theme.css" />
+  <link rel="stylesheet" href="/assets/app.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>window.saquaAuthReady = new Promise(function (r) { window.__saquaResolveAuth = r; });</script>
+  <script type="module" src="/assets/auth.js"></script>
+  <style>
+    .set-main{ overflow-y:auto; overscroll-behavior:contain; }
+    .set-wrap{ max-width:var(--w-wide, 960px); margin:0 auto; padding:var(--sp-8) var(--sp-6) var(--sp-11); }
+    .set-h1{ font-size:var(--fs-8); font-weight:var(--fw-semibold); letter-spacing:-.025em; }
+    .set-sub{ color:var(--muted); font-size:var(--fs-3); margin-top:var(--sp-2); }
+    .set-sec{ margin-top:var(--sp-7); }
+    .set-sec > h2{ font-size:var(--fs-1); letter-spacing:.1em; text-transform:uppercase; color:var(--muted);
+      font-weight:var(--fw-semibold); margin-bottom:var(--sp-3); display:flex; justify-content:space-between; }
+    .set-card{ background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg); overflow:hidden; }
+    .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:var(--sp-3); }
+    .stat{ background:var(--card); border:1px solid var(--border); border-radius:var(--r-md); padding:var(--sp-4); }
+    .stat .n{ font-size:var(--fs-7); font-weight:var(--fw-semibold); letter-spacing:-.02em; }
+    .stat .k{ font-size:var(--fs-1); color:var(--muted); text-transform:uppercase; letter-spacing:.08em; margin-top:4px; }
+    .row{ display:flex; align-items:center; justify-content:space-between; gap:var(--sp-4);
+      padding:var(--sp-3) var(--sp-4); border-bottom:1px solid var(--border-faint); }
+    .row:last-child{ border-bottom:0; }
+    .row .co{ font-size:var(--fs-3); color:var(--text); font-weight:var(--fw-medium); }
+    .row .meta{ font-size:var(--fs-1); color:var(--muted); margin-top:3px; }
+    .pill{ font-size:var(--fs-1); padding:3px 9px; border-radius:var(--r-full); border:1px solid var(--border);
+      color:var(--text-2); letter-spacing:.02em; white-space:nowrap; }
+    .pill.live{ color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft); }
+    .pill.warn{ color:var(--danger); border-color:var(--danger-line); }
+    .empty{ color:var(--faint); font-size:var(--fs-2); padding:var(--sp-4); text-align:center; }
+    .refresh{ font-size:var(--fs-1); color:var(--muted); cursor:pointer; text-transform:none; letter-spacing:0; }
+  </style>
+</head>
+<body data-saqua-mode="app">
+  <div class="app" style="grid-template-columns:var(--rail-w) 1fr">
+    <aside class="rail">
+      <div class="rail-top">
+        <a class="wordmark" href="/index.html">Saqua</a>
+        <a class="newchat" href="/app.html"><i data-lucide="arrow-left"></i> Back to workspace</a>
+      </div>
+      <div class="rail-label">Automation</div>
+      <div class="rail-list">
+        <a class="thread" href="/connections.html"><i data-lucide="plug"></i><span class="t-name">Connections</span></a>
+        <a class="thread active" href="/automation.html"><i data-lucide="workflow"></i><span class="t-name">Sequences</span></a>
+        <a class="thread" href="/settings.html"><i data-lucide="settings"></i><span class="t-name">Settings</span></a>
+      </div>
+      <div class="rail-bottom">
+        <div class="rail-item" id="logoutBtn" role="button" tabindex="0"><i data-lucide="log-out"></i> Log out</div>
+      </div>
+    </aside>
+
+    <main class="work set-main">
+      <div class="set-wrap">
+        <div class="set-h1">Sequences</div>
+        <div class="set-sub">Every automated outreach sequence you're running, with live status. A reply stops a sequence automatically.</div>
+
+        <div class="set-sec"><h2>Pipeline <span class="refresh" id="refreshBtn">Refresh</span></h2>
+          <div class="grid" id="stats"></div>
+        </div>
+
+        <div class="set-sec"><h2>Delivery metrics</h2>
+          <div class="grid" id="metrics"></div>
+        </div>
+
+        <div class="set-sec"><h2>Active &amp; recent</h2>
+          <div class="set-card" id="workflows"><div class="empty">Loading…</div></div>
+        </div>
+
+        <div class="set-sec"><h2>Dead letter — needs attention</h2>
+          <div class="set-card" id="deadletter"><div class="empty">None 🎉</div></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const el = (tag, cls, txt) => { const n=document.createElement(tag); if(cls) n.className=cls; if(txt!=null) n.textContent=txt; return n; };
+    function toast(msg){
+      let w=document.querySelector('.toast-wrap'); if(!w){ w=el('div','toast-wrap'); document.body.appendChild(w); }
+      const t=el('div','toast',msg); w.appendChild(t); setTimeout(()=>{ t.classList.add('out'); setTimeout(()=>t.remove(),240); },2600);
+    }
+    async function authedFetch(url,opts){
+      opts=opts||{}; const token=window.saquaAuth?await window.saquaAuth.getToken():null;
+      const headers=Object.assign({},opts.headers||{}); if(token) headers['Authorization']='Bearer '+token;
+      const r=await fetch(url,Object.assign({},opts,{headers}));
+      if(r.status===401){ location.replace('/login.html'); throw new Error('Session expired.'); }
+      return r;
+    }
+
+    const STATE_KEYS = ['QUEUED','SENDING','SENT','WAITING','COMPLETED','STOPPED','FAILED','CANCELLED','PAUSED'];
+    const LIVE = new Set(['QUEUED','SENDING','SENT','WAITING','FOLLOW_UP','CHECKING_REPLY']);
+    const stateClass = s => s==='FAILED'||s==='CANCELLED' ? 'warn' : (LIVE.has(s) ? 'live' : '');
+
+    function renderStats(byState){
+      const host = document.getElementById('stats'); host.textContent='';
+      STATE_KEYS.forEach(k=>{
+        const c = el('div','stat'); c.append(el('div','n', String(byState[k]||0)), el('div','k', k.toLowerCase()));
+        host.appendChild(c);
+      });
+    }
+    function renderMetrics(m){
+      const host = document.getElementById('metrics'); host.textContent='';
+      const cards = [
+        ['Sent', m.emails_sent], ['Replies', m.replies],
+        ['Reply rate', ((m.reply_rate||0)*100).toFixed(0)+'%'],
+        ['Stop rate', ((m.stop_rate||0)*100).toFixed(0)+'%'],
+        ['Retries', m.retry_count||m.retries||0], ['Failed', m.failed_sends||0],
+        ['Avg latency', Math.round(m.avg_send_latency_ms||0)+'ms'],
+        ['OAuth errors', m.oauth_failures||0],
+      ];
+      cards.forEach(([k,v])=>{ const c=el('div','stat'); c.append(el('div','n', String(v)), el('div','k', k)); host.appendChild(c); });
+    }
+
+    function wfRow(w, {admin}={}){
+      const row = el('div','row');
+      const left = el('div');
+      left.appendChild(el('div','co', (w.company||w.to)|| 'Sequence'));
+      const parts = [];
+      parts.push('to '+(w.to||'—'));
+      parts.push('step '+((w.current_step??0)+1)+'/'+(w.total_steps||0));
+      if(w.provider) parts.push(w.provider);
+      if(w.last_error) parts.push('error: '+w.last_error);
+      left.appendChild(el('div','meta', parts.join(' · ')));
+      const right = el('div','r'); right.style.display='flex'; right.style.gap='8px'; right.style.alignItems='center';
+      right.appendChild(el('span','pill '+stateClass(w.state), w.state));
+      if(admin){
+        const fr = el('button','btn btn-secondary','Force retry'); fr.addEventListener('click',()=>act(w.id,'force-retry'));
+        const fc = el('button','btn btn-ghost','Force complete'); fc.addEventListener('click',()=>act(w.id,'force-complete'));
+        right.append(fr, fc);
+      } else if(!['COMPLETED','STOPPED','CANCELLED'].includes(w.state)){
+        const cx = el('button','btn btn-ghost','Cancel'); cx.addEventListener('click',()=>act(w.id,'cancel')); right.appendChild(cx);
+      }
+      row.append(left, right); return row;
+    }
+
+    async function act(id, action){
+      try{
+        const r = await authedFetch('/api/automation/workflows/'+id+'/'+action, {method:'POST'});
+        if(r.ok){ toast('Done: '+action.replace('-',' ')); load(); }
+        else toast('Action failed.');
+      }catch(e){ toast('Action failed.'); }
+    }
+
+    async function load(){
+      try{
+        const mres = await (await authedFetch('/api/automation/metrics')).json();
+        renderStats(mres.by_state||{}); renderMetrics(mres.metrics||{});
+      }catch(e){}
+      try{
+        const list = (await (await authedFetch('/api/automation/workflows')).json()).workflows||[];
+        const host = document.getElementById('workflows'); host.textContent='';
+        if(!list.length){ host.appendChild(el('div','empty','No sequences yet. Ask the assistant to “start a sequence” from a draft.')); }
+        else list.forEach(w=>host.appendChild(wfRow(w)));
+      }catch(e){}
+      try{
+        const dl = (await (await authedFetch('/api/automation/dead-letter')).json()).workflows||[];
+        const host = document.getElementById('deadletter'); host.textContent='';
+        if(!dl.length){ host.appendChild(el('div','empty','None 🎉')); }
+        else dl.forEach(w=>host.appendChild(wfRow(w,{admin:true})));
+      }catch(e){}
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      if (window.saquaAuthReady) { try { await window.saquaAuthReady; } catch (e) {} }
+      if (window.lucide) lucide.createIcons();
+      const logout = document.getElementById('logoutBtn');
+      logout.addEventListener('click', () => window.saquaAuth && window.saquaAuth.signOut());
+      logout.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); window.saquaAuth && window.saquaAuth.signOut(); } });
+      document.getElementById('refreshBtn').addEventListener('click', load);
+      load();
+    });
+  </script>
+</body>
+</html>

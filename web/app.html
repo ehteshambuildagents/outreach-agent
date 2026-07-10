@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Saqua — Workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/theme.css" />
+  <link rel="stylesheet" href="/assets/app.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Auth gate: app.js waits on saquaAuthReady, which auth.js resolves once a
+       Clerk session is confirmed (or redirects to /login.html if signed out). -->
+  <script>window.saquaAuthReady = new Promise(function (r) { window.__saquaResolveAuth = r; });</script>
+  <script type="module" src="/assets/auth.js"></script>
+</head>
+<body data-saqua-mode="app">
+  <div class="rail-scrim" id="scrim"></div>
+  <div class="app">
+    <!-- LEFT RAIL -->
+    <aside class="rail" id="rail">
+      <div class="rail-top">
+        <a class="wordmark" href="/index.html">Saqua</a>
+        <button class="newchat" id="newChat"><i data-lucide="plus"></i> New chat</button>
+      </div>
+      <div class="rail-label">Recent</div>
+      <div class="rail-list" id="threadList"></div>
+      <div class="rail-bottom">
+        <div class="rail-user" id="userButton" style="padding:4px 8px 6px"></div>
+        <a class="rail-item" href="/settings.html"><i data-lucide="settings"></i> Settings</a>
+      </div>
+    </aside>
+
+    <!-- CENTER -->
+    <main class="work">
+      <div class="app-mobile-bar">
+        <button class="icon-btn" id="menuBtn" aria-label="Menu"><i data-lucide="menu"></i></button>
+        <span class="wordmark">Saqua</span>
+      </div>
+      <div class="topbar">
+        <div class="topbar-title" id="topTitle">New chat</div>
+        <div class="topbar-actions">
+          <button class="pill-btn" id="shareBtn"><i data-lucide="share"></i> Share</button>
+          <button class="icon-btn" id="moreBtn" aria-label="More"><i data-lucide="ellipsis"></i></button>
+        </div>
+      </div>
+
+      <div class="stream" id="stream">
+        <div class="stream-inner" id="streamInner"></div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <div class="composer-box">
+            <textarea id="input" rows="1" placeholder="Enter a company name or website…"></textarea>
+            <div class="composer-row">
+              <div class="composer-tools">
+                <button class="ctool" id="attachBtn" aria-label="Attach"><i data-lucide="plus"></i></button>
+                <button class="ctool" id="toolsBtn"><i data-lucide="sliders-horizontal"></i> Tools</button>
+              </div>
+              <button class="send" id="send" aria-label="Send" disabled><i data-lucide="arrow-up"></i></button>
+            </div>
+          </div>
+          <div class="composer-hint">Enter to send · Shift + Enter for a new line</div>
+        </div>
+      </div>
+    </main>
+
+    <!-- RIGHT PANEL -->
+    <aside class="side" id="side"></aside>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

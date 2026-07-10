@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contact — Saqua</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/theme.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <div data-nav></div>
+  <section class="section" style="padding-top:80px">
+    <div class="container split" style="max-width:960px">
+      <div>
+        <span class="eyebrow reveal"><span class="dot"></span> Contact</span>
+        <h1 class="reveal" style="font-size:clamp(30px,3.6vw,42px);margin-top:16px">Talk to us.</h1>
+        <p class="lede reveal" style="margin-top:16px">Questions, security reports, or partnership ideas — we read everything.</p>
+        <div class="reveal" style="margin-top:28px;display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;gap:12px;align-items:center"><i data-lucide="mail" style="color:var(--muted)"></i><span class="muted">Use the form and we'll route it to the right place.</span></div>
+          <div style="display:flex;gap:12px;align-items:center"><i data-lucide="shield" style="color:var(--muted)"></i><span class="muted">Security issues: mark your message “security”.</span></div>
+        </div>
+      </div>
+      <div class="card card-pad reveal" id="cForm">
+        <form id="contactForm" style="display:flex;flex-direction:column;gap:16px">
+          <div class="field"><label class="label" for="cn">Name</label><input class="input" id="cn" required placeholder="Jane Doe" /></div>
+          <div class="field"><label class="label" for="ce">Email</label><input class="input" id="ce" type="email" required placeholder="jane@acme.com" /></div>
+          <div class="field"><label class="label" for="cm">Message</label><textarea class="textarea" id="cm" required placeholder="How can we help?"></textarea></div>
+          <button class="btn btn-primary btn-block" type="submit">Send message</button>
+        </form>
+        <div id="cDone" style="display:none;text-align:center;padding:14px 0">
+          <i data-lucide="check" style="color:var(--accent);width:26px;height:26px;margin:0 auto 10px"></i>
+          <p style="color:var(--text)">Thanks — we'll be in touch.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+  <div data-footer></div>
+  <script src="/assets/site.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const f = document.getElementById('contactForm');
+      f.addEventListener('submit', (e) => { e.preventDefault();
+        if (!f.checkValidity()){ f.reportValidity(); return; }
+        f.style.display='none'; const d=document.getElementById('cDone'); d.style.display='block';
+        if (window.lucide) lucide.createIcons(); });
+    });
+  </script>
+</body>
+</html>
