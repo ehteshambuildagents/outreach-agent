@@ -1,8 +1,10 @@
 import { SignIn } from "@clerk/nextjs";
+import { AuthDiagnostics } from "@/components/auth/auth-diagnostics";
 
 export default function SignInPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-bg px-4 py-10 text-text">
+      <AuthDiagnostics />
       <div className="accent-glow fixed inset-0 opacity-35" />
       <div className="relative">
         <SignIn
