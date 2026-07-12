@@ -22,7 +22,15 @@ export default clerkMiddleware(
     // Clerk's bot protection uses Cloudflare Turnstile. Let Clerk inject the
     // CSP directives it needs, including challenges.cloudflare.com for scripts
     // and frames, so CAPTCHA does not depend on an external edge header.
-    contentSecurityPolicy: {},
+    contentSecurityPolicy: {
+      directives: {
+        "connect-src": ["https://challenges.cloudflare.com"],
+        "font-src": ["self", "https://fonts.gstatic.com"],
+        "frame-src": ["https://challenges.cloudflare.com"],
+        "script-src": ["https://challenges.cloudflare.com"],
+        "style-src": ["https://fonts.googleapis.com"],
+      },
+    },
   },
 );
 

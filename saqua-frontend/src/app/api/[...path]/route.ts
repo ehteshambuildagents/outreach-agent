@@ -27,6 +27,18 @@ function backendUrl(path: string[], search: string): string {
   return `${origin}/api/${suffix}${search}`;
 }
 
+function logSafeUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.search) {
+      parsed.search = "?<redacted>";
+    }
+    return parsed.toString();
+  } catch {
+    return url.split("?")[0] + (url.includes("?") ? "?<redacted>" : "");
+  }
+}
+
 function logProxy(level: "info" | "error", event: string, data: Record<string, unknown>) {
   const payload = JSON.stringify({ event, ...data });
   if (level === "error") {
@@ -64,7 +76,7 @@ async function proxy(request: NextRequest, { params }: { params: { path: string[
     trace_id: traceId,
     method: request.method,
     path,
-    target_url: url,
+    target_url: logSafeUrl(url),
     request_body_bytes: body?.byteLength || 0,
   });
 
@@ -93,7 +105,7 @@ async function proxy(request: NextRequest, { params }: { params: { path: string[
       trace_id: traceId,
       method: request.method,
       path,
-      target_url: url,
+      target_url: logSafeUrl(url),
       backend_status: upstream.status,
       backend_content_type: contentType,
       backend_response_bytes: responseBytes.byteLength,
@@ -112,7 +124,7 @@ async function proxy(request: NextRequest, { params }: { params: { path: string[
       trace_id: traceId,
       method: request.method,
       path,
-      target_url: url,
+      target_url: logSafeUrl(url),
       request_body_bytes: body?.byteLength || 0,
       duration_ms: durationMs,
       reason,
