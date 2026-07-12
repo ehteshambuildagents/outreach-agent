@@ -1,3 +1,4 @@
+import { Analytics } from "@vercel/analytics/next";
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
@@ -26,7 +27,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             rel="stylesheet"
           />
         </head>
-        <body className="min-h-screen bg-bg font-sans text-text antialiased">{children}</body>
+       <body className="min-h-screen bg-bg font-sans text-text antialiased">
+  {children}
+  <Analytics />
+</body>
       </html>
     </ClerkProvider>
   );
