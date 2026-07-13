@@ -18,6 +18,8 @@ TEXT = "text"
 EMAIL = "email"
 RESEARCH = "research"
 NOTICE = "notice"
+PROSPECTS = "prospects"     # a scored, browsable list (collapsed preview + expand)
+CHANNEL = "channel"         # a safe-channel draft (X/Reddit/HN reply, contact form)
 
 
 @dataclass

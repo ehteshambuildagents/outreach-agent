@@ -36,8 +36,10 @@ from agents.writer import (
     write_variations,
 )
 from chat import resolver
+from chat import research_pipeline
 from chat.context import intel_digest, research_digest
-from chat.models import EMAIL, RESEARCH, Message
+from chat.models import CHANNEL, EMAIL, PROSPECTS, RESEARCH, Message
+from agents import channels
 from discovery import engine as discovery_engine
 from discovery.models import DiscoveryQuery
 from research import orchestrator
@@ -982,6 +984,136 @@ def _tool_find_prospects(inp: dict, conversation) -> ToolResult:
         workspace_updates={"prospects_last": [p.public() for p in result.prospects]})
 
 
+# ──────────────────────────────────────────────────────────────────────
+#  Tool: research prospects (chat-directed Discovery -> Research -> Qualify)
+#  A NEW ENTRY POINT into the existing pipeline: turn a plain-language ask into
+#  a scored, browsable list, valuable on its own — no campaign/email required.
+# ──────────────────────────────────────────────────────────────────────
+def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
+    user_id = getattr(conversation, "_user_id", None)
+    owner = user_id or conversation.id
+    companies = [c for c in (inp.get("companies") or []) if str(c).strip()]
+    query = str(inp.get("query") or "").strip()
+    limit = inp.get("limit")
+
+    has_more = False
+    if companies:
+        leads = companies
+    elif query:
+        status, leads, reason, has_more = research_pipeline.discover_leads(
+            owner, query, limit=limit)
+        if status == "error":
+            return ToolResult(summary="Couldn't find prospects: " + reason)
+        if status == "empty" or not leads:
+            return ToolResult(summary=(reason or "No matching companies found.")
+                              + " Tell the user plainly and offer to adjust the criteria.")
+    else:
+        return ToolResult(summary="Ask the user WHO to find (an ICP like 'B2B SaaS "
+                          "founders hiring an SDR') or WHICH companies to evaluate "
+                          "(a list of names or websites).")
+
+    icp = conversation.workspace.get("icp")
+    result = research_pipeline.research_and_qualify(
+        leads, icp=icp, limit=limit, user_id=user_id)
+    if result.get("status") != "ok" or not result.get("prospects"):
+        return ToolResult(summary=(result.get("reason")
+                          or "Couldn't research those prospects just now."))
+
+    prospects = result["prospects"]
+    card = Message(role="assistant", kind=PROSPECTS,
+                   content=f"Researched and scored {result['researched']} of "
+                           f"{result['count']} companies.",
+                   data={"prospects": prospects, "summary": result["summary"],
+                         "run_id": result["run_id"]})
+    lines = [f"  {i}. {e['company']} — {e['score']}/100 "
+             f"({e['recommendation'] or e['status']}) — {e['preview']}"
+             for i, e in enumerate(prospects, 1)]
+    more = " More candidates are available for a bigger batch." if has_more else ""
+    return ToolResult(
+        summary=("Researched a scored prospect list (shown as an interactive card: "
+                 "each row is a one-line preview that expands to the full research "
+                 "trail, sources, and score reasoning). Present it as a ranked list "
+                 "using ONLY the previews below — do NOT paste the full research, the "
+                 "card already holds it. Call out the top one or two, and offer to "
+                 "expand any, or draft an email / X reply / Reddit / HN / contact-form "
+                 "message for one. Nothing sends or posts automatically." + more
+                 + "\n" + "\n".join(lines)),
+        message=card,
+        workspace_updates={"prospects_researched": {
+            "run_id": result["run_id"], "prospects": prospects,
+            "summary": result["summary"]}})
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  Tool: draft a SAFE-CHANNEL message (X/Reddit/HN public reply, contact form).
+#  Produces a DRAFT only — it never posts. Every draft goes through the shared
+#  AI-voice detector + the (channel-aware) Guard before being shown as ready.
+# ──────────────────────────────────────────────────────────────────────
+def _tool_draft_channel(inp: dict, conversation) -> ToolResult:
+    channel = str(inp.get("channel") or "").strip().lower()
+    if channel not in channels.CHANNELS:
+        return ToolResult(summary="Ask the user which channel this is for: an X "
+                          "reply, a Reddit comment, an HN / Indie Hackers reply, or "
+                          "a contact-form message.")
+    context = str(inp.get("context") or "").strip() or None
+    guidance = str(inp.get("guidance") or "").strip() or None
+    data = _channel_research_data(conversation, inp.get("company"))
+
+    try:
+        result = channels.draft(channel, context=context, research_data=data,
+                                guidance=guidance)
+    except Exception:  # noqa: BLE001 - channels.draft shouldn't raise, but be safe
+        return ToolResult(summary=f"The {channel} draft couldn't be generated just now.")
+
+    status = result.get("status")
+    label = result.get("label") or channel
+    if status == "skip":
+        return ToolResult(summary=result.get("reason") or f"Need more to draft the {label}.")
+    if status == "error":
+        return ToolResult(summary=f"Couldn't draft the {label}: "
+                          + (result.get("reason") or "unknown reason") + ".")
+    if status == "needs_review":
+        issues = "; ".join((result.get("problems") or [])[:3])
+        return ToolResult(
+            summary=(f"Drafted a {label}, but it still trips a quality/safety check, "
+                     "so it is NOT ready to post. Tell the user plainly and offer to "
+                     "tighten it" + (f" (issues: {issues})" if issues else "") + "."),
+            workspace_updates={"channel_draft": result})
+
+    card = Message(role="assistant", kind=CHANNEL,
+                   content=f"Drafted a {label} ({result.get('char_count')} chars).",
+                   data={"channel": channel, "label": label,
+                         "body": result.get("body"),
+                         "char_count": result.get("char_count"),
+                         "company": result.get("company"), "posted": False,
+                         "guard": (result.get("guard") or {}).get("decision")})
+    return ToolResult(
+        summary=(f"Drafted a {label} (shown as a card); it passed the AI-voice and "
+                 "send-safety checks. Give a one-line note, do NOT paste the whole "
+                 "draft. Make clear it's a DRAFT the user posts MANUALLY — nothing is "
+                 "posted automatically from here."),
+        message=card, workspace_updates={"channel_draft": result})
+
+
+def _channel_research_data(conversation, company) -> dict:
+    """Best available research to ground a channel draft: the current thread's
+    research, else a researched prospect matching `company`, else just the name."""
+    ws = conversation.workspace
+    research = ws.get("research")
+    if isinstance(research, dict) and isinstance(research.get("data"), dict):
+        return research["data"]
+    label = str(company or "").strip().lower()
+    pr = ws.get("prospects_researched") or {}
+    for e in pr.get("prospects", []):
+        if label and label in str(e.get("company", "")).lower():
+            hook = next((f.get("value") for f in e.get("detail", {}).get("findings", [])
+                         if f.get("label") == "Hook"), "")
+            return {"company_name": e.get("company"),
+                    "what_they_do": (e.get("detail") or {}).get("what_they_do"),
+                    "unique_hook": hook}
+    return {"company_name": company} if company else {}
+
+
 REGISTRY = {}
 
 
@@ -1204,6 +1336,69 @@ register(Tool(
         "required": [],
     },
     handler=_tool_find_prospects,
+))
+
+register(Tool(
+    name="research_prospects",
+    description=(
+        "Find AND evaluate prospects in one step, straight from a plain-language "
+        "ask, returning a SCORED, browsable list (research summary + fit score + the "
+        "reason for it, per company). Use this when the user wants a shortlist "
+        "without starting a campaign — e.g. 'find SaaS founders who posted about "
+        "hiring an SDR and tell me who's worth it', or 'here's my list of 20 "
+        "companies, which are worth pursuing?'. Pass `query` for an ICP to DISCOVER "
+        "companies, OR `companies` (names/websites) to evaluate a list the user "
+        "already has. It runs Discovery -> Research -> Qualification (reusing those "
+        "agents) and returns a card; it does NOT write or send anything. Bounded per "
+        "run — offer to run more if they want a bigger batch. Prefer this over "
+        "find_prospects when the user wants the companies SCORED/evaluated, not just "
+        "listed."),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string",
+                      "description": "ICP / who to find, e.g. 'B2B SaaS founders "
+                                     "hiring an SDR this week'. Use for discovery."},
+            "companies": {"type": "array", "items": {"type": "string"},
+                          "description": "A list of company names or websites the "
+                                         "user already has, to research + score."},
+            "limit": {"type": "integer",
+                      "description": "How many to research this run (bounded)."},
+        },
+        "required": [],
+    },
+    handler=_tool_research_prospects,
+))
+
+register(Tool(
+    name="draft_channel_message",
+    description=(
+        "Draft a PUBLIC-channel message (never a DM): an X (Twitter) reply, a Reddit "
+        "comment, a Hacker News / Indie Hackers reply, or a website contact-form "
+        "message. Use when the user wants to respond to a specific post/thread or "
+        "reach a company through its contact form instead of cold email. The reply "
+        "channels (x_reply, reddit_comment, hn_reply) REQUIRE the target post/thread "
+        "text in `context`. It writes in the right format/length for the channel and "
+        "passes the same AI-voice + send-safety checks as email. It only DRAFTS — it "
+        "never posts; the user posts manually. Pass `company` to ground it in a "
+        "researched prospect."),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "channel": {"type": "string",
+                        "enum": ["x_reply", "reddit_comment", "hn_reply", "contact_form"],
+                        "description": "Which public channel to draft for."},
+            "context": {"type": "string",
+                        "description": "The post/thread being replied to (required "
+                                       "for x_reply, reddit_comment, hn_reply)."},
+            "company": {"type": "string",
+                        "description": "Company this is about, to reuse its research."},
+            "guidance": {"type": "string",
+                         "description": "Optional steer, e.g. 'more technical', 'shorter'."},
+        },
+        "required": ["channel"],
+    },
+    handler=_tool_draft_channel,
 ))
 
 for _name, _desc in (

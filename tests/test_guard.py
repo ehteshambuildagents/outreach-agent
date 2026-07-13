@@ -166,6 +166,63 @@ class DeliverabilityGuardTests(unittest.TestCase):
         self.assertTrue(any("clich" in i.lower() for i in f.issues))
         self.assertGreater(f.score, 0)
 
+    def test_stacked_ai_phrases_block(self):
+        # Three or more banned AI phrases = a generated template; never send.
+        f = deliverability.evaluate({"email": {
+            "subject": "Partnership Opportunity",
+            "body": ("I hope this email finds you well. I wanted to reach out about "
+                     "our cutting-edge solution to unlock seamless growth."),
+            "to": "ceo@acme.com", "company": "Acme"}})
+        self.assertTrue(f.block)
+        self.assertTrue(any("machine-generated" in i.lower() for i in f.issues))
+
+    def test_ai_sentence_structure_raises_risk(self):
+        # Tricolon + antithesis + participial tail, but no banned wording: not an
+        # auto-block on its own, yet it must add real risk over a clean email.
+        struct_body = ("You already have great traction. Our platform delivers "
+                       "speed, scale, and precision, ensuring results. It's not "
+                       "just a tool, but a partner for your team.")
+        f = deliverability.evaluate({"email": {"subject": "idea", "body": struct_body,
+            "to": "x@acme.com", "company": "Acme"}})
+        self.assertGreater(f.score, deliverability.evaluate(_clean_email()).score)
+        self.assertTrue(any("ai sentence structure" in i.lower() for i in f.issues))
+
+    def test_ai_phrasing_plus_structure_blocks(self):
+        # Banned wording AND robotic structure together = a blast; block it.
+        f = deliverability.evaluate({"email": {
+            "subject": "Growth",
+            "body": ("We leverage cutting-edge tech to deliver speed, scale, and "
+                     "precision, ensuring seamless value for your business."),
+            "to": "ceo@acme.com", "company": "Acme"}})
+        self.assertTrue(f.block)
+
+    # ── channel awareness (email-only rules relax; shared checks stay) ──
+    def test_short_public_reply_not_blocked_on_email_rules(self):
+        # No subject, no recipient, ~20 words: fine for an X reply, would fail email.
+        body = ("congrats on the first SDR hire. handing them real accounts to "
+                "research on day one shortened ramp for us a lot.")
+        f = deliverability.evaluate({"channel": "x_reply",
+            "email": {"channel": "x_reply", "body": body, "company": "Acme"}})
+        self.assertFalse(f.block)
+
+    def test_same_short_body_still_blocks_as_email(self):
+        f = deliverability.evaluate({"email": {"subject": "hi",
+            "body": "congrats on the SDR hire.", "to": "x@acme.com", "company": "Acme"}})
+        self.assertTrue(f.block)                       # email 25-word floor still applies
+
+    def test_channel_overlength_flagged(self):
+        f = deliverability.evaluate({"channel": "x_reply",
+            "email": {"channel": "x_reply", "body": "word " * 120, "company": "Acme"}})
+        self.assertTrue(any("too long for x_reply" in i.lower() for i in f.issues))
+
+    def test_channel_shares_ai_voice_and_banned_checks(self):
+        # The SAME banned/AI-voice logic applies on a public channel.
+        f = deliverability.evaluate({"channel": "reddit_comment", "email": {
+            "channel": "reddit_comment", "company": "Acme",
+            "body": ("I hope this finds you well. Our cutting-edge solution can "
+                     "leverage synergies to unlock seamless growth.")}})
+        self.assertTrue(f.block)
+
     def test_attachments_and_links_penalized(self):
         f = deliverability.evaluate({"email": {"subject": "hi", "body": _GOOD_BODY,
             "to": "karri@linear.app", "company": "Linear",

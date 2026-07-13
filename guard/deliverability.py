@@ -14,6 +14,7 @@ there is one source of truth for "what sounds like AISpam".
 import difflib
 import re
 
+from agents import ai_voice
 from agents.writer_prompt import BANNED_MATCH
 from agents.writer_review import _SPAMMY, _spam_risk
 from guard.models import Findings, as_bool, as_float, as_int, get
@@ -43,6 +44,10 @@ _REPLY_POOR = 0.01
 _NEW_MAILBOX_DAYS = 30
 _MIN_SEQUENCE_SPACING_DAYS = 2
 _MIN_USEFUL_WORDS = 25
+# Per-channel character ceilings (X hard-caps; the rest are "don't ramble").
+_CHANNEL_CHAR_LIMITS = {
+    "x_reply": 280, "reddit_comment": 1500, "hn_reply": 1000, "contact_form": 900,
+}
 _GENERIC_OUTBOUND_RE = re.compile(
     r"\b(?:i\s+help|we\s+help)\s+(?:founders|teams|companies)\s+"
     r"(?:get|land|generate|book|find|reach)",
@@ -71,6 +76,13 @@ def evaluate(inp: dict) -> Findings:
     words = body.split()
     n_words = len(words)
     has_email_artifact = isinstance(email, dict) and bool(email)
+    # Channel awareness: the SAME AI-voice / banned-phrase / spam logic applies to
+    # every channel, but email-only hard rules (a subject, a recipient, a 25-word
+    # floor) don't fit a public reply or a contact-form message. Default is
+    # "email", so an input with no channel behaves exactly as before.
+    channel = str(get(email, "channel", default="")
+                  or get(inp, "channel", default="") or "email").strip().lower()
+    is_email = channel in ("", "email")
 
     # ── send-state safety (hard blocks) ──
     prospect = get(inp, "prospect", default={}) or {}
@@ -97,12 +109,12 @@ def evaluate(inp: dict) -> Findings:
 
     _pipeline_blocks(inp, f)
 
-    if has_email_artifact and not subject.strip():
+    if has_email_artifact and is_email and not subject.strip():
         f.block_now("Empty email subject.", "Generate a real subject before sending.")
     if has_email_artifact and not body.strip():
-        f.block_now("Empty email body.", "Add real content before sending.")
+        f.block_now(f"Empty {channel} message.", "Add real content before posting.")
         return f
-    if has_email_artifact:
+    if has_email_artifact and is_email:
         if not str(get(email, "to", default="") or get(inp, "recipient", default="")).strip():
             f.block_now("Missing recipient.", "Add a verified recipient before sending.")
         if not _company_present(inp):
@@ -111,8 +123,14 @@ def evaluate(inp: dict) -> Findings:
 
     writer_status = str(get(inp, "writer", "status", default="") or "").lower()
     if writer_status in ("error", "skip"):
-        f.block_now("Writer did not produce a sendable email.",
+        f.block_now("Writer did not produce a sendable draft.",
                     "Fix the writer/research issue before attempting to send.")
+
+    # Channel length ceiling (X caps replies; the others just shouldn't ramble).
+    limit = _CHANNEL_CHAR_LIMITS.get(channel)
+    if limit and len(body) > limit:
+        f.add(18, f"Too long for {channel} ({len(body)}/{limit} chars).",
+              f"Trim the {channel} message to fit its limit.")
 
     if not body.strip():
         return f
@@ -145,13 +163,40 @@ def evaluate(inp: dict) -> Findings:
         f.add(10, "Buzzword overload: " + ", ".join(buzz[:5]) + ".",
               "Say it plainly; buzzwords read as AI/marketing filler.")
 
-    # ── AI / template tells ──
+    # ── AI / template tells (wording AND sentence structure) ──
+    # Two independent signals, one shared source of truth (agents.ai_voice): the
+    # banned-PHRASE list (vocabulary) and the STRUCTURAL scan (tricolon, "not X
+    # but Y", participial tails, metronome rhythm). Either alone raises risk;
+    # stacked wording, or wording + robotic structure together, is a generated
+    # blast and is BLOCKED — the "no AI voice" rule enforced in code, not just the
+    # writer's prompt (which a pasted or hand-edited draft never passed through).
     ai_hits = [readable for readable, stem in BANNED_MATCH if stem in text.lower()]
-    if len(ai_hits) >= 2:
+    struct = ai_voice.scan(body)
+    struct_labels = [label for label, _ in struct]
+    struct_penalty = min(40, sum(w for _, w in struct))
+
+    if len(ai_hits) >= 3:
+        f.block_now(
+            "Reads machine-generated — stacked AI/template phrases ("
+            + ", ".join(ai_hits[:4]) + ").",
+            "Rewrite it in a real human voice; copy this templated won't get replies.")
+    elif len(ai_hits) >= 2:
         f.add(16, "Reads AI-generated (" + ", ".join(ai_hits[:4]) + ").",
               "Make it sound like a person typed it once, not a template.")
     elif ai_hits:
         f.add(6, "A phrase that reads AI-generated: " + ai_hits[0] + ".")
+
+    if struct:
+        f.add(struct_penalty,
+              "AI sentence structure: " + "; ".join(struct_labels[:3]) + ".",
+              "Vary sentence length; drop the rule-of-three and 'not X but Y', "
+              "and cut the '..., ensuring ...' clause tails.")
+        # Templated WORDING plus robotic STRUCTURE = a generated blast. Block.
+        if ai_hits and struct_penalty >= 20:
+            f.block_now(
+                "Reads like a generated template (AI phrasing plus AI sentence "
+                "structure).",
+                "Don't send as-is — rewrite it so a person clearly wrote it.")
 
     # ── formatting / shouting ──
     caps = [w for w in re.findall(r"[A-Za-z]{3,}", text) if w.isupper()]
@@ -189,9 +234,14 @@ def evaluate(inp: dict) -> Findings:
                   "Prefer plain text; a low text-to-HTML ratio looks like spam.")
 
     # ── length / readability ──
-    if n_words < _MIN_USEFUL_WORDS:
+    # The 25-word floor is an EMAIL rule (a one-line cold email reads like spam);
+    # a public reply or contact-form note is legitimately short, so only block on
+    # near-empty there.
+    if is_email and n_words < _MIN_USEFUL_WORDS:
         f.block_now(f"Body is below the minimum useful length ({n_words} words).",
                     "Write a complete, specific email before sending.")
+    elif not is_email and n_words < 3:
+        f.block_now("Message is essentially empty.", "Write a real message before posting.")
     elif n_words > 200:
         f.add(10, f"Long body ({n_words} words); cold emails should be short.",
               "Cut it under ~120 words.")

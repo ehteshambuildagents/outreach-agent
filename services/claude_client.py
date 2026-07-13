@@ -47,6 +47,8 @@ _RETRYABLE_ERRORS = (
 
 _QUALITY_STAGES = {
     "writer",
+    "writer_refine",
+    "channel_writer",
     "email_writer",
     "subject_writer",
     "sequence_writer",

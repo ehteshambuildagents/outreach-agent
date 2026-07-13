@@ -15,6 +15,7 @@ grounded draft from being returned.
 
 import re
 
+from agents import ai_voice
 from agents.writer_validator import _strip_ps
 
 # Score below this (out of 100) => "weak" => try to improve within the repair
@@ -180,6 +181,18 @@ def review(draft: dict, data: dict) -> Review:
             issues.append("Too many sentences start with the same word; vary the "
                           "sentence openings so it doesn't read like a list.")
     dims["naturalness"] = natural if len(lengths) >= 3 else 0.8
+
+    # 4b) Sentence SHAPE — tricolon, "not X but Y", and participial tails are the
+    #     AI tells that survive a paraphrase and still read machine-written.
+    #     (Metronome rhythm + repeated openers are already handled in #4 above.)
+    shape = ai_voice.shape_tells(body)
+    if shape:
+        dims["structure"] = 0.4 if len(shape) >= 2 else 0.6
+        for tell in shape[:2]:
+            issues.append("Drop the " + tell + "; a real person wouldn't shape a "
+                          "sentence that way — say it plainly.")
+    else:
+        dims["structure"] = 1.0
 
     # 5) Readability — sane length band (soft; validator owns hard caps).
     if 25 <= n_words <= 105:

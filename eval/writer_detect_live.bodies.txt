@@ -1,0 +1,20 @@
+Uku,  Bootstrapped this whole way. No VC. That's not the usual story.  I work on getting founders' cold emails actually opened and replied to, without spending an hour per note. Curious if outbound is even something you bother with given how the growth has gone, or if it's mostly word of mouth at this point?
+
+Karri,  built for high-velocity teams. That phrase stuck with me.  Quick reason I'm writing, I help founders get replies on cold outbound without spending hours personalizing each note.  Want me to send the specific one I'd write for Linear?
+
+Hey, replacing scattered docs and wikis with one workspace is a pretty specific promise to make. Most companies can't say that cleanly. I do outbound emails for founders, the kind that actually sound like a person wrote them instead of a template. Want me to send the one I'd write for Notion specifically?
+
+Hey, multiplayer editing in the browser still feels like the thing that got Figma noticed early. Different problem than what I'm chewing on. But figured I'd ask anyway. I've been messing with a way to get cold outbound replies without hand writing every note. Are you the one dealing with outbound at Figma, or way off base with that guess?
+
+Hey Guillermo,  frontend cloud built for shipping fast on the edge. That's the whole pitch and it's a good one.  Most outbound to devs reads like a template, so it gets skipped. I've been working on the part that takes forever, writing a note that actually shows you looked, without burning an hour per prospect. Want me to send the one I'd write for Vercel?
+
+Hi Paul, open-source Firebase alternative on Postgres. Developers seem to actually want that.  Quick reason I'm writing, most outbound to devs reads like spray-and-pray and gets ignored. What I built moves that to a handful of emails that actually fit the person reading them, skips the manual grind of writing each one from scratch.  Are you even the right person for something like this, or does someone else run outbound?
+
+Retool, the drag-and-drop builder for internal tools is the kind of thing that's hard to explain but easy to sell once someone sees it work.  Which is exactly the problem with cold outbound to eng teams, generic notes just bounce off. I've been working on getting replies without writing every email by hand.  Want me to send the version I'd actually write for Retool?
+
+Hi Eric, spend management that actually saves companies money is a hard sell to make sound different every time, most outbound in that space reads identical after the second sentence. I've been working on the part where the first note to a finance lead sounds like someone actually thought about them, not a blast. Want me to send over the example I'd write for Ramp so you can see if it's even useful?
+
+Global payroll and hiring for remote teams, across that many countries at once. That's a lot of surface area.  Most outbound aimed at HR teams like yours reads like it was blasted to a thousand companies at once, because it usually was. I've been working on the shift from that to a handful of emails that actually reference something real about the company.  Not sure if outbound to HR teams is even your world or someone else's over there. Who'd be the right person to ask?
+
+Airtable, spreadsheet and database in one, so ops teams build their own apps. Kind of a wild niche to nail.  Outbound to a userbase that varied has to feel less like a blast, more like someone actually looked. I work on the part that keeps it specific without eating your whole afternoon.  Is reaching ops teams at scale something you're wrestling with right now?
+

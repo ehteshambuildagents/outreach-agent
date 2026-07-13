@@ -197,12 +197,25 @@ def _allowed_terms(data: dict) -> list:
         "unique_hook", "recent_focus", "what_they_do",
         "their_mission_or_why", "competitive_positioning"))
     evidence += " " + " ".join(str(item) for item in data.get("additional_hooks") or [])
-    # "transform" is a useful anti-AI-writing ban, but it is also common in real
-    # company positioning. If that stem is present in grounded research, don't
-    # fail a draft solely for using the same grounded term.
-    if "transform" in evidence.lower():
-        terms.append("stem:transform")
+    # Several banned words ("transform", "seamless", "unlock" ...) are useful
+    # anti-AI-writing bans BUT are also common in real company positioning. When a
+    # stem is genuinely present in the grounded research, don't fail a draft solely
+    # for echoing the company's OWN language — that's specificity, not filler. (The
+    # pure connective/hedge tells, e.g. "that said" or "no worries", are never
+    # legitimate grounding, so they stay hard-banned regardless.)
+    low_evidence = evidence.lower()
+    for stem in _GROUNDED_EXEMPTIBLE_STEMS:
+        if stem in low_evidence:
+            terms.append("stem:" + stem)
     return terms
+
+
+# Banned stems that MAY legitimately appear in a company's grounded positioning;
+# exempted only when actually present in that company's research (see above).
+_GROUNDED_EXEMPTIBLE_STEMS = (
+    "transform", "seamless", "unlock", "cutting-edg", "best-in-class",
+    "world-class",
+)
 
 
 # ── Sentence counting ──────────────────────────────────────────────────

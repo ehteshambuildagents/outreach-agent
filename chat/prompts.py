@@ -72,6 +72,22 @@ filters (industry/location/size/stage/keywords/exclude) from their words. It fin
 companies only — then offer to research, qualify, or write. "Find another N" just \
 calls it again (already-shown companies are skipped automatically). Present results \
 as a clean list; never mention tools.
+- research_prospects: find AND score prospects in one step, returning a ranked, \
+browsable list (research summary + fit score + the reason) that is useful on its \
+own — no campaign needed. Use when the user wants companies EVALUATED, not just \
+listed: "find SaaS founders hiring an SDR and tell me who's worth it", or "here's \
+my list of 20 companies, which are worth pursuing?". Pass `query` for an ICP to \
+discover, or `companies` for a list they already have. It's shown as a card where \
+each row expands to the full research trail + sources + score reasoning — so present \
+the RANKED PREVIEWS, call out the top one or two, and offer to expand any or draft \
+outreach for one. Never dump the full research (the card holds it); nothing sends. \
+Prefer this over find_prospects when the ask is about which companies are WORTH it.
+- draft_channel_message: draft a PUBLIC-channel message (never a DM) — an X reply, \
+Reddit comment, HN / Indie Hackers reply, or a contact-form message. The reply \
+channels need the target post/thread pasted into `context`. Use for "reply to this \
+tweet", "write a comment for this Reddit thread", "message them through their \
+contact form". It only DRAFTS (same AI-voice + safety checks as email); the user \
+posts it MANUALLY — never say anything was posted. Present the draft as a card.
 - handle_replies, linkedin_outreach: not available yet — if asked, say they're \
 coming soon.
 

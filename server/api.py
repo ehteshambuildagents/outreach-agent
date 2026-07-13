@@ -183,7 +183,41 @@ def _message_public(m) -> dict:
             safe = {k: data.get(k) for k in
                     ("company", "what_they_do", "research_score", "pages_crawled",
                      "hooks", "stop_reason")}
+        elif m.kind == "prospects":
+            # A scored, browsable list: each prospect carries a collapsed preview
+            # and an expandable detail trail (already curated product output).
+            safe = {"summary": data.get("summary"),
+                    "prospects": [_prospect_public(p)
+                                  for p in (data.get("prospects") or [])]}
+        elif m.kind == "channel":
+            safe = {k: data.get(k) for k in
+                    ("channel", "label", "body", "char_count", "company",
+                     "posted", "guard")}
     return {"role": m.role, "kind": m.kind, "content": m.content or "", "data": safe}
+
+
+def _prospect_public(p: dict) -> dict:
+    """One researched prospect for the browse card — the fields the UI renders
+    (preview shown collapsed; detail revealed on expand). No prompts/internals."""
+    p = p if isinstance(p, dict) else {}
+    detail = p.get("detail") if isinstance(p.get("detail"), dict) else {}
+    return {
+        "company": p.get("company"),
+        "website": p.get("website"),
+        "status": p.get("status"),
+        "score": p.get("score"),
+        "fit_level": p.get("fit_level"),
+        "priority": p.get("priority"),
+        "recommendation": p.get("recommendation"),
+        "recommended": p.get("recommended"),
+        "score_reason": p.get("score_reason"),
+        "preview": p.get("preview"),
+        "actions": p.get("actions") or [],
+        "detail": {k: detail.get(k) for k in
+                   ("what_they_do", "research_confidence", "findings", "sources",
+                    "score_breakdown", "strongest_signals", "missing_information",
+                    "disqualifiers", "why_discovered")},
+    }
 
 
 def _panel_public(workspace: dict) -> dict:

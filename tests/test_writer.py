@@ -411,6 +411,104 @@ class ValidatorUnitTests(unittest.TestCase):
         for phrase in ["no rush", "no pressure", "happy to revisit", "whenever works"]:
             self.assertIn(phrase, wv.find_banned(f"sounds good, {phrase} on this", []))
 
+    def test_new_ai_tells_are_banned(self):
+        # Stock openers, empty transitions, buzzwords, and hedged closers the
+        # overhaul added must all be caught by the shared list.
+        for sample in ("that said, let's talk", "with that in mind, hi",
+                       "on that note, reaching out", "i noticed your site",
+                       "i came across your work", "we supercharge growth",
+                       "unlock your potential", "a seamless experience",
+                       "our cutting-edge platform", "no worries if not",
+                       "I'd love to hear your thoughts", "looking forward to connecting",
+                       # round-2 additions
+                       "so, is it a or b? Which is it?", "a or b? Which one?",
+                       "this could potentially help"):
+            self.assertTrue(wv.find_banned(sample, []), sample)
+
+    def test_grounded_buzzword_is_exempted_but_not_otherwise(self):
+        # A company whose real positioning IS "seamless": echoing the grounded
+        # term must not hard-fail, yet the same word is banned when ungrounded.
+        data = {"company_name": "PayFlow", "unique_hook": "seamless payments API"}
+        allowed = wv._allowed_terms(data)
+        self.assertIn("stem:seamless", allowed)
+        self.assertEqual(wv.find_banned("saw your seamless payments work", allowed), [])
+        self.assertTrue(wv.find_banned("a seamless experience", []))
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  Self-critique refine pass (the gated, bounded second model call)
+# ──────────────────────────────────────────────────────────────────────
+# A HARD-valid draft that still carries a structural tell (a tricolon) so the
+# deterministic gate fires the editor pass. Grounded + a contraction keep it from
+# being "weak" (so no regeneration muddies the call count).
+_TRICOLON_DRAFT = draft(
+    "quick idea",
+    "Hey Jane, saw Acme cut picking time 40 percent in the pilot. We're faster, "
+    "cheaper, and smarter. Worth a quick look?")
+# The editor's cleaned rewrite — tell gone, still grounded.
+_CLEANED_DRAFT = draft(
+    "quick idea",
+    "Hey Jane, saw Acme cut picking time 40 percent in the pilot. That's a real "
+    "jump for a 3PL. I take the manual research off outbound. Want the Acme one?")
+# A rewrite that is HARD-valid but MORE machine-sounding than the original.
+_WORSE_DRAFT = draft(
+    "quick idea",
+    "Hey Jane, we deliver speed, scale, and precision, ensuring value. It's not "
+    "just fast, but reliable. Worth a look?")
+
+
+def _named_result(**over):
+    d = {"company_name": "Acme", "primary_contact_name": "Jane Doe",
+         "primary_contact_role": "CEO",
+         "unique_hook": "Cut warehouse picking time 40% in a pilot",
+         "target_customer": "logistics operators", "has_enough_detail": True}
+    d.update(over)
+    return {"status": "ok", "research_score": 70, "data": d}
+
+
+class RefinePassTests(unittest.TestCase):
+    @mock.patch(_CALL)
+    def test_refine_fires_on_tell_and_adopts_cleaner(self, m):
+        m.side_effect = [_TRICOLON_DRAFT, _CLEANED_DRAFT]
+        out = writer.write_email(_named_result())
+        self.assertEqual(out["status"], "ok")
+        self.assertEqual(m.call_count, 2)               # generate + editor pass
+        self.assertNotIn("faster, cheaper, and smarter", out["body"])
+        self.assertIn("manual research", out["body"])
+
+    @mock.patch(_CALL, return_value=GOOD_FOUNDER)
+    def test_no_refine_on_clean_draft(self, m):
+        writer.write_email(_named_result())
+        self.assertEqual(m.call_count, 1)               # clean -> one-call happy path
+
+    @mock.patch(_CALL)
+    def test_worse_rewrite_is_rejected(self, m):
+        m.side_effect = [_TRICOLON_DRAFT, _WORSE_DRAFT]
+        out = writer.write_email(_named_result())
+        self.assertEqual(m.call_count, 2)
+        self.assertIn("faster, cheaper, and smarter", out["body"])   # kept original
+
+    @mock.patch(_CALL)
+    def test_refine_failure_keeps_original(self, m):
+        m.side_effect = [_TRICOLON_DRAFT, claude_client.ClaudeClientError("boom")]
+        out = writer.write_email(_named_result())
+        self.assertEqual(out["status"], "ok")           # a refine error never errors the draft
+        self.assertIn("faster, cheaper, and smarter", out["body"])
+
+    @mock.patch("agents.writer.WRITER_SELF_CRITIQUE", False)
+    @mock.patch(_CALL, return_value=_TRICOLON_DRAFT)
+    def test_flag_off_skips_refine(self, m):
+        out = writer.write_email(_named_result())
+        self.assertEqual(m.call_count, 1)               # no second call when disabled
+        self.assertIn("faster, cheaper, and smarter", out["body"])
+
+    @mock.patch(_CALL, return_value=_TRICOLON_DRAFT)
+    def test_revision_is_not_refined(self, m):
+        # A user-driven edit must not be second-guessed by the editor pass.
+        writer.write_email(_named_result(), guidance="make it shorter",
+                           current_email={"subject": "x", "body": "old draft here."})
+        self.assertEqual(m.call_count, 1)
+
 
 # ──────────────────────────────────────────────────────────────────────
 #  Prompt-builder injection hardening

@@ -134,6 +134,18 @@ WRITER_BODY_MAX_CHARS = 1500           # guard against a runaway body
 # Set to 0 to enforce a strict single-call-no-retry policy.
 WRITER_MAX_REPAIRS = 1
 
+# Self-critique refine pass (a SECOND, distinct model call — an editor persona,
+# not the generator). It reconciles the codebase's "one call on the happy path"
+# rule with the requirement for a critique pass: it fires ONLY when the free
+# deterministic AI-voice scan still flags a draft after generation/repair, so a
+# clean+specific email stays one call and only a machine-sounding one pays for the
+# editor pass. Set to False for strict single-pass behaviour; set _ALWAYS to run
+# the editor on every draft regardless of the scan (max quality, higher cost).
+WRITER_SELF_CRITIQUE = os.getenv("WRITER_SELF_CRITIQUE", "1").strip().lower() not in (
+    "0", "false", "no", "off")
+WRITER_SELF_CRITIQUE_ALWAYS = os.getenv("WRITER_SELF_CRITIQUE_ALWAYS", "0").strip().lower() in (
+    "1", "true", "yes", "on")
+
 # What WE (the sender) offer, stated as an OUTCOME (never a mechanism). The
 # writer must describe what it helps a founder accomplish, not how it works, and
 # vary that description each email. Edit this one line to change the pitch.
@@ -233,6 +245,13 @@ EXCLUDED_RESOLUTION_DOMAINS = (
 # Reuses the existing search providers (Tavily/Exa); deterministic, no new APIs.
 DISCOVERY_DEFAULT_LIMIT = 20           # companies returned per page by default
 DISCOVERY_MAX_LIMIT = 50               # hard cap per request
+
+# ── Chat-directed research (find/evaluate prospects straight from chat) ─
+# One natural-language ask -> discovery -> research -> qualification, returning a
+# scored, browsable list. Researching each company is a real crawl + model call,
+# so a single chat run is bounded to keep latency/cost sane (the user can ask for
+# more). This is a NEW ENTRY POINT into the existing agents, not new agent logic.
+RESEARCH_LIST_MAX = 10                 # max companies researched+qualified per run
 DISCOVERY_PROVIDER_POOL = 30           # results pulled from EACH provider per query
 DISCOVERY_MIN_CONFIDENCE = 0.15        # drop candidates below this match confidence
 

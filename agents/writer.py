@@ -28,11 +28,17 @@ most ``max_repairs`` bounded regenerations (default 1); set 0 for strict
 single-call behaviour.
 """
 
+from agents import ai_voice
 from agents import writer_prompt as prompt
 from agents import writer_review as reviewer
 from agents import writer_validator as validator
 from agents.writer_prompt import first_name
-from config.settings import WRITER_MAX_REPAIRS, WRITER_MAX_TOKENS
+from config.settings import (
+    WRITER_MAX_REPAIRS,
+    WRITER_MAX_TOKENS,
+    WRITER_SELF_CRITIQUE,
+    WRITER_SELF_CRITIQUE_ALWAYS,
+)
 from services import claude_client
 
 # Field names that mark a dict as a research *data* payload (vs. the full result
@@ -99,6 +105,15 @@ def write_email(research_data, *, add_reveal: bool = False,
                 "sending a substandard draft.",
                 data, problems=problems, draft=draft,
             )
+
+        # Self-critique refine pass (a distinct EDITOR call). Runs only when the
+        # free deterministic scan still smells AI in the draft (or _ALWAYS), so a
+        # clean+specific email keeps the one-call happy path. Never runs on a
+        # user-driven revision (we don't second-guess an explicit edit).
+        if guidance is None:
+            draft = _maybe_refine(draft, data, review, add_reveal,
+                                  style_note=style_note)
+            review = reviewer.review(draft, data)
         return _ok(draft, data, add_reveal, review=review)
     except claude_client.ClaudeClientError as exc:
         # Already a user-safe message (no secrets, no stack trace).
@@ -320,6 +335,93 @@ def _generate(data: dict, add_reveal: bool, feedback=None,
         "subject": str(raw.get("subject") or "").strip(),
         "body": str(raw.get("body") or "").strip(),
     }
+
+
+# A draft this machine-sounding (0-100 proxy) earns the editor pass even with no
+# single named tell — accumulated stiffness/rhythm is enough.
+_AI_SCORE_REFINE_THRESHOLD = 34
+
+
+def _maybe_refine(draft: dict, data: dict, review, add_reveal: bool,
+                  *, style_note=None) -> dict:
+    """Run the editor pass IFF the draft still reads AI, then adopt the result
+    only if it's valid and genuinely less machine-sounding. Otherwise keep the
+    original. Never raises; a refine failure silently returns the original draft."""
+    if not WRITER_SELF_CRITIQUE:
+        return draft
+    reasons = _refine_reasons(draft, data, review)
+    if not (WRITER_SELF_CRITIQUE_ALWAYS or _should_refine(draft, review, reasons)):
+        return draft                       # clean + specific -> no second call
+
+    core = {"subject": draft.get("subject", ""),
+            "body": validator._strip_ps(draft.get("body", ""))}
+    refined = _refine(core, data, reasons, style_note=style_note)
+    if not refined:
+        return draft
+    refined = validator.repair(refined, data, add_reveal)
+    if validator.validate(refined, data, add_reveal):
+        return draft                       # editor produced an invalid email
+    # Adopt only if it did not get MORE machine-sounding (strictly not worse).
+    before = ai_voice.ai_score(validator._strip_ps(draft.get("body", "")))
+    after = ai_voice.ai_score(validator._strip_ps(refined.get("body", "")))
+    return refined if after <= before else draft
+
+
+def _should_refine(draft: dict, review, reasons) -> bool:
+    """Whether a HARD-valid draft is machine-sounding enough to earn the editor
+    pass. Deliberately conservative so a clean, human email keeps the one-call
+    happy path: a lone soft personalization note is NOT enough on its own."""
+    body = (draft or {}).get("body") or ""
+    if ai_voice.tells(body):                       # a structural tell survived
+        return True
+    if ai_voice.ai_score(body) >= _AI_SCORE_REFINE_THRESHOLD:
+        return True
+    # The regeneration loop already tried and the draft is STILL weak AND generic:
+    # escalate to the editor (a different prompt) to break the swappable-copy rut.
+    return bool(getattr(review, "weak", False)) and any(
+        ("generic" in r.lower() or "grounded detail" in r.lower()
+         or "prospect problem" in r.lower()) for r in reasons)
+
+
+def _refine_reasons(draft: dict, data: dict, review) -> list:
+    """Concrete, human-readable reasons the draft still reads AI (may be empty).
+
+    Union of the deterministic structural tells and any 'generic/could-be-any-
+    company' signals the self-review already surfaced. Passed to the editor so it
+    fixes specific sentences instead of rewriting blindly."""
+    body = (draft or {}).get("body") or ""
+    reasons = list(ai_voice.tells(body))
+    reasons += ai_voice.banned_hits(body)          # belt-and-suspenders (should be 0)
+    for issue in (getattr(review, "issues", None) or []):
+        low = issue.lower()
+        if ("generic" in low or "grounded detail" in low or "marketing" in low
+                or "prospect problem" in low):
+            reasons.append(issue)
+    # De-dupe, preserve order.
+    return list(dict.fromkeys(r for r in reasons if str(r).strip()))
+
+
+def _refine(draft: dict, data: dict, reasons, *, style_note=None):
+    """One editor-persona model call: rewrite only the AI-sounding sentences.
+    Returns {"subject","body"} or None. Never raises (a failure must not turn an
+    already-acceptable draft into an error)."""
+    try:
+        raw = claude_client._call_model(
+            prompt.REFINE_SYSTEM_PROMPT,
+            prompt.WRITER_SCHEMA,
+            prompt.build_refine_content(draft, data, tells=reasons),
+            max_tokens=WRITER_MAX_TOKENS,
+            stage="writer_refine",
+        )
+    except Exception:  # noqa: BLE001 - refine is best-effort; keep the original draft
+        return None
+    if not isinstance(raw, dict):
+        return None
+    subject = str(raw.get("subject") or "").strip()
+    body = str(raw.get("body") or "").strip()
+    if not subject or not body:
+        return None
+    return {"subject": subject, "body": body}
 
 
 def _resolve_data(research_data):
