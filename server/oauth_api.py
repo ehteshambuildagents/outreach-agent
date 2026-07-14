@@ -220,7 +220,15 @@ def register(app, rl_read=None, rl_write=None):
         log.info("gmail webhook: parsed envelope keys=%s -> handle_gmail_pubsub",
                  list(envelope.keys()) if isinstance(envelope, dict) else type(envelope).__name__)
         result = push.handle_gmail_pubsub(_store, _tokens, envelope)
-        log.info("gmail webhook: handle_gmail_pubsub returned %r", result)
+        # Mirror the handler's step trace onto THIS (visible) logger — automation.push
+        # is being dropped in the deploy, and this trace holds the real reply-detection
+        # detail: history.list message count, startHistoryId, and per-message thread
+        # matching (SENT-skip / no-match / STOPPED).
+        for _line in (result.get("trace") or []):
+            log.info("gmail push> %s", _line)
+        log.info("gmail webhook: done ok=%s stopped=%s duplicate=%s ignored=%s",
+                 result.get("ok"), result.get("stopped"),
+                 result.get("duplicate"), result.get("ignored"))
         return result
 
     @app.api_route("/api/webhooks/graph", methods=["POST"])
