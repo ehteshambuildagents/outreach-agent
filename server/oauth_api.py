@@ -346,3 +346,40 @@ def register(app, rl_read=None, rl_write=None):
                         "or the reply's thread_id differs from the stored one"),
         }
         return out
+
+    @app.get("/api/debug/gmail-accounts")
+    def gmail_debug_accounts(request: Request):
+        """List EVERY stored Gmail account (ANY status), no email needed — to see
+        what's actually on record vs what you've been testing. Shows the stored
+        email AND its exact repr (so hidden case/whitespace is visible), status,
+        token expiry, and watch_state. Token-gated, read-only. Temporary.
+        """
+        if not _debug_token_ok(request):
+            raise HTTPException(status_code=404, detail="Not found.")
+        import time as _t
+        out = {"build_marker": getattr(push, "BUILD_MARKER", None), "gmail_accounts": []}
+        try:
+            rows = _tokens.db.query(
+                "SELECT user_id, account_email, status, expires_at, watch_state, "
+                "created_at, updated_at FROM oauth_accounts WHERE provider=? "
+                "ORDER BY updated_at DESC", ("gmail",))
+        except Exception as exc:  # noqa: BLE001
+            out["error"] = f"{type(exc).__name__}: {exc}"
+            return out
+        for r in rows:
+            try:
+                ws = json.loads(r["watch_state"]) if r["watch_state"] else {}
+            except (ValueError, TypeError):
+                ws = {}
+            out["gmail_accounts"].append({
+                "account_email": r["account_email"],
+                "account_email_repr": repr(r["account_email"]),   # exposes case/whitespace
+                "status": r["status"],
+                "user_id_tail": (r["user_id"] or "")[-8:],
+                "token_expired": bool(r["expires_at"] and r["expires_at"] < _t.time()),
+                "watch_state": {"history_id": ws.get("history_id") or ws.get("historyId"),
+                                "expiration": ws.get("expiration"),
+                                "armed": bool(ws)},
+            })
+        out["count"] = len(out["gmail_accounts"])
+        return out
