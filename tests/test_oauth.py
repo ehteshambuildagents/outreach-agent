@@ -140,6 +140,18 @@ class TokenStoreTests(unittest.TestCase):
         self.ts.set_watch_state("u1", "gmail", "a@x.com", {"history_id": "42"})
         self.assertEqual(self.ts.get("u1", "gmail")["watch_state"], {"history_id": "42"})
 
+    def test_connected_without_watch_is_complement_of_with_watch(self):
+        self.ts.upsert(user_id="u1", provider="gmail", account_email="a@x.com",
+                       access_token="A", refresh_token="r", expires_at=9e12)
+        # No watch yet -> shows up as "without watch", not in "with_watch".
+        self.assertEqual([r["account_email"] for r in self.ts.connected_without_watch("gmail")],
+                         ["a@x.com"])
+        self.assertEqual(self.ts.with_watch("gmail"), [])
+        # Arm it -> it flips to the other side.
+        self.ts.set_watch_state("u1", "gmail", "a@x.com", {"history_id": "1"})
+        self.assertEqual(self.ts.connected_without_watch("gmail"), [])
+        self.assertEqual([r["account_email"] for r in self.ts.with_watch("gmail")], ["a@x.com"])
+
     def test_accounts_by_email_routes_to_users(self):
         self.ts.upsert(user_id="u1", provider="gmail", account_email="team@x.com",
                        access_token="A", refresh_token="r", expires_at=9e12)

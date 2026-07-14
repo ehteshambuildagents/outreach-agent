@@ -150,6 +150,15 @@ class TokenStore:
             "AND watch_state IS NOT NULL", (provider, STATUS_CONNECTED))
         return [self._decode(r) for r in rows]
 
+    def connected_without_watch(self, provider) -> list:
+        """Connected accounts that have NO watch yet (watch_state IS NULL) — the
+        complement of ``with_watch``. The worker uses this to self-heal any account
+        missing reply-detection so it doesn't silently stay dark."""
+        rows = self.db.query(
+            "SELECT * FROM oauth_accounts WHERE provider=? AND status=? "
+            "AND watch_state IS NULL", (provider, STATUS_CONNECTED))
+        return [self._decode(r) for r in rows]
+
     # ── the important one: a guaranteed-fresh access token ─────────────
     def valid_access_token(self, user_id, provider, account_email=None, *, now=None):
         """Return a live access token, refreshing (and rotating) if near expiry.

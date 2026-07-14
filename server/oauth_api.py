@@ -121,13 +121,37 @@ def register(app, rl_read=None, rl_write=None):
                 status_code=302,
             )
         import time
+        account_email = email or f"{provider}-account"
         _tokens.upsert(
             user_id=ctx["user_id"], provider=provider,
-            account_email=email or f"{provider}-account",
+            account_email=account_email,
             access_token=tok["access_token"], refresh_token=tok.get("refresh_token"),
             expires_at=time.time() + tok.get("expires_in", 3600),
             scopes=tok.get("scope", ""))
         log.info("connected %s account for user (email hidden in logs)", provider)
+        # Arm Gmail reply-detection push the moment the account connects — no
+        # separate frontend step. Best-effort: a watch failure (e.g. the Pub/Sub
+        # topic isn't configured yet, or a transient error) must NOT break the
+        # connect flow; the worker's maintenance sweep re-arms any account that
+        # ends up without a watch. Logged explicitly (same logger as the "connected"
+        # line above) so a reconnect is traceable in the deploy logs.
+        if provider == "gmail":
+            try:
+                res = push.enable_gmail_watch(_tokens, ctx["user_id"], account_email)
+                if res.get("ok"):
+                    watch = res.get("watch") or {}
+                    log.info("gmail watch armed for %s (history_id=%s, expiration=%s)",
+                             account_email, watch.get("historyId"), watch.get("expiration"))
+                else:
+                    # e.g. reconnect_required — no token to watch with. Not an
+                    # exception, but still a "watch not armed" the sweep must retry.
+                    log.error("gmail watch NOT armed for %s: %s; worker sweep will retry",
+                              account_email, res.get("reason") or "unknown reason")
+            except Exception as exc:  # noqa: BLE001 - never fail connect on watch
+                # Full exception (message + traceback), incl. the underlying Gmail
+                # API error, so a silent failure is impossible to miss in the logs.
+                log.error("gmail watch failed for %s: %s; worker sweep will retry",
+                          account_email, exc, exc_info=True)
         return RedirectResponse(
             _frontend_redirect(request, ctx["return_to"], {"connected": provider}),
             status_code=302,

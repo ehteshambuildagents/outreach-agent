@@ -147,6 +147,41 @@ class OAuthCallbackTests(_Base):
         self.assertEqual(r.status_code, 302)
         self.assertEqual(r.headers["location"], "https://saqua.io/settings?error=gmail")
 
+    def test_gmail_connect_arms_watch(self):
+        # Connecting Gmail arms the reply-detection watch automatically — the fix
+        # for "watch was never registered". No separate frontend call needed.
+        c = self._client(self._uid())
+        state = self._login_state(c, "gmail", _GOOGLE)
+        with mock.patch.dict(os.environ, {**_GOOGLE, **_FRONTEND}), \
+                mock.patch("automation.oauth.exchange_code",
+                           return_value={"access_token": "AT", "refresh_token": "RT",
+                                         "expires_in": 3600, "scope": "gmail.send"}), \
+                mock.patch("automation.oauth.account_email", return_value="me@acme.com"), \
+                mock.patch("automation.push.enable_gmail_watch",
+                           return_value={"ok": True}) as arm:
+            r = c.get(f"/api/oauth/gmail/callback?code=abc&state={state}",
+                      follow_redirects=False)
+        self.assertEqual(r.status_code, 302)
+        arm.assert_called_once()
+        self.assertEqual(arm.call_args.args[2], "me@acme.com")   # armed for the mailbox
+
+    def test_gmail_connect_survives_watch_failure(self):
+        # A watch failure (e.g. Pub/Sub topic not configured yet) must NOT break the
+        # connect flow — the token is still stored and the user is still redirected.
+        c = self._client(self._uid())
+        state = self._login_state(c, "gmail", _GOOGLE)
+        with mock.patch.dict(os.environ, {**_GOOGLE, **_FRONTEND}), \
+                mock.patch("automation.oauth.exchange_code",
+                           return_value={"access_token": "AT", "refresh_token": "RT",
+                                         "expires_in": 3600, "scope": "gmail.send"}), \
+                mock.patch("automation.oauth.account_email", return_value="me@acme.com"), \
+                mock.patch("automation.push.enable_gmail_watch",
+                           side_effect=RuntimeError("no pubsub topic")):
+            r = c.get(f"/api/oauth/gmail/callback?code=abc&state={state}",
+                      follow_redirects=False)
+        self.assertEqual(r.status_code, 302)                     # connect still succeeds
+        self.assertEqual(len(c.get("/api/oauth/accounts").json()["accounts"]), 1)
+
     def test_multiple_accounts_listed(self):
         user = self._uid()
         c = self._client(user)
