@@ -194,6 +194,22 @@ INTEL_SYNTHESIS_MAX_TOKENS = 3000      # output budget for the synthesis call
 INTEL_MAX_EVIDENCE_CHARS = 60000       # cap combined evidence sent to the model
 INTEL_MAX_FINDINGS = 12                # ranked findings the synthesis returns
 
+# ── X (Twitter) recent search — OPTIONAL recent-social-signal source ───
+# Read-only App-only Bearer auth against GET /2/tweets/search/recent
+# (research/x_search.py). This is the ONE research source with NO free tier — it
+# costs real money PER POST READ — so it is deliberately NOT on the always-on
+# research path: it runs only when a request implies a need for recent social
+# signal, results are cached by exact query, and max_results is capped well under
+# the API's 100. Key: X_BEARER_TOKEN (server-side ONLY, never logged/client-side;
+# regenerate in the X console if a token was ever exposed). No Consumer Key/Secret
+# here — those are only for posting (a later phase), not read-only search.
+X_SEARCH_MAX_RESULTS = int(os.getenv("X_SEARCH_MAX_RESULTS", "25"))     # << API max (100)
+X_SEARCH_CACHE_TTL_SECONDS = int(os.getenv("X_SEARCH_CACHE_TTL_SECONDS", str(6 * 3600)))  # 6h
+# Estimated USD per post read, for cost LOGGING only (never billing). Override to
+# your plan's real per-read rate; the default is a conservative placeholder so
+# spend shows up in the logs instead of only on the invoice.
+X_SEARCH_COST_PER_READ_USD = float(os.getenv("X_SEARCH_COST_PER_READ_USD", "0.005"))
+
 
 # ── Automation Agent (the conductor: scheduling, sending, recovery) ────
 # All tunable; nothing about timing is hard-coded in the engine.
@@ -220,6 +236,55 @@ AUTOMATION_WATCH_RENEW_BEFORE = 86400   # renew a Gmail/Graph watch within a day
 # false block). Env vars GUARD_DAILY_BUDGET_USD / GUARD_MONTHLY_BUDGET_USD win.
 GUARD_DAILY_BUDGET_USD = 10.0
 GUARD_MONTHLY_BUDGET_USD = 200.0
+
+
+# ── Per-user usage caps & account kill switch (public-signup safety) ────
+# With public signups there's no informal "I know how much I've used" bound, so
+# every paid provider call is metered per user against these hard caps (limits/).
+# The cap is enforced at two choke points — research/providers_common.request_json
+# (Firecrawl/Tavily/Exa/Jina/Hunter/X) and services/claude_client (Anthropic) —
+# using the ambient telemetry user_id, so no signatures change. A cap only DENIES
+# the next paid call (degrading gracefully); it never crashes a request, and a
+# call with no user context (system/internal) is never capped. Set LIMITS_ENFORCED
+# to 0 to disable enforcement (metering still records).
+LIMITS_ENFORCED = (os.getenv("LIMITS_ENFORCED", "1").strip().lower()
+                   not in ("0", "false", "no", ""))
+# Hard per-user spend ceilings (USD) across ALL paid providers combined. 0 disables.
+LIMIT_DAILY_USD_PER_USER = float(os.getenv("LIMIT_DAILY_USD_PER_USER", "5.0"))
+LIMIT_MONTHLY_USD_PER_USER = float(os.getenv("LIMIT_MONTHLY_USD_PER_USER", "50.0"))
+# Per-provider daily CALL caps (deterministic, no pricing needed). Unknown
+# providers fall back to LIMIT_DEFAULT_DAILY_CALLS.
+LIMIT_DEFAULT_DAILY_CALLS = int(os.getenv("LIMIT_DEFAULT_DAILY_CALLS", "300"))
+LIMIT_DAILY_CALLS = {
+    "firecrawl": int(os.getenv("LIMIT_FIRECRAWL_DAILY_CALLS", "150")),
+    "tavily":    int(os.getenv("LIMIT_TAVILY_DAILY_CALLS", "300")),
+    "exa":       int(os.getenv("LIMIT_EXA_DAILY_CALLS", "300")),
+    "jina":      int(os.getenv("LIMIT_JINA_DAILY_CALLS", "300")),
+    "hunter":    int(os.getenv("LIMIT_HUNTER_DAILY_CALLS", "100")),
+    "x_search":  int(os.getenv("LIMIT_XSEARCH_DAILY_CALLS", "60")),
+    "anthropic": int(os.getenv("LIMIT_ANTHROPIC_DAILY_CALLS", "600")),
+}
+# Rough per-call USD estimate used ONLY to accumulate the per-user spend ledger
+# for the USD caps above — never billing. Unknown providers use the default.
+LIMIT_DEFAULT_COST_USD = float(os.getenv("LIMIT_DEFAULT_COST_USD", "0.01"))
+LIMIT_PROVIDER_COST_USD = {
+    "firecrawl": 0.012,
+    "tavily":    0.008,
+    "exa":       0.005,
+    "jina":      0.0,
+    "hunter":    0.010,
+    "x_search":  round(X_SEARCH_COST_PER_READ_USD * X_SEARCH_MAX_RESULTS, 5),
+    "anthropic": 0.020,
+}
+# Account kill switch (anomaly detector — the hard caps above are the primary cost
+# ceiling; this catches abnormal SHAPE). A user is paused + flagged for review when
+# their last-hour call volume is both above the noise floor AND abnormal:
+#   * with peers on record: >= LIMIT_SPIKE_MULTIPLE x the median hourly volume;
+#   * cold start (no peer baseline): >= LIMIT_SPIKE_ABS_CEILING (so the first
+#     legitimate heavy user isn't paused, but a runaway bot still is).
+LIMIT_SPIKE_MULTIPLE = float(os.getenv("LIMIT_SPIKE_MULTIPLE", "10"))
+LIMIT_SPIKE_MIN_CALLS = int(os.getenv("LIMIT_SPIKE_MIN_CALLS", "40"))   # noise floor
+LIMIT_SPIKE_ABS_CEILING = int(os.getenv("LIMIT_SPIKE_ABS_CEILING", "300"))  # cold-start hard stop
 
 
 # ── Company resolution (name -> official website, via a web-search API) ─
