@@ -14,6 +14,10 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Self-protect against writing to a real DATABASE_URL when run OUTSIDE pytest
+# (conftest.py only loads under pytest). Must precede any automation import.
+os.environ["AUTOMATION_FORCE_SQLITE"] = "1"
+
 from automation import engine, metrics, redis, scheduler, states  # noqa: E402
 
 # Force in-memory Redis for the whole module. config.settings re-loads .env on

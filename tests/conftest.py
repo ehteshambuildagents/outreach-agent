@@ -10,6 +10,11 @@ reproducible. Individual modules still force in-memory Redis as they do today.
 import os
 
 os.environ["AUTOMATION_FORCE_SQLITE"] = "1"
+# Belt-and-suspenders: even if the flag above is ever flipped, the suite must not
+# be able to SEE a production DATABASE_URL. We set it empty rather than pop it,
+# because config.env.load_env() calls load_dotenv(override=False) — a popped key
+# would be re-loaded from .env, but a present-but-empty key is left untouched.
+os.environ["DATABASE_URL"] = ""
 os.environ.setdefault("AUTOMATION_ENC_KEY", "test-fixed-key")
 # Telemetry writes synchronously in tests (no background thread) so recorded
 # datapoints are queryable immediately and deterministically.

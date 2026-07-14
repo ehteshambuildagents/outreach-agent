@@ -17,11 +17,16 @@ Design goals:
 
 import os
 import sqlite3
+import sys
 import threading
 from contextlib import contextmanager
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SQLITE_DEFAULT = os.path.join(_ROOT, "automation.db")
+
+
+def _env_true(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes")
 
 
 def database_url() -> str:
@@ -36,9 +41,51 @@ def database_url() -> str:
 def is_postgres() -> bool:
     # AUTOMATION_FORCE_SQLITE lets the offline test suite stay on SQLite even when a
     # real DATABASE_URL is present in the environment/.env.
-    if (os.environ.get("AUTOMATION_FORCE_SQLITE") or "").strip() in ("1", "true", "yes"):
+    if _env_true("AUTOMATION_FORCE_SQLITE"):
         return False
     return bool(database_url())
+
+
+def _looks_like_test() -> bool:
+    """True when we are almost certainly running the test suite — under ANY runner
+    (pytest, ``python -m unittest``, or ``python tests/test_x.py``). The deployed
+    app never imports pytest or a ``test_*`` module, so this stays False in prod.
+
+    This backs the fail-closed guard in ``_open``: a test must never silently open
+    a connection to the real database just because DATABASE_URL happens to be set
+    and someone forgot ``AUTOMATION_FORCE_SQLITE=1``."""
+    if os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
+        return True
+    main = sys.modules.get("__main__")
+    main_file = (getattr(main, "__file__", "") or "").replace("\\", "/").lower()
+    if "/tests/" in main_file or os.path.basename(main_file).startswith("test_"):
+        return True                          # python tests/test_x.py
+    if getattr(main, "__package__", "") == "unittest" or main_file.endswith("unittest/__main__.py"):
+        return True                          # python -m unittest ...
+    # A test module is on the import graph (pytest/unittest discovery).
+    for name in list(sys.modules):
+        base = name.rsplit(".", 1)[-1]
+        if name == "tests" or name.startswith("tests.") or base.startswith("test_"):
+            return True
+    return False
+
+
+def _assert_not_test_hitting_prod() -> None:
+    """Fail closed: refuse to open a Postgres connection from the test suite.
+
+    Backend selection (``is_postgres``) is deliberately NOT changed — a test may
+    assert it *selects* Postgres from a fake URL without connecting. This guard
+    fires only at real connect time, and only in a test context, so production is
+    never affected. Escape hatch: ``AUTOMATION_ALLOW_PROD_DB=1`` for the rare test
+    that genuinely means to touch a real database (e.g. a live-integration check)."""
+    if _looks_like_test() and not _env_true("AUTOMATION_ALLOW_PROD_DB"):
+        raise RuntimeError(
+            "Refusing to open a Postgres connection from the test suite: "
+            "DATABASE_URL points at a real database and AUTOMATION_FORCE_SQLITE is "
+            "not forcing SQLite, so this run would read/write PRODUCTION. Set "
+            "AUTOMATION_FORCE_SQLITE=1 (normal for tests), or — only if you truly "
+            "intend to hit the real database — AUTOMATION_ALLOW_PROD_DB=1."
+        )
 
 
 def backend() -> str:
@@ -95,6 +142,7 @@ class Database:
 
     def _open(self):
         if self.backend == "postgres":
+            _assert_not_test_hitting_prod()   # fail closed: tests never reach prod
             import psycopg
             from psycopg.rows import dict_row
             # autocommit=True: standalone statements commit immediately (matching
