@@ -37,43 +37,78 @@ def decode_pubsub(envelope: dict) -> dict:
 
 
 def handle_gmail_pubsub(store, token_store, envelope: dict, *, provider_factory=None) -> dict:
+    # Instrumented end to end (INFO) so this synchronous path is fully visible in
+    # the deploy logs: it runs history.list + ingest_reply BEFORE returning 200,
+    # and previously several branches returned 200 with no log at all (a clean 200
+    # told you nothing about whether real work happened). Logic below is unchanged.
     provider_factory = provider_factory or (lambda tok: get_provider("gmail", credentials=tok))
     info = decode_pubsub(envelope)
     if not info.get("email"):
+        log.info("gmail push: unparseable envelope, ignoring (no email/historyId)")
         return {"ok": True, "ignored": "unparseable"}
+    log.info("gmail push received for %s (history_id=%s)",
+             info["email"], info.get("history_id"))
     # Duplicate Pub/Sub delivery for the same (mailbox, historyId) is a no-op.
     dedup = f"gmailpush:{info['email']}:{info['history_id']}"
     if not store.mark_processed(dedup):
+        log.info("gmail push: duplicate delivery for %s history_id=%s, skipping",
+                 info["email"], info["history_id"])
         return {"ok": True, "duplicate": True}
 
+    accounts = token_store.accounts_by_email("gmail", info["email"])
+    log.info("gmail push: %d connected account(s) match %s", len(accounts), info["email"])
     stopped = 0
-    for acct in token_store.accounts_by_email("gmail", info["email"]):
+    for acct in accounts:
         token = token_store.valid_access_token(acct["user_id"], "gmail",
                                                acct["account_email"])
         if not token:
+            log.warning("gmail push: no valid token for %s (reconnect required), skipping",
+                        acct["account_email"])
             continue                       # reconnect needed; nothing to poll
         start = (acct.get("watch_state") or {}).get("history_id") or info["history_id"]
+        log.info("gmail push: calling history.list for %s startHistoryId=%s",
+                 acct["account_email"], start)
         try:
             hist = provider_factory(token).list_history(start)
         except Exception as exc:           # noqa: BLE001
             metrics.incr("provider_failures")
-            log.warning("gmail history failed for %s: %s",
-                        acct["account_email"], type(exc).__name__)
+            log.warning("gmail history.list failed for %s: %s: %s",
+                        acct["account_email"], type(exc).__name__, exc)
             continue
-        for msg in hist.get("messages", []):
+        messages = hist.get("messages", [])
+        log.info("gmail push: history.list returned %d message(s) for %s "
+                 "(new history_id=%s)",
+                 len(messages), acct["account_email"], hist.get("history_id"))
+        for msg in messages:
             if "SENT" in (msg.get("labels") or []):
+                log.info("gmail push: skipping our own SENT message %s",
+                         msg.get("message_id"))
                 continue                   # our own outbound, not a reply
+            log.info("gmail push: candidate reply message_id=%s thread_id=%s -> ingest_reply",
+                     msg.get("message_id"), msg.get("thread_id"))
             wf = engine.ingest_reply(store, message_id=msg.get("message_id"),
                                      user_id=acct["user_id"],
                                      thread_id=msg.get("thread_id"))
-            if wf is not None and wf.state == "STOPPED":
+            if wf is None:
+                log.info("gmail push: ingest_reply found NO matching workflow for "
+                         "thread_id=%s (message_id=%s)",
+                         msg.get("thread_id"), msg.get("message_id"))
+            elif wf.state == "STOPPED":
                 stopped += 1
+                log.info("gmail push: ingest_reply STOPPED workflow %s "
+                         "(reply matched thread_id=%s)", wf.id, msg.get("thread_id"))
+            else:
+                log.info("gmail push: ingest_reply matched workflow %s but state=%s "
+                         "(not stopped)", wf.id, wf.state)
         # advance stored historyId so the next push starts from here
         if hist.get("history_id"):
             state = dict(acct.get("watch_state") or {})
             state["history_id"] = hist["history_id"]
             token_store.set_watch_state(acct["user_id"], "gmail",
                                         acct["account_email"], state)
+            log.info("gmail push: advanced stored history_id to %s for %s",
+                     hist["history_id"], acct["account_email"])
+    log.info("gmail push: done for %s, stopped %d sequence(s)", info["email"], stopped)
     return {"ok": True, "stopped": stopped}
 
 
