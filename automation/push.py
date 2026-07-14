@@ -41,6 +41,17 @@ def handle_gmail_pubsub(store, token_store, envelope: dict, *, provider_factory=
     # the deploy logs: it runs history.list + ingest_reply BEFORE returning 200,
     # and previously several branches returned 200 with no log at all (a clean 200
     # told you nothing about whether real work happened). Logic below is unchanged.
+    # Diagnostic: dump the raw envelope SHAPE (keys only, not the base64 blob) so a
+    # real production push can be compared against what decode_pubsub expects. A
+    # non-dict envelope is itself the bug — decode_pubsub would raise on it.
+    if isinstance(envelope, dict):
+        _msg = envelope.get("message")
+        log.info("gmail push: envelope keys=%s; message keys=%s",
+                 list(envelope.keys()),
+                 list(_msg.keys()) if isinstance(_msg, dict) else type(_msg).__name__)
+    else:
+        log.info("gmail push: envelope is NOT a dict: type=%s repr=%.200r",
+                 type(envelope).__name__, envelope)
     provider_factory = provider_factory or (lambda tok: get_provider("gmail", credentials=tok))
     info = decode_pubsub(envelope)
     if not info.get("email"):
