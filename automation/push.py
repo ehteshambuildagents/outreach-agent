@@ -37,44 +37,43 @@ def decode_pubsub(envelope: dict) -> dict:
 
 
 def handle_gmail_pubsub(store, token_store, envelope: dict, *, provider_factory=None) -> dict:
-    # Instrumented end to end (INFO) so this synchronous path is fully visible in
-    # the deploy logs: it runs history.list + ingest_reply BEFORE returning 200,
-    # and previously several branches returned 200 with no log at all (a clean 200
-    # told you nothing about whether real work happened). Logic below is unchanged.
-    # Diagnostic: dump the raw envelope SHAPE (keys only, not the base64 blob) so a
-    # real production push can be compared against what decode_pubsub expects. A
-    # non-dict envelope is itself the bug — decode_pubsub would raise on it.
+    # Every step is logged on automation.push AND appended to a `trace` list that is
+    # RETURNED to the caller, so the webhook route can re-log the trace on a logger
+    # that IS visible in the deploy (automation.push is currently dropped in prod).
+    # Logic (matching / stopping) is unchanged — this only adds observability.
+    trace = []
+
+    def _t(msg, *args):
+        line = (msg % args) if args else msg
+        log.info("gmail push: %s", line)
+        trace.append(line)
+
     if isinstance(envelope, dict):
         _msg = envelope.get("message")
-        log.info("gmail push: envelope keys=%s; message keys=%s",
-                 list(envelope.keys()),
-                 list(_msg.keys()) if isinstance(_msg, dict) else type(_msg).__name__)
+        _t("envelope keys=%s; message keys=%s", list(envelope.keys()),
+           list(_msg.keys()) if isinstance(_msg, dict) else type(_msg).__name__)
     else:
-        log.info("gmail push: envelope is NOT a dict: type=%s repr=%.200r",
-                 type(envelope).__name__, envelope)
+        _t("envelope is NOT a dict: type=%s repr=%.200r", type(envelope).__name__, envelope)
     provider_factory = provider_factory or (lambda tok: get_provider("gmail", credentials=tok))
     info = decode_pubsub(envelope)
     if not info.get("email"):
-        log.info("gmail push: unparseable envelope, ignoring (no email/historyId)")
-        return {"ok": True, "ignored": "unparseable"}
-    log.info("gmail push received for %s (history_id=%s)",
-             info["email"], info.get("history_id"))
+        _t("unparseable envelope, ignoring (no email/historyId)")
+        return {"ok": True, "ignored": "unparseable", "trace": trace}
+    _t("received for %s (history_id=%s)", info["email"], info.get("history_id"))
     # Duplicate Pub/Sub delivery for the same (mailbox, historyId) is a no-op.
     dedup = f"gmailpush:{info['email']}:{info['history_id']}"
     if not store.mark_processed(dedup):
-        log.info("gmail push: duplicate delivery for %s history_id=%s, skipping",
-                 info["email"], info["history_id"])
-        return {"ok": True, "duplicate": True}
+        _t("duplicate delivery for %s history_id=%s, skipping", info["email"], info["history_id"])
+        return {"ok": True, "duplicate": True, "trace": trace}
 
     accounts = token_store.accounts_by_email("gmail", info["email"])
-    log.info("gmail push: %d connected account(s) match %s", len(accounts), info["email"])
+    _t("%d connected account(s) match %s", len(accounts), info["email"])
     stopped = 0
     for acct in accounts:
         token = token_store.valid_access_token(acct["user_id"], "gmail",
                                                acct["account_email"])
         if not token:
-            log.warning("gmail push: no valid token for %s (reconnect required), skipping",
-                        acct["account_email"])
+            _t("no valid token for %s (reconnect required), skipping", acct["account_email"])
             continue                       # reconnect needed; nothing to poll
         # watch() seeds the id under Gmail's camelCase "historyId"; each processed
         # push then tracks it under "history_id". Read either (prefer the tracked
@@ -82,50 +81,40 @@ def handle_gmail_pubsub(store, token_store, envelope: dict, *, provider_factory=
         # own current historyId, which returns no new changes and misses the reply.
         ws = acct.get("watch_state") or {}
         start = ws.get("history_id") or ws.get("historyId") or info["history_id"]
-        log.info("gmail push: calling history.list for %s startHistoryId=%s",
-                 acct["account_email"], start)
         try:
             hist = provider_factory(token).list_history(start)
         except Exception as exc:           # noqa: BLE001
             metrics.incr("provider_failures")
-            log.warning("gmail history.list failed for %s: %s: %s",
-                        acct["account_email"], type(exc).__name__, exc)
+            _t("history.list FAILED for %s startHistoryId=%s: %s: %s",
+               acct["account_email"], start, type(exc).__name__, exc)
             continue
         messages = hist.get("messages", [])
-        log.info("gmail push: history.list returned %d message(s) for %s "
-                 "(new history_id=%s)",
-                 len(messages), acct["account_email"], hist.get("history_id"))
+        _t("history.list for %s startHistoryId=%s returned %d message(s) (new history_id=%s)",
+           acct["account_email"], start, len(messages), hist.get("history_id"))
         for msg in messages:
+            mid, tid = msg.get("message_id"), msg.get("thread_id")
             if "SENT" in (msg.get("labels") or []):
-                log.info("gmail push: skipping our own SENT message %s",
-                         msg.get("message_id"))
+                _t("  msg %s thread %s: SENT (our own), skipped", mid, tid)
                 continue                   # our own outbound, not a reply
-            log.info("gmail push: candidate reply message_id=%s thread_id=%s -> ingest_reply",
-                     msg.get("message_id"), msg.get("thread_id"))
-            wf = engine.ingest_reply(store, message_id=msg.get("message_id"),
-                                     user_id=acct["user_id"],
-                                     thread_id=msg.get("thread_id"))
+            wf = engine.ingest_reply(store, message_id=mid,
+                                     user_id=acct["user_id"], thread_id=tid)
             if wf is None:
-                log.info("gmail push: ingest_reply found NO matching workflow for "
-                         "thread_id=%s (message_id=%s)",
-                         msg.get("thread_id"), msg.get("message_id"))
+                _t("  msg %s thread %s: ingest_reply -> NO matching workflow", mid, tid)
             elif wf.state == "STOPPED":
                 stopped += 1
-                log.info("gmail push: ingest_reply STOPPED workflow %s "
-                         "(reply matched thread_id=%s)", wf.id, msg.get("thread_id"))
+                _t("  msg %s thread %s: ingest_reply -> STOPPED workflow %s", mid, tid, wf.id)
             else:
-                log.info("gmail push: ingest_reply matched workflow %s but state=%s "
-                         "(not stopped)", wf.id, wf.state)
+                _t("  msg %s thread %s: ingest_reply -> matched workflow %s state=%s (not stopped)",
+                   mid, tid, wf.id, wf.state)
         # advance stored historyId so the next push starts from here
         if hist.get("history_id"):
             state = dict(acct.get("watch_state") or {})
             state["history_id"] = hist["history_id"]
             token_store.set_watch_state(acct["user_id"], "gmail",
                                         acct["account_email"], state)
-            log.info("gmail push: advanced stored history_id to %s for %s",
-                     hist["history_id"], acct["account_email"])
-    log.info("gmail push: done for %s, stopped %d sequence(s)", info["email"], stopped)
-    return {"ok": True, "stopped": stopped}
+            _t("advanced stored history_id to %s for %s", hist["history_id"], acct["account_email"])
+    _t("done for %s, stopped %d sequence(s)", info["email"], stopped)
+    return {"ok": True, "stopped": stopped, "trace": trace}
 
 
 # ── Microsoft Graph (change notifications) ─────────────────────────────
