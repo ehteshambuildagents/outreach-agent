@@ -127,6 +127,30 @@ class Worker:
                     metrics.incr("provider_failures")
                     log.warning("watch renewal failed for %s/%s: %s",
                                 provider, rec["account_email"], type(exc).__name__)
+        # Self-heal: arm a watch for any connected Gmail account that has none yet
+        # (from the original never-armed bug, or any future edge case). The loop
+        # above only RENEWS existing watches; this establishes the first one, so an
+        # account left without a watch comes back online on the next sweep instead
+        # of silently going dark.
+        self._arm_missing_gmail_watches()
+
+    def _arm_missing_gmail_watches(self) -> None:
+        import os
+
+        from automation import push
+        # Nothing to arm against until the Pub/Sub topic exists — skip quietly
+        # (avoids a guaranteed-fail watch() call for every account each sweep).
+        if not os.environ.get("GMAIL_PUBSUB_TOPIC"):
+            return
+        for rec in self.tokens.connected_without_watch("gmail"):
+            try:
+                res = push.enable_gmail_watch(self.tokens, rec["user_id"],
+                                              rec["account_email"])
+                if res.get("ok"):
+                    log.info("armed missing gmail watch for a connected account")
+            except Exception as exc:            # noqa: BLE001 - a bad account must
+                metrics.incr("provider_failures")   # not stop the sweep
+                log.warning("arming missing gmail watch failed: %s", type(exc).__name__)
 
 
 # Module-level singleton so the API and a standalone entrypoint share one worker.

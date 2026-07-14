@@ -93,6 +93,47 @@ class WorkerTests(unittest.TestCase):
         w.run_once(now=1234.0)
         self.assertEqual(w.last_tick_at, 1234.0)
 
+    def test_maintenance_arms_missing_gmail_watch(self):
+        # Self-heal: a connected Gmail account with NO watch_state gets armed on the
+        # maintenance sweep (so an account left dark comes back on its own).
+        self.tokens.upsert(user_id="u", provider="gmail", account_email="a@x.com",
+                           access_token="AT", refresh_token="RT",
+                           expires_at=time.time() + 9999)
+        self.assertEqual(len(self.tokens.connected_without_watch("gmail")), 1)
+        w = self._worker(maint_interval=0)     # maintenance every beat
+        with mock.patch.dict(os.environ, {"GMAIL_PUBSUB_TOPIC": "projects/p/topics/t"}), \
+                mock.patch("automation.push.enable_gmail_watch",
+                           return_value={"ok": True, "watch": {}}) as arm:
+            w.run_once(now=time.time())
+        arm.assert_called_once()
+        self.assertEqual(arm.call_args.args[1:], ("u", "a@x.com"))
+
+    def test_maintenance_skips_arming_without_pubsub_topic(self):
+        # Without a Pub/Sub topic there's nothing to arm against — don't even try
+        # (avoids a guaranteed-fail watch() call for every account each sweep).
+        self.tokens.upsert(user_id="u", provider="gmail", account_email="a@x.com",
+                           access_token="AT", refresh_token="RT",
+                           expires_at=time.time() + 9999)
+        w = self._worker(maint_interval=0)
+        with mock.patch.dict(os.environ, {}), \
+                mock.patch("automation.push.enable_gmail_watch") as arm:
+            os.environ.pop("GMAIL_PUBSUB_TOPIC", None)
+            w.run_once(now=time.time())
+        arm.assert_not_called()
+
+    def test_already_watched_account_not_re_armed_as_missing(self):
+        # An account that already has a watch is not treated as "missing".
+        self.tokens.upsert(user_id="u", provider="gmail", account_email="a@x.com",
+                           access_token="AT", refresh_token="RT",
+                           expires_at=time.time() + 9999)
+        self.tokens.set_watch_state("u", "gmail", "a@x.com", {"history_id": "1"})
+        self.assertEqual(self.tokens.connected_without_watch("gmail"), [])
+        w = self._worker(maint_interval=0)
+        with mock.patch.dict(os.environ, {"GMAIL_PUBSUB_TOPIC": "projects/p/topics/t"}), \
+                mock.patch("automation.push.enable_gmail_watch") as arm:
+            w.run_once(now=time.time())
+        arm.assert_not_called()
+
 
 class HealthTests(unittest.TestCase):
     def setUp(self):
