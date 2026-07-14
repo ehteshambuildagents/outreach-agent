@@ -383,3 +383,65 @@ def register(app, rl_read=None, rl_write=None):
             })
         out["count"] = len(out["gmail_accounts"])
         return out
+
+    @app.get("/api/debug/storage")
+    def gmail_debug_storage(request: Request):
+        """Report the ACTUAL storage backend in THIS deploy: sqlite vs postgres,
+        the sqlite path + whether it is ephemeral or on a persistent volume, and
+        row counts — answers 'is my data surviving deploys?'. The three sqlite
+        causes (no DATABASE_URL / broken DATABASE_URL / AUTOMATION_FORCE_SQLITE set)
+        each need a different fix, so all three signals are surfaced. Read-only,
+        token-gated. Temporary.
+        """
+        if not _debug_token_ok(request):
+            raise HTTPException(status_code=404, detail="Not found.")
+        import os as _os
+        from urllib.parse import urlsplit
+        from automation import db as _db
+        url = _db.database_url()
+        target = None
+        if url:
+            try:
+                sp = urlsplit(url)
+                target = f"{sp.hostname}:{sp.port or ''}/{(sp.path or '').lstrip('/')}"
+            except Exception:  # noqa: BLE001
+                target = "<unparseable>"
+        backend = _db.backend()
+        vol = _os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+        out = {
+            "build_marker": getattr(push, "BUILD_MARKER", None),
+            "backend": backend,
+            "database_url_set": bool(url),
+            "database_url_target": target,                 # host/db only — no credentials
+            "force_sqlite_env": (_os.environ.get("AUTOMATION_FORCE_SQLITE") or "").strip() or None,
+            "railway_volume_mount_path": vol,
+        }
+        if backend == "sqlite":
+            path = _db.sqlite_path()
+            exists = _os.path.exists(path)
+            on_vol = bool(vol and _os.path.abspath(path).startswith(_os.path.abspath(vol)))
+            out["sqlite"] = {"path": path, "exists": exists,
+                             "size_bytes": _os.path.getsize(path) if exists else 0,
+                             "mtime_epoch": _os.path.getmtime(path) if exists else None,
+                             "on_persistent_volume": on_vol}
+            out["persistent"] = on_vol
+            out["verdict"] = (
+                "SQLite on a persistent Railway volume — survives deploys."
+                if on_vol else
+                "SQLite on the EPHEMERAL container filesystem — WIPED on every "
+                "deploy/restart. Connected accounts do not survive. THIS is the bug.")
+        else:
+            out["persistent"] = True
+            out["verdict"] = "Postgres — persistent; survives deploys."
+        try:
+            q = _tokens.db.query_one
+            out["counts"] = {
+                "gmail_accounts": q("SELECT COUNT(*) AS n FROM oauth_accounts "
+                                    "WHERE provider=?", ("gmail",))["n"],
+                "oauth_accounts_total": q("SELECT COUNT(*) AS n FROM oauth_accounts")["n"],
+                "workflows": q("SELECT COUNT(*) AS n FROM workflows")["n"],
+                "processed_ledger": q("SELECT COUNT(*) AS n FROM processed")["n"],
+            }
+        except Exception as exc:  # noqa: BLE001
+            out["counts_error"] = f"{type(exc).__name__}: {exc}"
+        return out
