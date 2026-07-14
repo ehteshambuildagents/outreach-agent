@@ -18,6 +18,7 @@ Gmail webhook is gated by a shared ``?token=`` (when configured) and the Graph
 webhook by ``clientState`` — both are duplicate-safe.
 """
 
+import hmac
 import json
 import logging
 import os
@@ -66,6 +67,19 @@ def _frontend_redirect(request: Request, path: str, params: dict[str, str]) -> s
     url = urljoin(f"{base}/", safe_path.lstrip("/"))
     separator = "&" if "?" in url else "?"
     return f"{url}{separator}{urlencode(params)}"
+
+
+def _debug_token_ok(request: Request) -> bool:
+    """Temporary diagnostic gate: ?token= must equal an already-configured secret
+    (GMAIL_PUBSUB_TOKEN — set in prod — or SAQUA_ADMIN_TOKEN). Unset both -> 404."""
+    provided = (request.query_params.get("token") or "").strip()
+    if not provided:
+        return False
+    for _env in ("GMAIL_PUBSUB_TOKEN", "SAQUA_ADMIN_TOKEN"):
+        secret = (os.environ.get(_env) or "").strip()
+        if secret and hmac.compare_digest(provided, secret):
+            return True
+    return False
 
 
 def register(app, rl_read=None, rl_write=None):
@@ -241,3 +255,94 @@ def register(app, rl_read=None, rl_write=None):
         expected = os.environ.get("GRAPH_CLIENT_STATE") or None
         return push.handle_graph_notifications(_store, _tokens, body,
                                                expected_client_state=expected)
+
+    # ── TEMPORARY diagnostic (token-gated, strictly read-only) ─────────
+    @app.get("/api/debug/gmail-state")
+    def gmail_debug_state(request: Request):
+        """One URL to diagnose reply detection without reading deploy logs.
+
+        Reports which push.py is live (BUILD_MARKER + commit), the stored
+        watch_state, a LIVE history.list at the stored history_id, this user's
+        workflow provider_thread_ids, and the exact reply-thread vs stored-thread
+        comparison ingest_reply performs. Read-only: never advances history_id,
+        never marks a message processed. Remove once reply detection is confirmed.
+        """
+        if not _debug_token_ok(request):
+            raise HTTPException(status_code=404, detail="Not found.")
+        email = (request.query_params.get("email") or "").strip().lower()
+        out = {
+            "build_marker": getattr(push, "BUILD_MARKER", None),
+            "commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA"),
+            "email_queried": email,
+        }
+        if not email:
+            out["error"] = "add &email=<your connected gmail address> to the URL"
+            return out
+        accounts = _tokens.accounts_by_email("gmail", email)
+        out["accounts_matched"] = len(accounts)
+        if not accounts:
+            out["error"] = "no connected gmail account for that email"
+            return out
+        acct = accounts[0]
+        user_id, account_email = acct["user_id"], acct["account_email"]
+        ws = acct.get("watch_state") or {}
+        start = ws.get("history_id") or ws.get("historyId")
+        out["account"] = {
+            "account_email": account_email,
+            "watch_state": {"history_id": ws.get("history_id"),
+                            "historyId": ws.get("historyId"),
+                            "expiration": ws.get("expiration"),
+                            "keys": sorted(ws.keys())},
+            "start_history_id_used": start,
+        }
+        token = _tokens.valid_access_token(user_id, "gmail", account_email)
+        out["has_valid_token"] = bool(token)
+
+        # LIVE, read-only history.list at the stored seed (same seed the handler uses).
+        hl = {"start_history_id": start}
+        if not token:
+            hl["error"] = "no valid token (reconnect required)"
+        elif not start:
+            hl["error"] = "no stored history_id — watch not armed yet"
+        else:
+            try:
+                hist = push.get_provider("gmail", credentials=token).list_history(start)
+                msgs = hist.get("messages", [])
+                hl.update(ok=True, new_history_id=hist.get("history_id"),
+                          message_count=len(msgs),
+                          messages=[{"message_id": m.get("message_id"),
+                                     "thread_id": m.get("thread_id"),
+                                     "labels": m.get("labels")} for m in msgs[:25]])
+            except Exception as exc:  # noqa: BLE001
+                hl.update(ok=False, error=f"{type(exc).__name__}: {exc}")
+        out["history_list"] = hl
+
+        # Stored provider_thread_ids for this user (what ingest_reply matches against).
+        stored_threads, wf_rows = set(), []
+        for cand in _store.list_for_user(user_id):
+            threads = [getattr(s, "provider_thread_id", None) for s in cand.steps]
+            if not any(threads):
+                continue                       # nothing sent yet -> can't match a reply
+            stored_threads.update(t for t in threads if t)
+            wf_rows.append({"workflow_id": cand.id, "state": str(cand.state),
+                            "step_thread_ids": threads,
+                            "step_status": [str(getattr(s, "status", None))
+                                            for s in cand.steps]})
+        out["workflows_with_sends"] = wf_rows[:25]
+
+        # The exact comparison ingest_reply does (string equality), shown both ways.
+        reply_threads = sorted({m["thread_id"] for m in hl.get("messages", [])
+                                if m.get("thread_id")
+                                and "SENT" not in (m.get("labels") or [])})
+        matches = sorted(set(reply_threads) & stored_threads)
+        out["thread_match"] = {
+            "reply_thread_ids": reply_threads,
+            "stored_provider_thread_ids": sorted(stored_threads),
+            "matches": matches,
+            "any_match": bool(matches),
+            "verdict": ("reply thread MATCHES a sent workflow — ingest_reply should stop it"
+                        if matches else
+                        "no overlap — either no reply in this history window, "
+                        "or the reply's thread_id differs from the stored one"),
+        }
+        return out
