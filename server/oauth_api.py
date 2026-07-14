@@ -445,3 +445,60 @@ def register(app, rl_read=None, rl_write=None):
         except Exception as exc:  # noqa: BLE001
             out["counts_error"] = f"{type(exc).__name__}: {exc}"
         return out
+
+    @app.get("/api/debug/gmail-history-raw")
+    def gmail_debug_history_raw(request: Request):
+        """Show the RAW Gmail history.list records for an account, UNFILTERED by
+        historyTypes — so label/read/delete changes that the messageAdded-only
+        production query hides are visible. Answers 'the historyId advanced but
+        message_count is 0 — what actually changed?'. Also runs the messageAdded-
+        only query for side-by-side comparison, and follows nextPageToken (which
+        the production list_history does NOT). Read-only, token-gated. Temporary.
+
+        Params: &email=<connected gmail>  [&start_history_id=<override>].
+        """
+        if not _debug_token_ok(request):
+            raise HTTPException(status_code=404, detail="Not found.")
+        email = (request.query_params.get("email") or "").strip().lower()
+        out = {"build_marker": getattr(push, "BUILD_MARKER", None), "email_queried": email}
+        if not email:
+            out["error"] = "add &email=<your connected gmail address> to the URL"
+            return out
+        accounts = _tokens.accounts_by_email("gmail", email)
+        if not accounts:
+            out["error"] = "no connected gmail account for that email"
+            return out
+        acct = accounts[0]
+        user_id, account_email = acct["user_id"], acct["account_email"]
+        ws = acct.get("watch_state") or {}
+        start = (request.query_params.get("start_history_id")
+                 or ws.get("history_id") or ws.get("historyId"))
+        out["start_history_id_used"] = start
+        token = _tokens.valid_access_token(user_id, "gmail", account_email)
+        out["has_valid_token"] = bool(token)
+        if not token:
+            out["error"] = "no valid token (reconnect required) — cannot query Gmail"
+            return out
+        if not start:
+            out["error"] = "no start history id (watch not armed) — pass &start_history_id="
+            return out
+        prov = push.get_provider("gmail", credentials=token)
+        try:
+            all_types = prov.history_raw(start, history_types=None)      # every change type
+            added_only = prov.history_raw(start, history_types="messageAdded")
+        except Exception as exc:  # noqa: BLE001
+            out["error"] = f"{type(exc).__name__}: {exc}"
+            return out
+        all_types["records"] = all_types["records"][:50]                 # cap payload
+        added_only["records"] = added_only["records"][:50]
+        out["all_types"] = all_types
+        out["message_added_only"] = added_only
+        added_n = all_types["type_counts"].get("messagesAdded", 0)
+        out["verdict"] = (
+            f"{added_n} messageAdded record(s) in this window — production SHOULD "
+            "surface these; if message_count was 0, suspect pagination or parsing."
+            if added_n else
+            "0 messageAdded records — the historyId advance was label/read/delete "
+            "changes (see type_counts), NOT a new inbound message. message_count=0 "
+            "is correct here; a real reply would show a messagesAdded record.")
+        return out
