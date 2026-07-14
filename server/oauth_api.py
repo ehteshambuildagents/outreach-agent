@@ -194,6 +194,12 @@ def register(app, rl_read=None, rl_write=None):
     # ── inbound webhooks (public; verified by shared secret / clientState) ──
     @app.post("/api/webhooks/gmail")
     async def gmail_webhook(request: Request):
+        # Entry marker on the saqua.oauth_api logger (the one confirmed visible in
+        # deploy logs) so a webhook hit is provable regardless of what the push
+        # handler does. If a 200 shows without this line, the running code isn't
+        # this route (stale/wrong deploy) or you're viewing another service's logs.
+        log.info("gmail webhook route hit (token_present=%s)",
+                 bool(request.query_params.get("token")))
         secret = os.environ.get("GMAIL_PUBSUB_TOKEN", "")
         if secret and request.query_params.get("token") != secret:
             raise HTTPException(status_code=401, detail="Bad push token.")
