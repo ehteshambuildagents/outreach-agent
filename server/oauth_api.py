@@ -18,6 +18,7 @@ Gmail webhook is gated by a shared ``?token=`` (when configured) and the Graph
 webhook by ``clientState`` — both are duplicate-safe.
 """
 
+import json
 import logging
 import os
 from urllib.parse import urlencode, urljoin
@@ -194,16 +195,24 @@ def register(app, rl_read=None, rl_write=None):
     # ── inbound webhooks (public; verified by shared secret / clientState) ──
     @app.post("/api/webhooks/gmail")
     async def gmail_webhook(request: Request):
-        # Entry marker on the saqua.oauth_api logger (the one confirmed visible in
-        # deploy logs) so a webhook hit is provable regardless of what the push
-        # handler does. If a 200 shows without this line, the running code isn't
-        # this route (stale/wrong deploy) or you're viewing another service's logs.
-        log.info("gmail webhook route hit (token_present=%s)",
+        # Read the RAW body ourselves (not request.json()) so a malformed or empty
+        # payload is LOGGED and acked with 200 — instead of an uncaught 500 that
+        # Pub/Sub then retries (which is what a hit at two timestamps ~a minute
+        # apart looks like). The entry line is on saqua.oauth_api (confirmed
+        # visible) and reports the real content-type + byte size of every hit.
+        raw = await request.body()
+        log.info("gmail webhook route hit: content_type=%r bytes=%d token_present=%s",
+                 request.headers.get("content-type"), len(raw or b""),
                  bool(request.query_params.get("token")))
         secret = os.environ.get("GMAIL_PUBSUB_TOKEN", "")
         if secret and request.query_params.get("token") != secret:
             raise HTTPException(status_code=401, detail="Bad push token.")
-        envelope = await request.json()
+        try:
+            envelope = json.loads(raw) if raw else {}
+        except (ValueError, TypeError) as exc:
+            log.error("gmail webhook: body is not JSON (%s); first 300 bytes=%r",
+                      type(exc).__name__, (raw or b"")[:300])
+            return {"ok": True, "ignored": "bad_json"}      # 200 so Pub/Sub stops retrying
         return push.handle_gmail_pubsub(_store, _tokens, envelope)
 
     @app.api_route("/api/webhooks/graph", methods=["POST"])
