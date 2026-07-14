@@ -88,6 +88,25 @@ class GmailPushTests(unittest.TestCase):
         self.assertEqual(res["stopped"], 1)
         self.assertEqual(self.store.load(wf.id).state, states.STOPPED)
 
+    def test_history_start_uses_watch_seed_not_push_id(self):
+        # Regression: watch() stores the seed under camelCase "historyId"; the first
+        # push must start history.list from THAT seed, not the push's own current
+        # historyId (which returns no new changes, so the reply would be missed).
+        self.tokens.set_watch_state("u", "gmail", "me@x.com", {"historyId": "1000"})
+        _waiting_workflow(self.store, "u", "TID")
+        captured = {}
+
+        class _Cap(_FakeGmail):
+            def list_history(self, start):
+                captured["start"] = start
+                return super().list_history(start)
+
+        fake = _Cap([{"message_id": "M1", "thread_id": "TID", "labels": ["INBOX"]}])
+        res = push.handle_gmail_pubsub(self.store, self.tokens, _pubsub("me@x.com", "1005"),
+                                       provider_factory=lambda tok: fake)
+        self.assertEqual(captured["start"], "1000")   # watch() seed, not the push's "1005"
+        self.assertEqual(res["stopped"], 1)
+
     def test_duplicate_pubsub_is_noop(self):
         _waiting_workflow(self.store, "u", "TID")
         fake = _FakeGmail([{"message_id": "M1", "thread_id": "TID", "labels": ["INBOX"]}])

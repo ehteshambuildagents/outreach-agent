@@ -65,7 +65,12 @@ def handle_gmail_pubsub(store, token_store, envelope: dict, *, provider_factory=
             log.warning("gmail push: no valid token for %s (reconnect required), skipping",
                         acct["account_email"])
             continue                       # reconnect needed; nothing to poll
-        start = (acct.get("watch_state") or {}).get("history_id") or info["history_id"]
+        # watch() seeds the id under Gmail's camelCase "historyId"; each processed
+        # push then tracks it under "history_id". Read either (prefer the tracked
+        # value) and seed the FIRST push from the watch() response — NOT the push's
+        # own current historyId, which returns no new changes and misses the reply.
+        ws = acct.get("watch_state") or {}
+        start = ws.get("history_id") or ws.get("historyId") or info["history_id"]
         log.info("gmail push: calling history.list for %s startHistoryId=%s",
                  acct["account_email"], start)
         try:
