@@ -213,7 +213,15 @@ def register(app, rl_read=None, rl_write=None):
             log.error("gmail webhook: body is not JSON (%s); first 300 bytes=%r",
                       type(exc).__name__, (raw or b"")[:300])
             return {"ok": True, "ignored": "bad_json"}      # 200 so Pub/Sub stops retrying
-        return push.handle_gmail_pubsub(_store, _tokens, envelope)
+        # Wrap the handler call on THIS (proven-visible) logger. handle_gmail_pubsub
+        # logs its own steps on automation.push; if those aren't surfacing in the
+        # deploy (or push.py is stale), these two lines still show the payload shape
+        # AND the handler's return value, proving whether the handler ran at all.
+        log.info("gmail webhook: parsed envelope keys=%s -> handle_gmail_pubsub",
+                 list(envelope.keys()) if isinstance(envelope, dict) else type(envelope).__name__)
+        result = push.handle_gmail_pubsub(_store, _tokens, envelope)
+        log.info("gmail webhook: handle_gmail_pubsub returned %r", result)
+        return result
 
     @app.api_route("/api/webhooks/graph", methods=["POST"])
     async def graph_webhook(request: Request):
