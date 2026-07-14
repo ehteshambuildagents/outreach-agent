@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import time
+import traceback
 from collections import defaultdict, deque
 from pathlib import Path
 from urllib.parse import quote, urlparse
@@ -42,6 +43,9 @@ from chat.agent import respond  # noqa: E402
 from chat.models import Conversation, new_id  # noqa: E402
 from chat.store import ConversationStore  # noqa: E402
 from server.auth import auth_enabled, publishable_key, require_user  # noqa: E402
+import access  # noqa: E402  - soft-launch request-access gating
+import limits  # noqa: E402  - per-user account pause (kill switch)
+from server import error_log  # noqa: E402  - durable capture of unhandled errors
 
 log = logging.getLogger("saqua.api")
 
@@ -49,7 +53,12 @@ log = logging.getLogger("saqua.api")
 def _configure_app_logging() -> None:
     level = getattr(logging, os.environ.get("SAQUA_LOG_LEVEL", "INFO").upper(), logging.INFO)
     formatter = logging.Formatter("%(levelname)s:%(name)s:%(message)s")
-    for name in ("saqua", "discovery"):
+    # Every top-level logger namespace the app uses. Anything omitted here has no
+    # handler in its ancestry (root is left unconfigured), so its INFO/DEBUG records
+    # hit Python's last-resort handler (WARNING+ only) and vanish. That is exactly
+    # what silently swallowed the `chat.agent` tool-selection lines and the
+    # `research.x_search` cost lines — they live under `chat`/`research`, not `saqua`.
+    for name in ("saqua", "discovery", "chat", "research", "guard", "automation"):
         logger = logging.getLogger(name)
         logger.setLevel(level)
         logger.propagate = False
@@ -78,11 +87,19 @@ _STORE_BASE = str(Path(__file__).resolve().parent.parent / "conversations")
 
 @app.on_event("startup")
 def _log_oauth_configuration() -> None:
+    from automation import push  # deployed marker below: proves which push.py is live
     log.info(
         "oauth_config provider=gmail client_id_present=%s redirect_uri_present=%s",
         bool(os.environ.get("GOOGLE_CLIENT_ID", "").strip()),
         bool(os.environ.get("GOOGLE_REDIRECT_URI", "").strip()),
     )
+    # Boot-time build fingerprint on the visible saqua.api logger. If the deploy is
+    # serving a stale automation/push.py (build-layer or .pyc cache), the marker here
+    # won't match push.py's current BUILD_MARKER (or falls back to the STALE string) —
+    # a stale build is then obvious at boot, without sending a test push.
+    log.info("saqua boot: commit=%s push.BUILD_MARKER=%s",
+             os.environ.get("RAILWAY_GIT_COMMIT_SHA", "?"),
+             getattr(push, "BUILD_MARKER", "<<STALE: push.py has no BUILD_MARKER>>"))
 
 
 def _store_for(user_id: str) -> ConversationStore:
@@ -274,6 +291,15 @@ def _conversation_public(conv: Conversation) -> dict:
 @app.exception_handler(Exception)
 async def _unhandled(request: Request, exc: Exception):
     log.exception("unhandled error on %s", request.url.path)
+    # Durably capture it + alert (best-effort) so a real 500 is noticed same-day,
+    # not discovered later from a confused user — or never.
+    try:
+        error_log.record_error(
+            path=str(request.url.path), method=request.method, status=500,
+            error_type=type(exc).__name__, message=str(exc),
+            tb="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    except Exception:  # noqa: BLE001 - capture must never mask the response
+        pass
     return JSONResponse(status_code=500,
                         content={"error": "Something went wrong. Please try again."})
 
@@ -290,6 +316,31 @@ async def _validation_error(request: Request, exc: RequestValidationError):
     first = exc.errors()[0] if exc.errors() else {}
     msg = str(first.get("msg") or "Invalid request.").removeprefix("Value error, ")
     return JSONResponse(status_code=422, content={"error": msg})
+
+
+# ── Access control: verified + approved + not-paused ───────────────────
+_ACCESS_MESSAGE = {
+    "pending": ("Your access request is pending approval. We're rolling out access "
+                "gradually — you'll be able to sign in as soon as you're approved."),
+    "denied": "This account doesn't have access.",
+}
+
+
+def require_approved_user(request: Request, user: str = Depends(require_user)) -> str:
+    """Full product gate: verify the Clerk session, enforce soft-launch access
+    approval, and refuse a paused (kill-switched) account. Layered on top of
+    require_user (via Depends, so dependency overrides still apply) — identity
+    verification is unchanged."""
+    allowed, status = access.check_access(user)  # records first-seen users as pending
+    if not allowed:
+        raise HTTPException(status_code=403,
+                            detail=_ACCESS_MESSAGE.get(status, _ACCESS_MESSAGE["pending"]))
+    if limits.is_paused(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Your account is paused for review after unusual activity. "
+                   "Please contact support.")
+    return user
 
 
 # ── Routes ─────────────────────────────────────────────────────────────
@@ -310,7 +361,7 @@ def public_config():
 # operates ONLY on the caller's own per-user store (_store_for(user)).
 @app.get("/api/conversations")
 def list_conversations(request: Request, _=Depends(_rl_read),
-                       user: str = Depends(require_user)):
+                       user: str = Depends(require_approved_user)):
     out = []
     for s in _store_for(user).list_summaries():
         out.append({"id": s.get("id"), "title": s.get("title") or "New chat",
@@ -320,7 +371,7 @@ def list_conversations(request: Request, _=Depends(_rl_read),
 
 @app.post("/api/conversations")
 def create_conversation(request: Request, _=Depends(_rl_write),
-                        user: str = Depends(require_user)):
+                        user: str = Depends(require_approved_user)):
     conv = Conversation()
     _store_for(user).save(conv)
     return _conversation_public(conv)
@@ -328,7 +379,7 @@ def create_conversation(request: Request, _=Depends(_rl_write),
 
 @app.get("/api/conversations/{cid}")
 def get_conversation(cid: str, request: Request, _=Depends(_rl_read),
-                     user: str = Depends(require_user)):
+                     user: str = Depends(require_approved_user)):
     conv = _store_for(user).load(_valid_id(cid))
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
@@ -337,7 +388,7 @@ def get_conversation(cid: str, request: Request, _=Depends(_rl_read),
 
 @app.patch("/api/conversations/{cid}")
 def rename_conversation(cid: str, body: RenameConversation, request: Request,
-                        _=Depends(_rl_write), user: str = Depends(require_user)):
+                        _=Depends(_rl_write), user: str = Depends(require_approved_user)):
     store = _store_for(user)
     conv = store.load(_valid_id(cid))
     if conv is None:
@@ -349,7 +400,7 @@ def rename_conversation(cid: str, body: RenameConversation, request: Request,
 
 @app.post("/api/conversations/{cid}/duplicate")
 def duplicate_conversation(cid: str, request: Request, _=Depends(_rl_write),
-                           user: str = Depends(require_user)):
+                           user: str = Depends(require_approved_user)):
     store = _store_for(user)
     conv = store.load(_valid_id(cid))
     if conv is None:
@@ -364,14 +415,14 @@ def duplicate_conversation(cid: str, request: Request, _=Depends(_rl_write),
 
 @app.delete("/api/conversations/{cid}")
 def delete_conversation(cid: str, request: Request, _=Depends(_rl_write),
-                        user: str = Depends(require_user)):
+                        user: str = Depends(require_approved_user)):
     _store_for(user).delete(_valid_id(cid))
     return {"ok": True}
 
 
 @app.post("/api/conversations/{cid}/messages")
 def send_message(cid: str, body: SendMessage, request: Request,
-                 _=Depends(_rl_agent), user: str = Depends(require_user)):
+                 _=Depends(_rl_agent), user: str = Depends(require_approved_user)):
     """Run one agent turn. Defined as `def` so the (possibly slow) blocking call
     executes in FastAPI's threadpool and never blocks the event loop."""
     store = _store_for(user)
@@ -380,15 +431,20 @@ def send_message(cid: str, body: SendMessage, request: Request,
         raise HTTPException(status_code=404, detail="Conversation not found.")
     try:
         respond(conv, body.text, store, user_id=user)  # owner-scoped (for send_email)
-    except Exception:                            # noqa: BLE001 - never leak internals
+    except Exception as exc:                     # noqa: BLE001 - never leak internals
         log.exception("agent turn failed for %s", cid)
+        error_log.record_error(
+            path=str(request.url.path), method=request.method, status=502,
+            user_id=user, error_type=type(exc).__name__, message=str(exc),
+            tb="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
         raise HTTPException(status_code=502,
                             detail="The assistant couldn't respond just now. Please try again.")
     return _conversation_public(conv)
 
 
 # ── Automation Agent routes (Clerk-gated, per-user) ────────────────────
-from server import automation_api, campaign_api, oauth_api  # noqa: E402
+from server import admin_api, automation_api, campaign_api, oauth_api  # noqa: E402
+admin_api.register(app)                          # internal ops views (X-Admin-Token)
 automation_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
 oauth_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
 campaign_api.register(app, rl_read=_rl_read, rl_write=_rl_write)

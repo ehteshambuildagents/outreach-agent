@@ -20,6 +20,12 @@ from automation.providers import get_provider
 
 log = logging.getLogger("automation.push")
 
+# Bumped on every deploy-relevant change to this module so a stale build is obvious
+# from the boot log alone: server.api logs this value at startup. If the deploy is
+# serving an old push.py (build-layer or .pyc cache), the marker in the boot log
+# won't match this value (or the attribute is missing) — no test push needed.
+BUILD_MARKER = "2026-07-14-trace-v2"
+
 
 # ── Gmail (Cloud Pub/Sub push) ─────────────────────────────────────────
 def decode_pubsub(envelope: dict) -> dict:
