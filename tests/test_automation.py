@@ -181,6 +181,29 @@ class EngineFlowTests(unittest.TestCase):
         self.assertTrue(stopped.reply_detected)
         self.assertEqual(stopped.reply_message_id, "m")
 
+    def test_force_recovers_completed_workflow(self):
+        """Regression: a sequence that ran to COMPLETED because its reply was missed
+        must still be recoverable. Default ingest_reply no-ops on a terminal state
+        (that's why the recovery tool reported no change); force=True records the
+        reply and stops the finished sequence."""
+        wf = engine.create_workflow(self.s, "u", _steps(1), to_email="b@x.com")
+        engine.tick(self.s, now=wf.next_run_at)            # send the only step
+        self.assertEqual(self.s.load(wf.id).state, states.COMPLETED)
+        tid = self.s.load(wf.id).steps[0].provider_thread_id
+        # Default path: terminal guard -> silent no-op.
+        engine.ingest_reply(self.s, message_id="r1", workflow_id=wf.id, user_id="u", thread_id=tid)
+        still = self.s.load(wf.id)
+        self.assertEqual(still.state, states.COMPLETED)
+        self.assertFalse(still.reply_detected)
+        # Recovery path: force=True records the reply and stops it.
+        engine.ingest_reply(self.s, message_id="r2", workflow_id=wf.id, user_id="u",
+                            thread_id=tid, force=True)
+        r = self.s.load(wf.id)
+        self.assertEqual(r.state, states.STOPPED)
+        self.assertTrue(r.reply_detected)
+        self.assertEqual(r.reply_message_id, "r2")
+        self.assertTrue(any(e["type"] == "stopped" for e in self.s.events_for(r.id)))
+
     def test_retry_then_success(self):
         wf = engine.create_workflow(self.s, "u", _steps(1), to_email="b@x.com")
         DryRunProvider.fail_times = 2

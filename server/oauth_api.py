@@ -729,18 +729,25 @@ def register(app, rl_read=None, rl_write=None):
                                     "action": "skipped", "reason": wc["skip_reason"]})
                     continue
                 owner = next((w.user_id for w in wfs if w.id == wfid), None)
+                # force=True: these workflows ran to COMPLETED (a terminal state), so
+                # the default ingest_reply guard would silently no-op. Recovery must
+                # record the reply on a finished sequence.
                 try:
                     _store.db.execute("DELETE FROM processed WHERE key=?", (f"reply:{mid}",))
-                    engine.ingest_reply(_store, message_id=mid, workflow_id=wfid,
-                                        user_id=owner, thread_id=tid)
+                    returned = engine.ingest_reply(_store, message_id=mid, workflow_id=wfid,
+                                                   user_id=owner, thread_id=tid, force=True)
                 except Exception as exc:  # noqa: BLE001
                     results.append({"workflow_id": wfid, "thread_id": tid,
                                     "action": "error", "detail": f"{type(exc).__name__}: {exc}"})
                     continue
                 r = _store.load(wfid, user_id=owner)
+                did_stop = bool(r) and str(r.state) == "STOPPED" and r.reply_detected
                 results.append({
                     "workflow_id": wfid, "thread_id": tid, "reply_message_id": mid,
-                    "action": ("recovered" if r and str(r.state) == "STOPPED" else "attempted"),
+                    # Raw signal: what ingest_reply actually returned (state, or None).
+                    "ingest_reply_returned": (str(returned.state) if returned is not None else None),
+                    "action": ("recovered" if did_stop else "no_change"),
+                    "before": wc["before"],
                     "after": {"state": str(r.state) if r else None,
                               "stopped": (str(r.state) == "STOPPED") if r else None,
                               "reply_detected": r.reply_detected if r else None,

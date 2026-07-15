@@ -236,9 +236,14 @@ def _complete(wf, store):
 
 # ── Replies ────────────────────────────────────────────────────────────
 def ingest_reply(store, *, message_id, workflow_id=None, user_id=None,
-                 thread_id=None, now=None) -> Workflow:
-    """Record an inbound reply and STOP the workflow. Idempotent on message id:
-    a duplicate webhook is a no-op. Never sends another follow-up afterwards."""
+                 thread_id=None, now=None, force=False) -> Workflow:
+    """Record an inbound reply and STOP the workflow. Idempotent via the workflow's
+    persisted ``reply_detected`` flag: a duplicate webhook is a no-op.
+
+    ``force=True`` (recovery only) also records a reply on an already-terminal
+    workflow — e.g. a sequence that ran to COMPLETED because its reply was missed at
+    the time (the original ingest_reply bug). The live webhook path uses the default
+    ``force=False`` and deliberately leaves finished sequences untouched."""
     now = time.time() if now is None else now
 
     # Match the workflow BEFORE claiming the message in the processed ledger.
@@ -267,8 +272,10 @@ def ingest_reply(store, *, message_id, workflow_id=None, user_id=None,
         log.info("duplicate reply webhook ignored: %s", message_id)
         return None
 
-    if wf.reply_detected or states.is_terminal(wf.state):
-        return wf                          # already stopped
+    if wf.reply_detected:
+        return wf                          # already recorded — idempotent
+    if states.is_terminal(wf.state) and not force:
+        return wf                          # finished sequence; the live path leaves it be
     wf.reply_detected = True
     wf.reply_at = now
     wf.reply_message_id = message_id
