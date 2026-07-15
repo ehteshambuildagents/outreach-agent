@@ -756,3 +756,110 @@ def register(app, rl_read=None, rl_write=None):
                 })
         out["results"] = results
         return out
+
+    @app.get("/api/debug/workflow-steps")
+    def workflow_steps_debug(request: Request):
+        """Inspect a workflow's assembled cadence WITHOUT waiting for delays to
+        elapse. Per step: index, delay_days, scheduled_at (epoch + iso + days-from-
+        first), status, subject, a body preview, and an inferred content source
+        (original / bump / writer / breakup) corroborated by content signatures.
+        Plus a one-glance verdict vs the expected 5-touch cadence: step count, day
+        spacing, source sequence, whether the writer slots are DISTINCT, and whether
+        the bump actually reuses the original body. Read-only, token-gated.
+        Params: &workflow_id=<id>.
+        """
+        if not _debug_token_ok(request):
+            raise HTTPException(status_code=404, detail="Not found.")
+        import hashlib
+        from automation import scheduler
+        from config.settings import (AUTOMATION_MAX_FOLLOWUPS,
+                                      AUTOMATION_REPLY_WAIT_DAYS as WAIT)
+        wfid = (request.query_params.get("workflow_id") or "").strip()
+        out = {"build_marker": getattr(push, "BUILD_MARKER", None), "workflow_id": wfid}
+        if not wfid:
+            out["error"] = "add &workflow_id=<id>"
+            return out
+        wf = _store.load(wfid)
+        if wf is None:
+            out["error"] = "no workflow with that id"
+            return out
+
+        # Stable content signatures from the cadence builder (campaign_api._bump_step
+        # / _breakup_step). Position decides the source; these corroborate it.
+        BUMP_SIG = "Floating this back to the top"
+        BREAKUP_SIG = "so I'm not cluttering your inbox"
+
+        def _sha8(s):
+            return hashlib.sha1((s or "").encode("utf-8")).hexdigest()[:8]
+
+        def _quote(b):                          # mirrors campaign_api._quote_original
+            return "\n".join(f"> {ln}" if ln else ">"
+                             for ln in (b or "").strip().splitlines())
+
+        steps = wf.steps
+        n = len(steps)
+        base = steps[0].scheduled_at if steps else None
+        orig_body = steps[0].body if steps else ""
+        rows = []
+        for i, s in enumerate(steps):
+            body = s.body or ""
+            is_bump, is_breakup = (BUMP_SIG in body), (BREAKUP_SIG in body)
+            if i == 0:
+                src = "original"
+            elif is_breakup or i == n - 1:
+                src = "breakup"
+            elif is_bump:
+                src = "bump"
+            else:
+                src = "writer"
+            sched = s.scheduled_at
+            rows.append({
+                "index": s.index,
+                "delay_days": s.delay_days,
+                "scheduled_at": sched,
+                "scheduled_at_iso": (scheduler.local_time(sched, wf.timezone).isoformat()
+                                     if sched else None),
+                "days_from_first": (round((sched - base) / 86400.0, 3)
+                                    if sched and base else None),
+                "status": str(s.status),
+                "subject": s.subject,
+                "content_source": src,
+                "content_signals": {"is_bump_format": is_bump, "is_breakup_format": is_breakup},
+                "body_len": len(body),
+                "body_sha8": _sha8(body),
+                "body_preview": body[:240],
+            })
+
+        writer_shas = [r["body_sha8"] for r in rows if r["content_source"] == "writer"]
+        bump_row = next((s for s in steps if BUMP_SIG in (s.body or "")), None)
+        day_spacing = [r["days_from_first"] for r in rows]
+        source_seq = [r["content_source"] for r in rows]
+        expected_count = AUTOMATION_MAX_FOLLOWUPS + 1                 # 5 touches
+        expected_spacing = [round(float(WAIT) * k, 3) for k in range(n)]  # 0, W, 2W, ...
+        expected_sources = (["original", "bump"]
+                            + ["writer"] * max(0, n - 3) + ["breakup"]) if n >= 3 else source_seq
+        writers_distinct = (len(writer_shas) == len(set(writer_shas))) if writer_shas else None
+        bump_reuses_original = bool(bump_row and _quote(orig_body) in (bump_row.body or ""))
+
+        out["workflow"] = {"state": str(wf.state), "provider": wf.provider,
+                           "to_email": wf.to_email, "company": wf.company,
+                           "current_index": wf.current_index, "created_at": wf.created_at,
+                           "next_run_at": wf.next_run_at, "timezone": wf.timezone}
+        out["config"] = {"reply_wait_days": WAIT, "max_followups": AUTOMATION_MAX_FOLLOWUPS}
+        out["step_count"] = n
+        out["delay_days_sequence"] = [r["delay_days"] for r in rows]
+        out["day_spacing"] = day_spacing
+        out["expected_day_spacing"] = expected_spacing
+        out["source_sequence"] = source_seq
+        out["steps"] = rows
+        out["verdict"] = {
+            "step_count_ok": n == expected_count,
+            "spacing_ok": day_spacing == expected_spacing,
+            "sources_ok": source_seq == expected_sources,
+            "writer_slots_distinct": writers_distinct,
+            "bump_reuses_original": bump_reuses_original,
+            "all_good": bool(n == expected_count and day_spacing == expected_spacing
+                             and source_seq == expected_sources and writers_distinct
+                             and bump_reuses_original),
+        }
+        return out
