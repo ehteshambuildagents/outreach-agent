@@ -153,6 +153,32 @@ class GmailProvider(EmailProvider):
                 "truncated": bool(token), "record_count": len(records),
                 "type_counts": tally, "records": records}
 
+    def get_thread(self, thread_id, metadata_headers=("From", "To", "Subject", "Date")):
+        """DIAGNOSTIC: every message in a thread with its labelIds — checkpoint- and
+        history-window-independent ground truth for 'does this thread contain an
+        inbound reply'. Uses format=metadata (headers only, no bodies), so it's
+        cheap and exposes SENT vs received via labelIds. Read-only."""
+        params = [("format", "metadata")]
+        params += [("metadataHeaders", h) for h in metadata_headers]
+        r = requests.get(f"{_API}/threads/{thread_id}", headers=self._headers(),
+                         params=params, timeout=_TIMEOUT)
+        if r.status_code != 200:
+            raise ProviderError(f"gmail threads.get HTTP {r.status_code}: {r.text[:200]}")
+        d = r.json()
+        messages = []
+        for m in d.get("messages", []):
+            hdrs = {h.get("name"): h.get("value")
+                    for h in (m.get("payload", {}).get("headers") or [])}
+            labels = m.get("labelIds", [])
+            messages.append({"message_id": m.get("id"), "thread_id": m.get("threadId"),
+                             "labelIds": labels, "is_sent": "SENT" in labels,
+                             "internal_date": m.get("internalDate"),
+                             "snippet": m.get("snippet"),
+                             "from": hdrs.get("From"), "to": hdrs.get("To"),
+                             "subject": hdrs.get("Subject"), "date": hdrs.get("Date")})
+        return {"thread_id": d.get("id"), "message_count": len(messages),
+                "messages": messages}
+
     def health(self):
         if not (os.environ.get("GOOGLE_CLIENT_ID")
                 and os.environ.get("GOOGLE_CLIENT_SECRET")):
