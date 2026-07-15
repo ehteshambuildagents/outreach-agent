@@ -102,6 +102,27 @@ def _log_oauth_configuration() -> None:
              getattr(push, "BUILD_MARKER", "<<STALE: push.py has no BUILD_MARKER>>"))
 
 
+@app.on_event("startup")
+def _log_redis_configuration() -> None:
+    """Make a silent in-memory fallback impossible to miss. When Upstash is not
+    configured, the send rate limiter, per-workflow lock, and reply dedup all run on
+    per-process in-memory state — fine locally, but unsafe across a multi-instance
+    deployment (limits under-enforced, locks/dedup not shared → possible double
+    sends). In production we WARN loudly; we never refuse to boot."""
+    from automation import redis
+    from config import settings
+    if redis.configured():
+        log.info("redis: Upstash configured (coordination shared across instances)")
+    elif settings.is_production():
+        log.warning(
+            "REDIS NOT CONFIGURED IN PRODUCTION — using per-process in-memory fallback. "
+            "Send rate limiting, workflow locking, and reply dedup are NOT shared across "
+            "instances and will misbehave in any multi-instance deployment. "
+            "Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN on every service.")
+    else:
+        log.info("redis: in-memory fallback (local/dev); set UPSTASH_* for shared Redis")
+
+
 def _store_for(user_id: str) -> ConversationStore:
     safe = re.sub(r"[^A-Za-z0-9_-]", "", user_id or "") or "anonymous"
     return ConversationStore(directory=str(Path(_STORE_BASE) / safe))
