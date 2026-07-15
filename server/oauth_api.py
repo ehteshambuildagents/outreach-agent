@@ -877,30 +877,39 @@ def register(app, rl_read=None, rl_write=None):
 
     @app.get("/api/debug/campaign-workflows")
     def campaign_workflows_debug(request: Request):
-        """Look up a campaign BY NAME (token-gated, no Clerk session needed) and
-        return its id + workflow_ids, chaining straight into the per-workflow cadence
-        breakdown so one URL gives the full verdict. Read-only. Params: &name=
-        <campaign name> [&steps=0 to omit the step breakdown].
+        """Look up campaigns (token-gated, no Clerk session needed).
+
+        With &name: match that campaign by name (case/space-insensitive) and chain
+        straight into the per-workflow cadence breakdown so one URL gives the full
+        verdict. WITHOUT &name: LIST all campaigns (most-recently-created first) —
+        id, stored name, status, workflow_ids — so you can find the real stored
+        name/id (the stored name is whatever was typed at creation, NOT the URL
+        slug). Read-only. Params: [&name=<campaign name>] [&steps=0 omits breakdown].
         """
         if not _debug_token_ok(request):
             raise HTTPException(status_code=404, detail="Not found.")
         from server.campaign_store import CampaignStore
         name = (request.query_params.get("name") or "").strip()
         with_steps = (request.query_params.get("steps") or "1").strip() != "0"
-        out = {"build_marker": getattr(push, "BUILD_MARKER", None), "name_queried": name}
-        if not name:
-            out["error"] = "add &name=<campaign name>"
-            return out
+        out = {"build_marker": getattr(push, "BUILD_MARKER", None),
+               "mode": "lookup" if name else "list", "name_queried": name or None}
         cs = CampaignStore()
         try:
-            rows = cs.db.query(
-                "SELECT * FROM campaigns WHERE lower(trim(name))=lower(trim(?)) "
-                "ORDER BY updated_at DESC", (name,))
+            if name:
+                rows = cs.db.query(
+                    "SELECT * FROM campaigns WHERE lower(trim(name))=lower(trim(?)) "
+                    "ORDER BY updated_at DESC", (name,))
+            else:
+                # No name -> list ALL campaigns so you can find the real name/id.
+                # Step breakdown is omitted in list mode to keep the payload small.
+                rows = cs.db.query("SELECT * FROM campaigns ORDER BY created_at DESC LIMIT 100")
+                with_steps = False
         except Exception as exc:  # noqa: BLE001
             out["error"] = f"{type(exc).__name__}: {exc}"
             return out
         if not rows:
-            out["error"] = "no campaign with that name"
+            out["error"] = ("no campaigns found at all" if not name
+                            else "no campaign with that name (omit &name to LIST all)")
             return out
         campaigns = []
         for row in rows:
