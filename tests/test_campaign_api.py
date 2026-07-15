@@ -252,6 +252,62 @@ class CampaignApiTests(unittest.TestCase):
         self.assertEqual(len(launched["workflow_ids"]), 1)
         self.assertEqual(launched["workflows"][0]["to"], "ada@acme.com")
 
+    def test_cadence_warning_distinguishes_causes_and_skips_healthy(self):
+        from server.campaign_api import _cadence_warning
+        base = {"final_status": "sendable", "guard": {"decision": "ALLOW"},
+                "email": {"status": "ok", "to": "a@acme.com", "recipient": {"email": "a@acme.com"}}}
+        # manual recipient + no follow-ups -> code gap
+        manual = {**base, "manual_recipient": {"email": "a@acme.com"}, "followups": []}
+        self.assertEqual(_cadence_warning(manual)["code"], "manual_recipient_no_followups")
+        self.assertEqual(_cadence_warning(manual)["planned_steps"], 3)
+        # auto-sendable + no follow-ups -> dropped at create time
+        self.assertEqual(_cadence_warning({**base, "followups": []})["code"],
+                         "followups_dropped_at_create")
+        # has follow-ups -> no warning
+        self.assertIsNone(_cadence_warning({**base, "followups": [{"slot": 2}]}))
+        # not launchable (guard WARN, or route_only) -> no warning
+        self.assertIsNone(_cadence_warning({**base, "guard": {"decision": "WARN"}, "followups": []}))
+        self.assertIsNone(_cadence_warning({**base, "final_status": "route_only", "followups": []}))
+
+    def test_result_with_warnings_enriches_only_incomplete_and_is_nondestructive(self):
+        from server.campaign_api import _result_with_warnings
+        good = {"final_status": "sendable", "guard": {"decision": "ALLOW"}, "domain": "good.com",
+                "email": {"status": "ok", "to": "a@x.com", "recipient": {"email": "a@x.com"}},
+                "followups": [{"slot": 2}]}
+        bad = {"final_status": "sendable", "guard": {"decision": "ALLOW"}, "domain": "bad.com",
+               "email": {"status": "ok", "to": "b@x.com", "recipient": {"email": "b@x.com"}},
+               "followups": []}
+        out = _result_with_warnings({"prospects": [good, bad]})
+        self.assertNotIn("cadence_warning", out["prospects"][0])
+        self.assertEqual(out["prospects"][1]["cadence_warning"]["code"], "followups_dropped_at_create")
+        self.assertNotIn("cadence_warning", good)          # originals untouched
+        self.assertNotIn("cadence_warning", bad)
+
+    def test_launch_flags_manual_recipient_incomplete_cadence(self):
+        # A manual-recipient prospect launches with zero follow-ups (3-step cadence);
+        # the API must surface cadence_warning + launched_with_warnings and record a
+        # launched_incomplete event so the UI can warn.
+        c = _client("alice")
+        with self._patch_happy(), \
+                mock.patch("server.campaign_api.research_company", return_value=_research(email="")), \
+                mock.patch("server.campaign_api.writer.write_email",
+                           return_value={"status": "ok", "subject": "s",
+                                         "body": "This email has enough body words and a specific Acme warehouse automation detail to pass preview."}):
+            data = c.post("/api/campaigns", json={"name": "A", "icp": {"raw": "x"}}).json()
+        with mock.patch("server.campaign_api.guard_assess", return_value=_guard("ALLOW")):
+            updated = c.post(f"/api/campaigns/{data['id']}/prospects/acme.com/recipient",
+                             json={"name": "Ada Lane", "email": "ada@acme.com"}).json()
+        # Warning is visible in the detail view before launch.
+        warned = updated["result"]["prospects"][0]["cadence_warning"]
+        self.assertEqual(warned["code"], "manual_recipient_no_followups")
+
+        launched = c.post(f"/api/campaigns/{updated['id']}/launch", json={"provider": "dryrun"}).json()
+        self.assertEqual(len(launched["workflow_ids"]), 1)
+        warns = launched["result"]["launched_with_warnings"]
+        self.assertEqual([w["code"] for w in warns], ["manual_recipient_no_followups"])
+        self.assertEqual(warns[0]["domain"], "acme.com")
+        self.assertTrue(any(e["type"] == "launched_incomplete" for e in launched["events"]))
+
     def test_empty_discovery_returns_clean_no_valid_prospects_result(self):
         c = _client("alice")
         with mock.patch("server.campaign_api.discover", return_value=DiscoveryResult(

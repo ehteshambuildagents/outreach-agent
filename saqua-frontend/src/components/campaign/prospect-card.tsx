@@ -53,6 +53,11 @@ export function ProspectCard({
                 <Badge tone={status.tone} dot>
                   {status.label}
                 </Badge>
+                {p.cadence_warning && (
+                  <Badge tone="warn" title={p.cadence_warning.message}>
+                    Partial cadence · {p.cadence_warning.planned_steps} steps
+                  </Badge>
+                )}
               </div>
               <div className="mt-0.5 truncate text-xs text-muted">{p.research?.summary || p.reason || p.domain}</div>
             </div>
@@ -89,6 +94,12 @@ export function ProspectCard({
               transition={{ duration: 0.2 }}
               className="overflow-hidden border-t border-border-faint"
             >
+              {p.cadence_warning && (
+                <div className="mx-5 mt-4 flex items-start gap-2 rounded-md border border-warn/30 bg-warn/[0.06] px-3 py-2 text-xs text-text-2">
+                  <span className="mt-0.5 font-medium text-warn">Partial cadence</span>
+                  <span>{p.cadence_warning.message}</span>
+                </div>
+              )}
               <div className="grid gap-4 px-5 py-4 lg:grid-cols-2">
                 <div className="space-y-3">
                   <AgentRow icon={Search} label="Research">

@@ -321,6 +321,14 @@ export default function NewCampaignPage() {
                       ? "Only guard-approved emails with a valid recipient address are launched."
                       : "Every email was blocked, held, or is route-only. Nothing will be sent."}
                   </div>
+                  {prospects.filter((p) => p.cadence_warning).length > 0 && (
+                    <div className="mt-1.5 text-xs text-warn">
+                      {prospects.filter((p) => p.cadence_warning).length} prospect
+                      {prospects.filter((p) => p.cadence_warning).length === 1 ? "" : "s"} will launch
+                      with a partial 3-step cadence (no mid-sequence follow-ups). See the flagged
+                      cards above.
+                    </div>
+                  )}
                   {launchError && <div className="mt-1.5 text-xs text-danger">{launchError}</div>}
                 </div>
                 <div className="flex items-center gap-2">

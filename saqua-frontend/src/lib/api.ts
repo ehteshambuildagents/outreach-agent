@@ -218,6 +218,14 @@ export interface CampaignPreviewProspect {
     name?: string | null;
     email?: string | null;
   };
+  followups?: unknown[];
+  /** Present when this prospect would launch with only a 3-step cadence (no
+   * mid-cadence follow-ups). `code` distinguishes the cause. */
+  cadence_warning?: {
+    code: "manual_recipient_no_followups" | "followups_dropped_at_create";
+    planned_steps: number;
+    message: string;
+  };
 }
 
 export interface CampaignDetail {
@@ -234,6 +242,7 @@ export interface CampaignDetail {
     reason?: string;
     summary: CampaignSummary;
     prospects: CampaignPreviewProspect[];
+    launched_with_warnings?: { domain: string; code: string; planned_steps: number; message: string }[];
   };
   events: WorkflowEvent[];
   workflows: WorkflowStatus[];

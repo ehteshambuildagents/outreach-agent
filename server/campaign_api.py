@@ -221,10 +221,20 @@ def register(app, rl_read=None, rl_write=None):
         result = dict(campaign["result"])
         result["launched_at"] = time.time()
         result["workflow_ids"] = workflow_ids
+        # Flag any prospect that launched with a 3-step (no-follow-up) cadence so the
+        # UI can warn — nobody should ship a silently incomplete sequence unknowingly.
+        warnings = [{"domain": p.get("domain") or p.get("website"), **w}
+                    for p in (result.get("prospects") or [])
+                    if (w := _cadence_warning(p))]
+        if warnings:
+            result["launched_with_warnings"] = warnings
         updated = campaigns.update(user, campaign_id, status="launched",
                                    result=result, workflow_ids=workflow_ids)
         campaigns.add_event(user, campaign_id, "launched",
                             f"{len(workflow_ids)} workflow(s) created via {body.provider}")
+        if warnings:
+            campaigns.add_event(user, campaign_id, "launched_incomplete",
+                                f"{len(warnings)} prospect(s) launched with a 3-step cadence")
         return _campaign_public(updated)
 
     @app.post("/api/campaigns/{campaign_id}/pause")
@@ -775,6 +785,50 @@ def _launchable_emails(result: dict) -> list[dict]:
     return out
 
 
+def _cadence_warning(prospect: dict) -> dict | None:
+    """A launchable prospect that would send only a 3-step cadence (no mid-cadence
+    follow-ups) — surfaced so no one launches a silently incomplete sequence. The
+    cause differs and is reported in the message: a MANUAL recipient never triggers
+    follow-up generation (a code gap; follow-ups are only generated at preview for
+    auto-'sendable' prospects), versus an auto-sendable prospect whose two slots
+    were both dropped at create time (writer non-ok / guard BLOCK). Returns None for
+    anything that is not launchable or that has follow-ups. Pure."""
+    email = prospect.get("email") or {}
+    to = (email.get("recipient") or {}).get("email") or email.get("to")
+    launchable = (prospect.get("final_status") == "sendable"
+                  and (prospect.get("guard") or {}).get("decision") == "ALLOW"
+                  and email.get("status") == "ok" and _valid_email(to))
+    if not launchable or (prospect.get("followups") or []):
+        return None
+    manual = bool(prospect.get("manual_recipient")) or bool((email.get("recipient") or {}).get("manual"))
+    if manual:
+        return {"code": "manual_recipient_no_followups", "planned_steps": 3,
+                "message": ("Manual recipient — no follow-ups were generated, so this "
+                            "prospect will send a 3-step cadence (initial + bump + "
+                            "break-up), not the full 5-touch sequence.")}
+    return {"code": "followups_dropped_at_create", "planned_steps": 3,
+            "message": ("No follow-ups cleared generation at create time (the writer "
+                        "or guard dropped both slots), so this prospect will send a "
+                        "3-step cadence (initial + bump + break-up).")}
+
+
+def _result_with_warnings(result: dict) -> dict:
+    """Non-destructively enrich each prospect with a ``cadence_warning`` (or leave it
+    absent). Computed on read so preview + detail always agree with launch."""
+    if not isinstance(result, dict) or not isinstance(result.get("prospects"), list):
+        return result
+    enriched = []
+    for p in result["prospects"]:
+        pc = dict(p)
+        warning = _cadence_warning(pc)
+        if warning:
+            pc["cadence_warning"] = warning
+        enriched.append(pc)
+    out = dict(result)
+    out["prospects"] = enriched
+    return out
+
+
 # ── Launch-time cadence assembly (pure; no model or guard calls here) ────
 _BUMP_INTRO = ("Floating this back to the top in case it got buried — no worries if "
                "the timing's off, just wanted to make sure it reached you.")
@@ -849,7 +903,7 @@ def _campaign_public(row: dict, idempotent: bool = False) -> dict:
     return {
         **_campaign_summary(row),
         "request": row["request"],
-        "result": row["result"],
+        "result": _result_with_warnings(row["result"]),
         "events": _safe_campaign_events(row["owner"], row["id"]),
         "idempotent": idempotent,
         "workflows": _safe_workflow_statuses(row["owner"], row["workflow_ids"]),
