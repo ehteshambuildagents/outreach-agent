@@ -614,18 +614,21 @@ def register(app, rl_read=None, rl_write=None):
     def gmail_reply_recover(request: Request):
         """Recover replies lost to the old ingest_reply key-burning bug (b7f6d9c).
 
-        GET  = DRY RUN — resolves each &thread_id to its workflow + inbound reply
-               message id and shows EXACTLY what would change; writes NOTHING.
-        POST&confirm=1 = EXECUTE — for each resolved, un-stopped workflow: clears
-               the burned `reply:<id>` ledger key, then re-runs the now-fixed
+        Without &confirm = DRY RUN — resolves each &thread_id to its workflow +
+               inbound reply message id and shows EXACTLY what would change; writes
+               NOTHING.
+        &confirm=1 = EXECUTE — for each resolved, un-stopped workflow: clears the
+               burned `reply:<id>` ledger key, then re-runs the now-fixed
                ingest_reply (which stops the sequence, sets reply fields, writes the
                reply+stopped events). Strictly limited to the resolved workflows.
+               Method-agnostic on purpose: a proxy can downgrade POST->GET, so the
+               &confirm flag (not the HTTP verb) decides.
 
-        Safety: GET can never write. If &workflow_ids=<a,b,..> is supplied, the
-        resolved set MUST equal it exactly or the whole call aborts untouched — so
-        nothing outside the ids you name is ever modified. Already-stopped
-        workflows are skipped (idempotent). Token-gated. Params: &email= &thread_id=
-        <id[,id]> [&workflow_ids=<id[,id]>] [&confirm=1 with POST].
+        Safety: default (no &confirm) never writes. If &workflow_ids=<a,b,..> is
+        supplied, the resolved set MUST equal it exactly or the whole call aborts
+        untouched — so nothing outside the ids you name is ever modified.
+        Already-stopped workflows are skipped (idempotent). Token-gated. Params:
+        &email= &thread_id=<id[,id]> [&workflow_ids=<id[,id]>] [&confirm=1].
         """
         if not _debug_token_ok(request):
             raise HTTPException(status_code=404, detail="Not found.")
@@ -635,10 +638,18 @@ def register(app, rl_read=None, rl_write=None):
                       (request.query_params.get("thread_id") or "").split(",") if t.strip()]
         expect_wf = sorted({w.strip() for w in
                             (request.query_params.get("workflow_ids") or "").split(",") if w.strip()})
-        is_execute = request.method == "POST" and request.query_params.get("confirm") == "1"
+        # Execute is gated by the &confirm flag ALONE — deliberately NOT by
+        # request.method. A platform/proxy redirect (http->https, host or trailing
+        # slash) can downgrade POST->GET, which silently trapped every execute in
+        # dry-run. Safety still holds: token gate + &workflow_ids allowlist +
+        # idempotency (already-stopped workflows are skipped).
+        confirm_raw = request.query_params.get("confirm")
+        is_execute = (confirm_raw or "").strip().lower() in ("1", "true", "yes")
         out = {"mode": "execute" if is_execute else "dry_run",
                "email_queried": email, "thread_ids": thread_ids,
-               "workflow_ids_allowlist": expect_wf or None}
+               "workflow_ids_allowlist": expect_wf or None,
+               "received_method": request.method,        # server-side truth (was POST downgraded?)
+               "received_confirm_param": confirm_raw}
         if not email or not thread_ids:
             out["error"] = ("add &email=<gmail>&thread_id=<id[,id,...]>; GET previews, "
                             "POST with &confirm=1 executes")
@@ -704,8 +715,8 @@ def register(app, rl_read=None, rl_write=None):
 
         if not is_execute:
             out["note"] = ("DRY RUN — nothing written. Review resolved_workflow_ids + each "
-                           "planned_change, then POST the same URL with &confirm=1 (add "
-                           "&workflow_ids=<those ids> to hard-pin the set).")
+                           "planned_change, then re-run the SAME URL with &confirm=1 to execute "
+                           "(any HTTP method; add &workflow_ids=<those ids> to hard-pin the set).")
             return out
 
         results = []
