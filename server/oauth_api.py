@@ -931,3 +931,86 @@ def register(app, rl_read=None, rl_write=None):
                            "updated first. Use the campaign_id you expect.")
         out["campaigns"] = campaigns
         return out
+
+    @app.get("/api/debug/campaign-followups")
+    def campaign_followups_debug(request: Request):
+        """Explain, from PERSISTED campaign data, why a prospect's mid-cadence
+        follow-ups (slots 2 & 3) are present or missing — no create-time logs needed.
+        Per prospect: final_status, whether a MANUAL recipient was used, the original
+        email's guard decision, surviving follow-ups (slot + guard_decision), and a
+        diagnosis distinguishing:
+          * follow-ups generated & survived,
+          * MANUAL-recipient prospect -> follow-ups NEVER generated (code gap; they
+            are only generated at preview for auto-'sendable' prospects),
+          * auto-'sendable' but 0 survivors -> both dropped at create time (writer
+            non-ok or guard BLOCK); exact reason only in create-time logs,
+          * not sendable at preview -> never generated.
+        Read-only, token-gated. Params: &campaign_id=<id> OR &name=<name>.
+        """
+        if not _debug_token_ok(request):
+            raise HTTPException(status_code=404, detail="Not found.")
+        from server.campaign_store import CampaignStore
+        cid = (request.query_params.get("campaign_id") or "").strip()
+        name = (request.query_params.get("name") or "").strip()
+        out = {"build_marker": getattr(push, "BUILD_MARKER", None),
+               "campaign_id": cid or None, "name_queried": name or None}
+        if not cid and not name:
+            out["error"] = "add &campaign_id=<id> or &name=<campaign name>"
+            return out
+        cs = CampaignStore()
+        try:
+            if cid:
+                rows = cs.db.query("SELECT * FROM campaigns WHERE id=?", (cid,))
+            else:
+                rows = cs.db.query(
+                    "SELECT * FROM campaigns WHERE lower(trim(name))=lower(trim(?)) "
+                    "ORDER BY updated_at DESC", (name,))
+        except Exception as exc:  # noqa: BLE001
+            out["error"] = f"{type(exc).__name__}: {exc}"
+            return out
+        if not rows:
+            out["error"] = "no matching campaign"
+            return out
+        results = []
+        for row in rows:
+            c = cs._row(row)
+            prospects = []
+            for p in (c.get("result") or {}).get("prospects") or []:
+                email = p.get("email") or {}
+                recipient = email.get("recipient") or p.get("recipient") or {}
+                fups = p.get("followups") or []
+                nf = len(fups)
+                fs = p.get("final_status")
+                manual = bool(p.get("manual_recipient")) or bool(recipient.get("manual"))
+                if nf >= 1:
+                    diagnosis = f"{nf} follow-up(s) generated and cleared guard."
+                elif manual:
+                    diagnosis = ("0 follow-ups: prospect got a MANUAL recipient. Follow-ups "
+                                 "are generated only at preview for auto-'sendable' prospects, "
+                                 "so the manual path never generated them. CODE GAP, not a "
+                                 "guard block — launches as 3 steps.")
+                elif fs == "sendable":
+                    diagnosis = ("0 follow-ups despite auto-'sendable': both slots dropped at "
+                                 "create time (writer non-ok, or guard BLOCK after one retry). "
+                                 "Exact reason is only in create-time logs — grep "
+                                 "campaign_followup_blocked / campaign_followup_writer_failed / "
+                                 "campaign_followup_guard_failed for this campaign's trace/domain.")
+                else:
+                    diagnosis = (f"final_status={fs!r}: not sendable at preview, so follow-ups "
+                                 "were never generated.")
+                prospects.append({
+                    "domain": p.get("domain") or p.get("website"),
+                    "final_status": fs,
+                    "manual_recipient": manual,
+                    "guard_decision": (p.get("guard") or {}).get("decision"),
+                    "followup_count": nf,
+                    "followups": [{"slot": f.get("slot"),
+                                   "guard_decision": f.get("guard_decision"),
+                                   "subject": f.get("subject")} for f in fups],
+                    "cadence_steps_at_launch": 3 + nf,      # original + bump + writers + breakup
+                    "diagnosis": diagnosis,
+                })
+            results.append({"campaign_id": c["id"], "name": c["name"], "status": c["status"],
+                            "workflow_ids": c["workflow_ids"], "prospects": prospects})
+        out["campaigns"] = results
+        return out
