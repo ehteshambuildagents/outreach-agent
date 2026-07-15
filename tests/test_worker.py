@@ -137,6 +137,40 @@ class WorkerTests(unittest.TestCase):
             w.run_once(now=time.time())
         arm.assert_not_called()
 
+    def _seed_healthy_and_corrupt(self):
+        """One healthy watched account + one whose stored token can't be decrypted
+        (e.g. a leaked test-key row in prod). Both are due for renewal."""
+        for email in ("real@co.com", "bad@x.com"):
+            self.tokens.upsert(user_id="u", provider="gmail", account_email=email,
+                               access_token="AT", refresh_token="RT",
+                               expires_at=time.time() + 9999)
+            self.tokens.set_watch_state("u", "gmail", email, {"expiration": 0})  # due
+        self.tokens.db.execute(
+            "UPDATE oauth_accounts SET access_enc=? WHERE account_email=?",
+            ("not-valid-ciphertext", "bad@x.com"))
+
+    def test_with_watch_skips_undecodable_row(self):
+        # Regression: with_watch decoded every row in one comprehension, so a single
+        # corrupt/foreign-key token blew up the whole read (and the worker tick).
+        self._seed_healthy_and_corrupt()
+        recs = self.tokens.with_watch("gmail")             # must NOT raise
+        self.assertEqual([r["account_email"] for r in recs], ["real@co.com"])
+
+    def test_renew_watches_survives_corrupt_token(self):
+        # Regression: one undecryptable token must not abort watch renewal for every
+        # OTHER account — the corrupt row is skipped and the healthy one still renews.
+        self._seed_healthy_and_corrupt()
+
+        class _Prov:
+            def watch(self, *, user_id):
+                return {"expiration": time.time() + 99999}
+
+        w = self._worker(maint_interval=0)                 # maintenance every beat
+        with mock.patch("automation.providers.get_provider", return_value=_Prov()):
+            w.run_once(now=time.time())                    # must NOT raise
+        renewed = self.tokens.get("u", "gmail", "real@co.com")["watch_state"]
+        self.assertGreater(renewed["expiration"], time.time())
+
 
 class HealthTests(unittest.TestCase):
     def setUp(self):

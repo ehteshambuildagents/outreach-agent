@@ -84,8 +84,13 @@ class Worker:
                                 credentials_provider=self.credentials_provider)
         self.last_tick_at = now
         if now - self._last_maint >= self.maint_interval:
-            self._maintenance(now=now)
-            self._last_maint = now
+            # Advance the maintenance clock even if maintenance raises, so a bug in
+            # it can never turn into an every-tick crash storm (it retries next
+            # interval, not next tick). The pieces inside are already per-item safe.
+            try:
+                self._maintenance(now=now)
+            finally:
+                self._last_maint = now
         if processed:
             log.debug("worker advanced %d workflows", processed)
         return processed
@@ -111,20 +116,22 @@ class Worker:
         from automation.providers import get_provider
         for provider in ("gmail", "outlook"):
             for rec in self.tokens.with_watch(provider):
-                exp = (rec.get("watch_state") or {}).get("expiration")
-                if exp and float(exp) - now > AUTOMATION_WATCH_RENEW_BEFORE:
-                    continue                    # still fresh
-                token = self.tokens.valid_access_token(
-                    rec["user_id"], provider, rec["account_email"], now=now)
-                if not token:
-                    continue                    # reconnect needed; skip quietly
+                # Per-account isolation: a single bad account (unrenewable token, a
+                # provider error) must not abort watch renewal for every other one.
                 try:
+                    exp = (rec.get("watch_state") or {}).get("expiration")
+                    if exp and float(exp) - now > AUTOMATION_WATCH_RENEW_BEFORE:
+                        continue                    # still fresh
+                    token = self.tokens.valid_access_token(
+                        rec["user_id"], provider, rec["account_email"], now=now)
+                    if not token:
+                        continue                    # reconnect needed; skip quietly
                     state = get_provider(provider, credentials=token).watch(
                         user_id=rec["user_id"])
                     self.tokens.set_watch_state(rec["user_id"], provider,
                                                 rec["account_email"], state or {})
-                except Exception as exc:        # noqa: BLE001
-                    metrics.incr("provider_failures")
+                except Exception as exc:        # noqa: BLE001 - one bad account must
+                    metrics.incr("provider_failures")   # not abort the whole sweep
                     log.warning("watch renewal failed for %s/%s: %s",
                                 provider, rec["account_email"], type(exc).__name__)
         # Self-heal: arm a watch for any connected Gmail account that has none yet

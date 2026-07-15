@@ -15,11 +15,14 @@ can send as them. Backed by Postgres or SQLite via :mod:`automation.db`.
 """
 
 import json
+import logging
 import time
 
 from automation import crypto
 from automation.db import Database
 from config.settings import AUTOMATION_TOKEN_REFRESH_SKEW
+
+log = logging.getLogger("automation.tokens")
 
 STATUS_CONNECTED = "connected"
 STATUS_RECONNECT = "reconnect_required"
@@ -115,6 +118,21 @@ class TokenStore:
             "updated_at": row["updated_at"],
         }
 
+    def _decode_rows(self, rows) -> list:
+        """Decode a batch of rows, SKIPPING any whose token can't be decrypted (a
+        corrupt row, or one written under a retired/foreign key) instead of letting
+        it abort the whole read. One poisoned row must not take down a bulk sweep —
+        e.g. watch renewal for every OTHER account. The raw provider/email columns
+        are safe to log; only the encrypted blob is undecodable."""
+        out = []
+        for r in rows:
+            try:
+                out.append(self._decode(r))
+            except Exception as exc:  # noqa: BLE001 - one bad row must not poison the batch
+                log.warning("skipping undecodable oauth row provider=%s email=%s: %s",
+                            r["provider"], r["account_email"], exc)
+        return out
+
     def list_accounts(self, user_id) -> list:
         """Connected accounts for the settings UI — NO token material exposed."""
         rows = self.db.query(
@@ -142,13 +160,13 @@ class TokenStore:
         rows = self.db.query(
             "SELECT * FROM oauth_accounts WHERE provider=? AND account_email=? AND status=?",
             (provider, account_email, STATUS_CONNECTED))
-        return [self._decode(r) for r in rows]
+        return self._decode_rows(rows)
 
     def with_watch(self, provider) -> list:
         rows = self.db.query(
             "SELECT * FROM oauth_accounts WHERE provider=? AND status=? "
             "AND watch_state IS NOT NULL", (provider, STATUS_CONNECTED))
-        return [self._decode(r) for r in rows]
+        return self._decode_rows(rows)
 
     def connected_without_watch(self, provider) -> list:
         """Connected accounts that have NO watch yet (watch_state IS NULL) — the
@@ -157,7 +175,7 @@ class TokenStore:
         rows = self.db.query(
             "SELECT * FROM oauth_accounts WHERE provider=? AND status=? "
             "AND watch_state IS NULL", (provider, STATUS_CONNECTED))
-        return [self._decode(r) for r in rows]
+        return self._decode_rows(rows)
 
     # ── the important one: a guaranteed-fresh access token ─────────────
     def valid_access_token(self, user_id, provider, account_email=None, *, now=None):
