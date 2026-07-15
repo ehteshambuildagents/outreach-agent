@@ -502,3 +502,110 @@ def register(app, rl_read=None, rl_write=None):
             "changes (see type_counts), NOT a new inbound message. message_count=0 "
             "is correct here; a real reply would show a messagesAdded record.")
         return out
+
+    @app.get("/api/debug/gmail-thread")
+    def gmail_debug_thread(request: Request):
+        """Ground truth per thread, independent of history windows/checkpoints.
+
+        For each &thread_id (comma-separated), calls Gmail threads.get and lists
+        every message + labelIds (SENT vs received), so you can SEE whether an
+        inbound reply exists — regardless of timing or checkpoint state. Then, for
+        the same thread, reports the STORED ingest_reply outcome we can check
+        directly rather than re-derive: the matching workflow's state (STOPPED?),
+        reply_detected / reply_at / reply_message_id, its reply+stopped events, and
+        whether the reply message id is in the durable `processed` ledger. This
+        distinguishes 'Gmail has a reply AND production stopped it' from a real
+        miss. Read-only, token-gated. Params: &email=<gmail> &thread_id=<id[,id]>.
+        """
+        if not _debug_token_ok(request):
+            raise HTTPException(status_code=404, detail="Not found.")
+        email = (request.query_params.get("email") or "").strip().lower()
+        thread_ids = [t.strip() for t in
+                      (request.query_params.get("thread_id") or "").split(",") if t.strip()]
+        out = {"build_marker": getattr(push, "BUILD_MARKER", None),
+               "email_queried": email, "thread_ids": thread_ids}
+        if not email or not thread_ids:
+            out["error"] = "add &email=<connected gmail>&thread_id=<id[,id,...]>"
+            return out
+        accounts = _tokens.accounts_by_email("gmail", email)
+        if not accounts:
+            out["error"] = "no connected gmail account for that email"
+            return out
+        user_ids = sorted({a["user_id"] for a in accounts})
+        out["user_id_tails_for_email"] = [u[-8:] for u in user_ids]
+        token = _tokens.valid_access_token(accounts[0]["user_id"], "gmail",
+                                           accounts[0]["account_email"])
+        out["has_valid_token"] = bool(token)
+        prov = push.get_provider("gmail", credentials=token) if token else None
+
+        # Preload every workflow for the email's user(s) once, then match by thread.
+        wfs = [wf for uid in user_ids for wf in _store.list_for_user(uid)]
+
+        def _in_ledger(key):
+            try:
+                return bool(_store.db.query_one("SELECT 1 AS x FROM processed WHERE key=?", (key,)))
+            except Exception as exc:  # noqa: BLE001
+                return f"error: {type(exc).__name__}"
+
+        results = {}
+        for tid in thread_ids:
+            entry = {}
+            inbound_ids = []
+            # 1) Gmail ground truth for the thread.
+            if prov is None:
+                entry["gmail"] = {"error": "no valid token (reconnect required)"}
+            else:
+                try:
+                    th = prov.get_thread(tid)
+                    inbound_ids = [m["message_id"] for m in th["messages"] if not m["is_sent"]]
+                    entry["gmail"] = {
+                        "message_count": th["message_count"],
+                        "sent_count": sum(1 for m in th["messages"] if m["is_sent"]),
+                        "inbound_count": len(inbound_ids),
+                        "reply_present": bool(inbound_ids),
+                        "messages": th["messages"],
+                    }
+                except Exception as exc:  # noqa: BLE001
+                    entry["gmail"] = {"error": f"{type(exc).__name__}: {exc}"}
+            # 2) Stored ingest_reply outcome for the workflow(s) on this thread.
+            matched = [wf for wf in wfs
+                       if any(s.provider_thread_id == tid for s in wf.steps)]
+            wf_reports = []
+            for wf in matched:
+                evs = [e for e in _store.events_for(wf.id) if e["type"] in ("reply", "stopped")]
+                wf_reports.append({
+                    "workflow_id": wf.id,
+                    "user_id_tail": (wf.user_id or "")[-8:],
+                    "state": str(wf.state),
+                    "stopped": str(wf.state) == "STOPPED",
+                    "reply_detected": wf.reply_detected,
+                    "reply_at": wf.reply_at,
+                    "reply_message_id": wf.reply_message_id,
+                    "steps": [{"status": str(s.status), "thread_id": s.provider_thread_id}
+                              for s in wf.steps],
+                    "reply_stopped_events": [{"ts": e["ts"], "type": e["type"],
+                                              "detail": e["detail"]} for e in evs],
+                })
+            ledger_keys = {f"reply:{mid}": _in_ledger(f"reply:{mid}") for mid in inbound_ids}
+            for wf in matched:
+                if wf.reply_message_id:
+                    ledger_keys[f"reply:{wf.reply_message_id}"] = _in_ledger(f"reply:{wf.reply_message_id}")
+            entry["stored"] = {"matching_workflows": len(matched),
+                               "workflows": wf_reports, "processed_ledger": ledger_keys}
+            # 3) Plain-language verdict tying the two together.
+            reply_here = entry.get("gmail", {}).get("reply_present")
+            stopped_any = any(w["stopped"] for w in wf_reports)
+            if reply_here and stopped_any:
+                v = "Gmail HAS a reply AND a workflow is STOPPED with reply_detected — production caught it."
+            elif reply_here and matched and not stopped_any:
+                v = "Gmail HAS a reply but the matching workflow is NOT stopped — real miss (production did not stop it)."
+            elif reply_here and not matched:
+                v = "Gmail HAS a reply but NO workflow tracks this thread (untracked / different user_id)."
+            elif reply_here is None:
+                v = "Could not read Gmail (see gmail.error); stored state shown regardless."
+            else:
+                v = "No inbound reply in this thread per Gmail (only SENT messages)."
+            entry["verdict"] = v
+            results[tid] = entry
+        out["results"] = results
+        return out
