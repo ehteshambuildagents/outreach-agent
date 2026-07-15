@@ -96,6 +96,19 @@ class _MemoryStore:
             self._d[key] = (str(n), exp)
             return n
 
+    def incr_expiring(self, key, window):
+        """Atomic INCR that arms the TTL when the key is (re)created — mirrors the
+        Lua path so the very first hit always leaves a key that expires on its own."""
+        with self._lock:
+            cur = self._live(key)
+            if cur is None:                    # absent or just expired -> new window
+                n, exp = 1, time.time() + window
+            else:
+                n = int(cur) + 1
+                _v, exp = self._d[key]         # keep the window's existing TTL
+            self._d[key] = (str(n), exp)
+            return n
+
     def expire(self, key, ex):
         with self._lock:
             if self._live(key) is None:
@@ -110,6 +123,10 @@ class _MemoryStore:
                 self._d.pop(key, None)
                 return 1
             return 0
+
+    def clear(self):
+        with self._lock:
+            self._d.clear()
 
 
 _mem = _MemoryStore()
@@ -158,6 +175,23 @@ def _eval_del_if(key, token):
     return _command("EVAL", _RELEASE_LUA, "1", key, token)
 
 
+# INCR + first-hit EXPIRE as ONE atomic step. A plain INCR-then-EXPIRE can strand a
+# TTL-less key if the EXPIRE call is dropped/fails after the INCR — the counter then
+# never resets and blocks the caller forever. This never can.
+_INCR_EXPIRE_LUA = ("local n = redis.call('INCR', KEYS[1]) "
+                    "if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end "
+                    "return n")
+
+
+def incr_expiring(key, window) -> int:
+    """Increment a fixed-window counter and guarantee it carries a TTL. Atomic on
+    both backends: a single Lua eval on Upstash, a single locked op in memory."""
+    window = int(window)
+    if not configured():
+        return _mem.incr_expiring(key, window)
+    return int(_command("EVAL", _INCR_EXPIRE_LUA, "1", key, str(window)))
+
+
 # ── Higher-level primitives ────────────────────────────────────────────
 def acquire_lock(name, token, ttl_seconds=30) -> bool:
     """Best-effort distributed lock: SET name token NX EX. True if acquired."""
@@ -189,13 +223,20 @@ def seen_before(key, ttl_seconds=86400) -> bool:
 
 
 def rate_limited(bucket, limit, window_seconds) -> bool:
-    """Fixed-window rate limit. True if the caller is OVER the limit."""
+    """Fixed-window rate limit. True if the caller is OVER the limit.
+
+    The counter and its TTL are set atomically (``incr_expiring``), so a failed or
+    dropped EXPIRE can never strand a TTL-less key that counts up forever and locks
+    the caller out permanently."""
     try:
-        k = f"rl:{bucket}"
-        n = incr(k)
-        if n == 1:
-            expire(k, window_seconds)
-        return n > limit
+        return incr_expiring(f"rl:{bucket}", window_seconds) > limit
     except Exception as exc:  # noqa: BLE001
         log.warning("rate check failed for %s: %s", bucket, type(exc).__name__)
         return False
+
+
+def reset() -> None:
+    """Clear in-memory state so a test starts isolated (locks, rate-limit windows,
+    dedup keys). No-op against a real Upstash so it can never wipe live data."""
+    if not configured():
+        _mem.clear()

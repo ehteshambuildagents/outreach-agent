@@ -105,6 +105,31 @@ class RedisFallbackTests(unittest.TestCase):
         hits = [redis.rate_limited(b, 3, 60) for _ in range(5)]
         self.assertEqual(hits, [False, False, False, True, True])
 
+    def test_rate_limit_arms_ttl_without_a_separate_expire(self):
+        """Regression: the counter's TTL must be set atomically with the increment,
+        NOT via a second call. Sabotage the separate EXPIRE (simulating a dropped or
+        failed round-trip after a successful INCR) and confirm the very first hit
+        still leaves a key that carries a TTL — never a stuck, never-expiring counter.
+        On the old INCR-then-EXPIRE code this key would have no TTL (ttl == -1)."""
+        b = "ttl-" + os.urandom(4).hex()
+        key = f"rl:{b}"
+        with mock.patch.object(redis, "expire",
+                               side_effect=AssertionError("must not rely on a separate EXPIRE")):
+            self.assertFalse(redis.rate_limited(b, 3, 60))
+        self.assertGreater(redis.ttl(key), 0)
+
+    def test_rate_limit_recovers_after_window(self):
+        """A caller that hit the limit is not locked out forever: the key carries a
+        TTL, so once the window elapses the counter is gone and sends are allowed
+        again."""
+        b = "recover-" + os.urandom(4).hex()
+        key = f"rl:{b}"
+        hits = [redis.rate_limited(b, 3, 60) for _ in range(5)]
+        self.assertEqual(hits, [False, False, False, True, True])
+        self.assertGreater(redis.ttl(key), 0)          # it WILL expire on its own
+        redis.delete(key)                              # simulate the window elapsing
+        self.assertFalse(redis.rate_limited(b, 3, 60))  # allowed again — not stuck
+
 
 class ProviderTests(unittest.TestCase):
     def setUp(self):
@@ -129,6 +154,7 @@ class EngineFlowTests(unittest.TestCase):
     def setUp(self):
         DryRunProvider.reset()
         metrics.reset()
+        redis.reset()          # isolate the per-user send-rate window across tests
         self.s = _store()
 
     def test_full_sequence_then_complete(self):
@@ -152,6 +178,56 @@ class EngineFlowTests(unittest.TestCase):
         engine.tick(self.s, now=t0 + 10 * _DAY)            # must not send more
         self.assertEqual(len(DryRunProvider.sent), 1)
         self.assertEqual(metrics.snapshot()["replies"], 1)
+
+    def _send_next_touch(self, wf_id):
+        """Drive the two ticks that carry one follow-up: WAITING -> QUEUED (the
+        delay elapses) then QUEUED -> SENT. Times are read back from the workflow so
+        the re-anchor-off-actual-send arithmetic never has to be duplicated here."""
+        due = self.s.load(wf_id).next_run_at
+        engine.tick(self.s, now=due + 1)                   # delay elapsed -> queue it
+        due = self.s.load(wf_id).next_run_at
+        engine.tick(self.s, now=due + 1)                   # send it
+
+    def test_reply_between_followups_blocks_next_send(self):
+        """The exact failure mode: two follow-ups have already gone out, then a reply
+        lands. The scheduled THIRD follow-up must never fire — enforced by the
+        existing terminal / reply-stop guards, not any new stopping logic."""
+        wf = engine.create_workflow(self.s, "u", _steps(5), to_email="b@x.com")
+        engine.tick(self.s, now=wf.next_run_at)            # touch 0 (initial)
+        self._send_next_touch(wf.id)                       # touch 1 (follow-up 1)
+        self._send_next_touch(wf.id)                       # touch 2 (follow-up 2)
+        self.assertEqual(len(DryRunProvider.sent), 3)
+        self.assertEqual(self.s.load(wf.id).current_index, 2)
+
+        # A reply arrives in the gap before the scheduled third follow-up.
+        due_before_reply = self.s.load(wf.id).next_run_at  # when touch 3 WOULD send
+        engine.ingest_reply(self.s, message_id="r", workflow_id=wf.id, user_id="u")
+        self.assertEqual(self.s.load(wf.id).state, states.STOPPED)
+
+        # Advance to and well past that scheduled time — nothing more may send.
+        engine.tick(self.s, now=due_before_reply + 1)
+        engine.tick(self.s, now=due_before_reply + 10 * _DAY)
+        final = self.s.load(wf.id)
+        self.assertEqual(len(DryRunProvider.sent), 3)      # touch 3 never fired
+        self.assertEqual(final.steps[3].status, states.STEP_SKIPPED)
+        self.assertEqual(final.steps[4].status, states.STEP_SKIPPED)
+        self.assertEqual(final.state, states.STOPPED)
+
+    def test_five_touches_no_reply_completes(self):
+        """With no reply, all five touches send and the workflow finishes on its own
+        (COMPLETED) with nothing left scheduled — it does not sit open forever."""
+        wf = engine.create_workflow(self.s, "u", _steps(5), to_email="b@x.com")
+        engine.tick(self.s, now=wf.next_run_at)            # touch 0
+        for _ in range(4):                                 # touches 1..4
+            self._send_next_touch(wf.id)
+        final = self.s.load(wf.id)
+        self.assertEqual(len(DryRunProvider.sent), 5)
+        self.assertEqual(final.state, states.COMPLETED)
+        self.assertIsNone(final.next_run_at)
+        # A far-future tick finds nothing due and schedules nothing further.
+        engine.tick(self.s, now=9_999_999_999)
+        self.assertEqual(len(DryRunProvider.sent), 5)
+        self.assertEqual(self.s.load(wf.id).state, states.COMPLETED)
 
     def test_duplicate_reply_webhook_ignored(self):
         wf = engine.create_workflow(self.s, "u", _steps(2), to_email="b@x.com")
@@ -388,6 +464,7 @@ class AdminRecoveryTests(unittest.TestCase):
     def setUp(self):
         DryRunProvider.reset()
         metrics.reset()
+        redis.reset()          # isolate the per-user send-rate window across tests
         self.s = _store()
 
     def _fail_to_terminal(self, provider="gmail"):

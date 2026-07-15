@@ -172,10 +172,17 @@ def _try_send_current(wf, store, now, credentials_provider):
 
 
 def _after_send(wf, store, now):
-    """After a successful send: either wait for the next step, or complete."""
+    """After a successful send: either wait for the next step, or complete.
+
+    The next touch's timer is re-anchored off the ACTUAL send time (``now``) rather
+    than the create-time cumulative estimate, so worker downtime or a rate-limit
+    deferral pushes the whole remaining cadence back — every gap stays a true
+    ``delay_days`` after the email that actually went out."""
     if wf.current_index + 1 < len(wf.steps):
         nxt = wf.steps[wf.current_index + 1]
-        wf.next_run_at = nxt.scheduled_at or (now + AUTOMATION_REPLY_WAIT_DAYS * 86400)
+        spacing_days = nxt.delay_days or AUTOMATION_REPLY_WAIT_DAYS
+        nxt.scheduled_at = now + spacing_days * 86400
+        wf.next_run_at = nxt.scheduled_at
         _transition(wf, store, states.WAITING,
                     f"waiting until {int(wf.next_run_at)} for step {nxt.index}")
         return wf

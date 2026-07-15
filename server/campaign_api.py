@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from agents import qualification, strategy, writer
 from automation import engine
 from automation.store import WorkflowStore
+from config.settings import AUTOMATION_MAX_FOLLOWUPS, AUTOMATION_REPLY_WAIT_DAYS
 from discovery.engine import discover
 from discovery.models import DiscoveryQuery
 from discovery.store import ProspectStore
@@ -212,8 +213,7 @@ def register(app, rl_read=None, rl_write=None):
         workflow_ids = []
         for item in launchable:
             wf = engine.create_workflow(
-                _workflow_store(), user,
-                [{"subject": item["subject"], "body": item["body"], "to": item["to"], "delay_days": 0}],
+                _workflow_store(), user, _cadence_steps(item),
                 company=item["company"], to_email=item["to"], provider=body.provider,
                 conversation_id=campaign_id, timezone=body.timezone,
             )
@@ -439,7 +439,61 @@ def _process_prospect(user: str, prospect, icp: dict, event, trace_id: str = "")
     base["final_status"] = "sendable" if _valid_email(_recipient_email(research)) else "route_only"
     base["recipient"] = _recipient(research)
     base["reason"] = None
+    if base["final_status"] == "sendable":
+        # Generate the two mid-cadence follow-ups NOW, while the full research is in
+        # hand — it is not persisted past this function. Slots 1 (verbatim bump) and
+        # 4 (breakup) are deterministic and assembled at launch; slots 2 & 3 run
+        # through the SAME writer + guard pipeline the original email just did.
+        base["followups"] = _generate_followups(research, q, s, email,
+                                                 trace_id=trace_id, domain=prospect.domain)
     return base
+
+
+# ── Follow-up cadence (generation happens here, at campaign-create time) ──
+def _generate_followups(research: dict, q: dict, s: dict, email: dict, *,
+                        trace_id: str = "", domain: str = "") -> list:
+    """Writer + guard for the two mid-cadence follow-ups (slots 2 & 3), chained so
+    the second builds on the first — a real progression, not a reworded copy. A
+    guard BLOCK triggers one regeneration, then the touch is dropped. Returns the
+    survivors as persisted content dicts; a prospect may end up with 0, 1, or 2."""
+    out = []
+    previous = email                      # slot 2 builds on the approved original
+    for slot in (2, 3):
+        fu = _followup_with_guard(research, q, s, previous, trace_id=trace_id, domain=domain)
+        if fu is None:
+            continue                      # dropped; slot 3 still builds on `previous`
+        out.append({"slot": slot, "subject": fu["subject"], "body": fu["body"],
+                    "guard_decision": fu["guard_decision"],
+                    "delay_days": AUTOMATION_REPLY_WAIT_DAYS})
+        previous = fu                     # chain the next follow-up onto this one
+    return out
+
+
+def _followup_with_guard(research: dict, q: dict, s: dict, previous_email: dict, *,
+                         trace_id: str = "", domain: str = ""):
+    """One follow-up through writer + guard, with a single retry on BLOCK (or on a
+    writer/guard failure). Returns the accepted follow-up plus its guard decision,
+    or None if it never cleared and the touch should be dropped."""
+    for attempt in (1, 2):
+        try:
+            fu = writer.write_followup(research, previous_email)
+        except Exception:  # noqa: BLE001 - a writer failure just drops the touch
+            log.exception("campaign_followup_writer_failed trace_id=%s domain=%s attempt=%s",
+                          trace_id, domain, attempt)
+            continue
+        if fu.get("status") != "ok" or not (fu.get("subject") and fu.get("body")):
+            continue
+        try:
+            guard = guard_assess(_guard_input(research, q, s, fu))
+        except Exception:  # noqa: BLE001 - guard fails closed: treat as blocked, retry then drop
+            log.exception("campaign_followup_guard_failed trace_id=%s domain=%s attempt=%s",
+                          trace_id, domain, attempt)
+            continue
+        if guard.get("decision") != BLOCK:
+            return {**fu, "guard_decision": guard.get("decision")}
+        log.info("campaign_followup_blocked trace_id=%s domain=%s attempt=%s",
+                 trace_id, domain, attempt)
+    return None
 
 
 def _discovery_query(body: CampaignCreate) -> DiscoveryQuery:
@@ -716,8 +770,62 @@ def _launchable_emails(result: dict) -> list[dict]:
             "company": prospect.get("company_name") or prospect.get("research", {}).get("company_name") or "",
             "subject": email.get("subject") or "",
             "body": email.get("body") or "",
+            "followups": prospect.get("followups") or [],
         })
     return out
+
+
+# ── Launch-time cadence assembly (pure; no model or guard calls here) ────
+_BUMP_INTRO = ("Floating this back to the top in case it got buried — no worries if "
+               "the timing's off, just wanted to make sure it reached you.")
+
+
+def _re_subject(subject: str) -> str:
+    subject = (subject or "").strip()
+    if subject[:3].lower() == "re:":
+        return subject
+    return f"Re: {subject}" if subject else "Re:"
+
+
+def _quote_original(body: str) -> str:
+    """The original email quoted reply-style, to sit under the bump line."""
+    return "\n".join(f"> {ln}" if ln else ">" for ln in (body or "").strip().splitlines())
+
+
+def _bump_step(item: dict) -> dict:
+    """Touch 1 (day 3): the approved email verbatim, with a short human bump on top,
+    threaded as a reply so it stays in the same conversation."""
+    return {"subject": _re_subject(item["subject"]),
+            "body": f"{_BUMP_INTRO}\n\n{_quote_original(item['body'])}",
+            "to": item["to"], "delay_days": AUTOMATION_REPLY_WAIT_DAYS}
+
+
+def _breakup_step(item: dict) -> dict:
+    """Touch 4 (last): a short, low-pressure breakup. Generic on purpose — a
+    template is the right tool, so no writer/guard call is made."""
+    company = (item.get("company") or "").strip()
+    who = f"the {company} team" if company else "you"
+    body = (f"I'll leave it here so I'm not cluttering your inbox. If helping {who} "
+            f"is ever worth a look, just reply to this and we'll pick it back up. "
+            f"Either way, wishing you the best.")
+    return {"subject": _re_subject(item["subject"]), "body": body,
+            "to": item["to"], "delay_days": AUTOMATION_REPLY_WAIT_DAYS}
+
+
+def _cadence_steps(item: dict) -> list:
+    """The 5-touch step spec for one launchable prospect: approved email, verbatim
+    bump, the surviving writer follow-ups (days 6/9), then the breakup. The engine
+    schedules and stops them; the bump + breakup are always present, and the writer
+    follow-ups fill the remaining follow-up budget."""
+    steps = [{"subject": item["subject"], "body": item["body"], "to": item["to"],
+              "delay_days": 0}]
+    steps.append(_bump_step(item))
+    room = max(0, AUTOMATION_MAX_FOLLOWUPS - 2)   # reserve slots for bump + breakup
+    for fu in (item.get("followups") or [])[:room]:
+        steps.append({"subject": fu["subject"], "body": fu["body"],
+                      "to": item["to"], "delay_days": AUTOMATION_REPLY_WAIT_DAYS})
+    steps.append(_breakup_step(item))
+    return steps
 
 
 def _valid_email(value: str) -> bool:

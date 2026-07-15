@@ -25,6 +25,17 @@ QUALITY_MODEL = os.getenv("QUALITY_MODEL", "claude-sonnet-5")
 # Backwards-compatible display/fallback name for older code paths.
 CLAUDE_MODEL = QUALITY_MODEL
 
+
+# ── Deployment environment ────────────────────────────────────────────
+def is_production() -> bool:
+    """True in a deployed production environment. Railway sets RAILWAY_ENVIRONMENT
+    (its default environment is named "production"); ENVIRONMENT / APP_ENV are
+    honored as generic fallbacks. Used to gate loud boot-time warnings that would
+    only be noise in local development."""
+    val = (os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("ENVIRONMENT")
+           or os.getenv("APP_ENV") or "").strip().lower()
+    return val in ("production", "prod")
+
 # ── Networking / safety limits (applied to EVERY page we fetch) ────────
 REQUEST_TIMEOUT_SECONDS = 10            # hard timeout per HTTP fetch
 MAX_REDIRECTS = 3                       # redirects we will follow (re-validated)
@@ -217,7 +228,8 @@ AUTOMATION_MAX_RETRIES = 4              # send retries before a step is FAILED-t
 AUTOMATION_BACKOFF_BASE_SECONDS = 30    # exponential backoff base for retries
 AUTOMATION_BACKOFF_MAX_SECONDS = 3600   # cap on a single retry delay
 AUTOMATION_SEND_RATE_PER_MIN = 20       # per-user send rate limit (Redis fixed window)
-AUTOMATION_REPLY_WAIT_DAYS = 3          # default wait between steps when unspecified
+AUTOMATION_REPLY_WAIT_DAYS = 3          # default wait between steps; also the follow-up spacing
+AUTOMATION_MAX_FOLLOWUPS = 4            # follow-ups after the initial email (5 total touches)
 AUTOMATION_LOCK_TTL_SECONDS = 60        # per-workflow lock while a tick processes it
 AUTOMATION_TICK_BATCH = 50              # max workflows advanced per tick
 
