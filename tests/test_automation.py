@@ -162,6 +162,25 @@ class EngineFlowTests(unittest.TestCase):
         self.assertIsNone(second)                          # idempotent no-op
         self.assertEqual(metrics.snapshot()["replies"], 1)
 
+    def test_no_match_does_not_burn_idempotency_key(self):
+        """Regression: a reply that matches NO workflow (e.g. the wrong connected
+        account for a shared mailbox is handled first) must not mark the message
+        processed — otherwise the real owner's call short-circuits as a duplicate
+        and the sequence is never stopped."""
+        wf = engine.create_workflow(self.s, "u", _steps(2), to_email="b@x.com")
+        engine.tick(self.s, now=wf.next_run_at)             # send step 0 -> sets thread id
+        tid = self.s.load(wf.id).steps[0].provider_thread_id
+        self.assertTrue(tid)
+        # Wrong user: no match. Under the old order this still claimed "reply:m".
+        self.assertIsNone(
+            engine.ingest_reply(self.s, message_id="m", user_id="other", thread_id=tid))
+        # Right user, SAME message id: the no-match above must not have burned it.
+        engine.ingest_reply(self.s, message_id="m", user_id="u", thread_id=tid)
+        stopped = self.s.load(wf.id)
+        self.assertEqual(stopped.state, states.STOPPED)
+        self.assertTrue(stopped.reply_detected)
+        self.assertEqual(stopped.reply_message_id, "m")
+
     def test_retry_then_success(self):
         wf = engine.create_workflow(self.s, "u", _steps(1), to_email="b@x.com")
         DryRunProvider.fail_times = 2

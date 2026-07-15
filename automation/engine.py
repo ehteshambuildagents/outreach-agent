@@ -240,11 +240,14 @@ def ingest_reply(store, *, message_id, workflow_id=None, user_id=None,
     """Record an inbound reply and STOP the workflow. Idempotent on message id:
     a duplicate webhook is a no-op. Never sends another follow-up afterwards."""
     now = time.time() if now is None else now
-    # Durable idempotency: a redelivered notification is ignored.
-    if message_id and not store.mark_processed(f"reply:{message_id}"):
-        log.info("duplicate reply webhook ignored: %s", message_id)
-        return None
 
+    # Match the workflow BEFORE claiming the message in the processed ledger.
+    # (Claiming it first — the old order — spent the idempotency key even when NO
+    # workflow matched. So when a mailbox had more than one connected account, the
+    # account that did NOT own the thread would be handled first, mark the reply
+    # "done", and the real owner's call then short-circuited as a duplicate — the
+    # sequence was never stopped and no event was ever written, exactly the symptom
+    # we saw: reply:<id> present in the ledger, reply_detected/stopped still false.)
     wf = None
     if workflow_id:
         wf = store.load(workflow_id, user_id=user_id)
@@ -254,7 +257,14 @@ def ingest_reply(store, *, message_id, workflow_id=None, user_id=None,
                 wf = cand
                 break
     if wf is None:
+        # No claim spent: another connected account in this same delivery, or a
+        # later redelivery, can still match and stop the workflow.
         log.info("reply had no matching workflow: mid=%s thread=%s", message_id, thread_id)
+        return None
+
+    # Durable idempotency, claimed only now that we have a workflow to stop.
+    if message_id and not store.mark_processed(f"reply:{message_id}"):
+        log.info("duplicate reply webhook ignored: %s", message_id)
         return None
 
     if wf.reply_detected or states.is_terminal(wf.state):
