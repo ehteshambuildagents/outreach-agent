@@ -609,3 +609,132 @@ def register(app, rl_read=None, rl_write=None):
             results[tid] = entry
         out["results"] = results
         return out
+
+    @app.api_route("/api/debug/gmail-reply-recover", methods=["GET", "POST"])
+    def gmail_reply_recover(request: Request):
+        """Recover replies lost to the old ingest_reply key-burning bug (b7f6d9c).
+
+        GET  = DRY RUN — resolves each &thread_id to its workflow + inbound reply
+               message id and shows EXACTLY what would change; writes NOTHING.
+        POST&confirm=1 = EXECUTE — for each resolved, un-stopped workflow: clears
+               the burned `reply:<id>` ledger key, then re-runs the now-fixed
+               ingest_reply (which stops the sequence, sets reply fields, writes the
+               reply+stopped events). Strictly limited to the resolved workflows.
+
+        Safety: GET can never write. If &workflow_ids=<a,b,..> is supplied, the
+        resolved set MUST equal it exactly or the whole call aborts untouched — so
+        nothing outside the ids you name is ever modified. Already-stopped
+        workflows are skipped (idempotent). Token-gated. Params: &email= &thread_id=
+        <id[,id]> [&workflow_ids=<id[,id]>] [&confirm=1 with POST].
+        """
+        if not _debug_token_ok(request):
+            raise HTTPException(status_code=404, detail="Not found.")
+        from automation import engine
+        email = (request.query_params.get("email") or "").strip().lower()
+        thread_ids = [t.strip() for t in
+                      (request.query_params.get("thread_id") or "").split(",") if t.strip()]
+        expect_wf = sorted({w.strip() for w in
+                            (request.query_params.get("workflow_ids") or "").split(",") if w.strip()})
+        is_execute = request.method == "POST" and request.query_params.get("confirm") == "1"
+        out = {"mode": "execute" if is_execute else "dry_run",
+               "email_queried": email, "thread_ids": thread_ids,
+               "workflow_ids_allowlist": expect_wf or None}
+        if not email or not thread_ids:
+            out["error"] = ("add &email=<gmail>&thread_id=<id[,id,...]>; GET previews, "
+                            "POST with &confirm=1 executes")
+            return out
+        accounts = _tokens.accounts_by_email("gmail", email)
+        if not accounts:
+            out["error"] = "no connected gmail account for that email"
+            return out
+        user_ids = sorted({a["user_id"] for a in accounts})
+        token = _tokens.valid_access_token(accounts[0]["user_id"], "gmail",
+                                           accounts[0]["account_email"])
+        prov = push.get_provider("gmail", credentials=token) if token else None
+        wfs = [wf for uid in user_ids for wf in _store.list_for_user(uid)]
+
+        def _events_ct(wfid):
+            return [{"type": e["type"], "detail": e["detail"]}
+                    for e in _store.events_for(wfid) if e["type"] in ("reply", "stopped")]
+
+        plans, resolved_ids = [], []
+        for tid in thread_ids:
+            plan = {"thread_id": tid, "reply_message_id": None, "workflows": []}
+            mid = None
+            if prov is None:
+                plan["gmail_error"] = "no valid token (reconnect required)"
+            else:
+                try:
+                    th = prov.get_thread(tid)
+                    inbound = [m for m in th["messages"] if not m["is_sent"]]
+                    mid = inbound[0]["message_id"] if inbound else None
+                    plan["reply_present"] = bool(inbound)
+                    plan["reply_message_id"] = mid
+                except Exception as exc:  # noqa: BLE001
+                    plan["gmail_error"] = f"{type(exc).__name__}: {exc}"
+            for wf in [w for w in wfs if any(s.provider_thread_id == tid for s in w.steps)]:
+                resolved_ids.append(wf.id)
+                already = str(wf.state) == "STOPPED" or wf.reply_detected
+                will = (not already) and bool(mid)
+                plan["workflows"].append({
+                    "workflow_id": wf.id,
+                    "user_id_tail": (wf.user_id or "")[-8:],
+                    "before": {"state": str(wf.state), "stopped": str(wf.state) == "STOPPED",
+                               "reply_detected": wf.reply_detected,
+                               "reply_message_id": wf.reply_message_id,
+                               "reply_stopped_events": _events_ct(wf.id)},
+                    "will_change": will,
+                    "planned_change": ({"state": "STOPPED", "reply_detected": True,
+                                        "reply_message_id": mid,
+                                        "adds_events": ["reply", "stopped"],
+                                        "skips_pending_steps": True} if will else None),
+                    "skip_reason": (None if will else
+                                    "already stopped / reply_detected" if already else
+                                    "no reply message id resolved from Gmail"),
+                })
+            plans.append(plan)
+        out["plan"] = plans
+        out["resolved_workflow_ids"] = sorted(set(resolved_ids))
+        out["will_change_count"] = sum(1 for p in plans for w in p["workflows"] if w["will_change"])
+
+        if expect_wf and expect_wf != sorted(set(resolved_ids)):
+            out["error"] = "ABORT: resolved workflow set != &workflow_ids allowlist; nothing executed"
+            return out
+        out["allowlist_ok"] = bool(expect_wf) or None
+
+        if not is_execute:
+            out["note"] = ("DRY RUN — nothing written. Review resolved_workflow_ids + each "
+                           "planned_change, then POST the same URL with &confirm=1 (add "
+                           "&workflow_ids=<those ids> to hard-pin the set).")
+            return out
+
+        results = []
+        for plan in plans:
+            tid, mid = plan["thread_id"], plan.get("reply_message_id")
+            for wc in plan["workflows"]:
+                wfid = wc["workflow_id"]
+                if not wc["will_change"]:
+                    results.append({"workflow_id": wfid, "thread_id": tid,
+                                    "action": "skipped", "reason": wc["skip_reason"]})
+                    continue
+                owner = next((w.user_id for w in wfs if w.id == wfid), None)
+                try:
+                    _store.db.execute("DELETE FROM processed WHERE key=?", (f"reply:{mid}",))
+                    engine.ingest_reply(_store, message_id=mid, workflow_id=wfid,
+                                        user_id=owner, thread_id=tid)
+                except Exception as exc:  # noqa: BLE001
+                    results.append({"workflow_id": wfid, "thread_id": tid,
+                                    "action": "error", "detail": f"{type(exc).__name__}: {exc}"})
+                    continue
+                r = _store.load(wfid, user_id=owner)
+                results.append({
+                    "workflow_id": wfid, "thread_id": tid, "reply_message_id": mid,
+                    "action": ("recovered" if r and str(r.state) == "STOPPED" else "attempted"),
+                    "after": {"state": str(r.state) if r else None,
+                              "stopped": (str(r.state) == "STOPPED") if r else None,
+                              "reply_detected": r.reply_detected if r else None,
+                              "reply_message_id": r.reply_message_id if r else None,
+                              "reply_stopped_events": _events_ct(wfid)},
+                })
+        out["results"] = results
+        return out
