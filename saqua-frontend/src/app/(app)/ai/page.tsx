@@ -18,7 +18,6 @@ import {
   api,
   type ChatMessage,
   type ConversationSummary,
-  type CampaignDetail,
   type ProspectEntry,
   type ProspectsCardData,
   type ChannelCardData,
@@ -44,7 +43,6 @@ export default function AIChatPage() {
   const [convId, setConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [threads, setThreads] = useState<ConversationSummary[]>([]);
-  const [campaigns, setCampaigns] = useState<CampaignDetail[]>([]);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -59,7 +57,6 @@ export default function AIChatPage() {
 
   useEffect(() => {
     loadThreads();
-    void api.campaigns().then((r) => r.ok && setCampaigns(r.data.campaigns || []));
   }, [loadThreads]);
 
   useEffect(() => {
@@ -152,7 +149,6 @@ export default function AIChatPage() {
         <ThreadRail
           threads={threads}
           activeId={convId}
-          campaigns={campaigns}
           onSelect={selectThread}
           onNew={newChat}
           onDelete={deleteThread}
