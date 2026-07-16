@@ -15,7 +15,7 @@ those are what trigger writer.py's single bounded regeneration.
 
 import re
 
-from agents.writer_prompt import BANNED_MATCH, first_name
+from agents.writer_prompt import BANNED_MATCH, first_name, stem_present
 from config.settings import (
     WRITER_MAX_SENTENCES,
     WRITER_MAX_WORDS,
@@ -178,7 +178,7 @@ def find_banned(text: str, allowed_terms) -> list:
     for readable, stem in BANNED_MATCH:
         if stem in allowed_stems:
             continue
-        if stem in scan and readable not in hits:
+        if stem_present(stem, scan) and readable not in hits:
             hits.append(readable)
     return hits
 

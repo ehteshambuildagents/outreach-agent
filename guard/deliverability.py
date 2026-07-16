@@ -15,7 +15,7 @@ import difflib
 import re
 
 from agents import ai_voice
-from agents.writer_prompt import BANNED_MATCH
+from agents.writer_prompt import BANNED_MATCH, stem_present
 from agents.writer_review import _SPAMMY, _spam_risk
 from guard.models import Findings, as_bool, as_float, as_int, get
 
@@ -170,7 +170,8 @@ def evaluate(inp: dict) -> Findings:
     # stacked wording, or wording + robotic structure together, is a generated
     # blast and is BLOCKED — the "no AI voice" rule enforced in code, not just the
     # writer's prompt (which a pasted or hand-edited draft never passed through).
-    ai_hits = [readable for readable, stem in BANNED_MATCH if stem in text.lower()]
+    ai_hits = [readable for readable, stem in BANNED_MATCH
+               if stem_present(stem, text.lower())]
     struct = ai_voice.scan(body)
     struct_labels = [label for label, _ in struct]
     struct_penalty = min(40, sum(w for _, w in struct))

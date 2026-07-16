@@ -152,12 +152,38 @@ _BANNED = (
     ("I figured I'd email", "i figured i'd email"),
     ("Hope you're doing well", "hope you're doing well"),
     ("Hope this finds you well", "hope this finds you"),
+    # Company / agency voice: the reader wants ONE founder writing to them, not a
+    # business. First-person-plural "we/our ..." and "I help ..." are the tells
+    # that a company (not a person) is doing the outreach. These "our ___"/"i help"
+    # stems are only safe because stem_present() (below) anchors the LEFT edge to a
+    # word boundary — a raw substring test would fire "our ai" inside "your ai".
+    ("I help", "i help"),
+    ("we enable", "we enable"),
+    ("we automate", "we automate"),
+    ("we streamline", "we streamline"),
+    ("we're building", "we're building"),
+    ("our platform", "our platform"),
+    ("our product", "our product"),
+    ("our software", "our software"),
+    ("our AI", "our ai"),
+    ("I wanted to introduce", "i wanted to introduce"),
+    ("the reason I'm reaching out", "reason i'm reaching out"),
 )
 
 # Ordered, de-duplicated readable list for the prompt text.
 BANNED_PROMPT_LIST = tuple(dict.fromkeys(readable for readable, _ in _BANNED))
 # (readable, stem) pairs for the validator to enforce.
 BANNED_MATCH = _BANNED
+
+
+def stem_present(stem: str, text_lower: str) -> bool:
+    """True if `stem` occurs in the ALREADY-lowercased `text_lower` at a LEFT word
+    boundary. The right side stays open so prefix stems keep working ("leverag"
+    still catches "leveraging"), but the left edge must be a word start — so "our
+    ai" never fires inside "your ai", "our platform" never inside "your platform",
+    and "i help" never inside "multi help". One shared matcher for every consumer
+    of BANNED_MATCH (validator, guard, ai_voice) so the rule can't drift."""
+    return re.search(r"(?<![a-z0-9])" + re.escape(stem), text_lower) is not None
 
 # ── Output contract ───────────────────────────────────────────────────
 WRITER_SCHEMA = {
@@ -316,7 +342,10 @@ def _build_system_prompt() -> str:
         "You are the founder of a tiny software startup. You spent about five "
         "minutes reading one company's public website to see if they might "
         "actually benefit from what you built. Now you're writing the first "
-        "email. The goal is not to sell, it's to start a conversation. Picture "
+        "email. The goal is not to sell, it's to start a conversation. The only "
+        "thing that counts as success is a reply, so don't optimize for explaining "
+        "what you built or convincing them of anything, optimize for a message a "
+        "busy founder would naturally want to answer. Picture "
         "yourself typing it in Gmail, no editor, no marketing team, nobody "
         "reviewing it before you hit Send. It should feel like something you "
         "typed once, not optimized, not rewritten, not generated.\n\n"
@@ -333,14 +362,23 @@ def _build_system_prompt() -> str:
         "business. State that one thing plainly and move on. Don't explain why "
         "it's impressive, don't unpack it, don't teach them about their own "
         "company. People don't explain someone's own website back to them.\n\n"
-        "WHY YOU'RE EMAILING: one sentence, practical. Don't manufacture a story, "
+        "WHY YOU'RE EMAILING: don't jump to the product. Connect the one thing you "
+        "noticed to a real problem or tension a company like theirs probably feels, "
+        "and leave it slightly open so they finish the thought, \"that usually "
+        "means ...\", \"my guess is ...\", \"that probably changes how ...\". Don't "
+        "solve it here. One or two sentences, practical. Don't manufacture a story, "
         "don't pretend you've admired them for years, don't fake a reaction.\n\n"
         "DESCRIBE YOUR PRODUCT by what it helps a founder ACCOMPLISH, not how it "
         "works, and describe it a different way each email (sometimes the result, "
         "sometimes the problem it removes, sometimes what it replaces, sometimes "
         "barely at all). NEVER describe the mechanism: do not say \"it reads a "
         "company's website\", \"it researches\", \"it finds\", \"it analyzes\", "
-        "or \"it turns X into Y\". Those implementation details are the giveaway.\n\n"
+        "or \"it turns X into Y\". Those implementation details are the giveaway. "
+        "You are one founder writing to another, never a company doing outreach: "
+        "first person singular (I, not we), and ONE sentence about what you're "
+        "working on is plenty (\"I'm working on a different approach to outbound\"), "
+        "never a feature list. If the product is the main character, rewrite it so "
+        "the person is.\n\n"
         "STYLE: write like someone typing fast. At least one sentence must be very "
         "short (under five words). Then a longer one. Don't balance the lengths, "
         "don't smooth every transition, let one sentence feel a little abrupt. "
@@ -352,23 +390,29 @@ def _build_system_prompt() -> str:
         "perfect symmetry. Don't wrap the observation into a lesson, don't conclude "
         "every thought, don't end on a polished sales CTA. Vary the SHAPE of each "
         "email, where the observation sits, how many short paragraphs, following the "
-        "STYLE NUDGE, so two emails never share the same skeleton.\n\n"
+        "STYLE NUDGE, so two emails never share the same skeleton. If any sentence "
+        "sounds like a LinkedIn post, cut it.\n\n"
         f"NEVER SAY any of these: {banned}.\n\n"
         "GREETING: follow the greeting style in the STYLE NUDGE below. When you "
         "greet by name, use the contact's REAL first name only. If there's no name, "
         "never invent one, open with the company or straight on the observation. "
         "Never \"Hey there\".\n"
         "SUBJECT: short, lowercase, like a note to one person.\n\n"
-        "END with a clear low-friction CTA. It should ask for one tiny next step: "
-        "right person, whether the problem is real, or whether they want to see "
-        "the one example you'd write for their specific market/proof point. Never "
-        "\"book a call\", never \"are you free this week\", never \"worth "
-        "exploring?\". Do not drift into vague endings like \"I'll leave it with "
-        "you\" or \"you'll know if it's relevant\". Tie the ask to their real "
-        "context, not a generic founder-outbound pitch.\n\n"
+        "END with ONE tiny ask they could answer in under fifteen seconds: are "
+        "they the right person, is the problem real, or do they want to see the "
+        "one example you'd write for their specific market/proof point. Deliver "
+        "value, don't promise it, offering the specific thing you'd actually write "
+        "for them beats saying you \"could help\". Never ask for a meeting, a call, "
+        "a demo, or \"30 minutes\"; never \"book a call\", \"are you free this "
+        "week\", or \"worth exploring?\". Do not drift into vague endings like "
+        "\"I'll leave it with you\" or \"you'll know if it's relevant\". Tie the "
+        "ask to their real context, not a generic founder-outbound pitch.\n\n"
         "SELF-CHECK before returning: if this landed in your own inbox, would you "
-        "believe a real founder typed it in one sitting? If any sentence feels "
-        "polished, symmetrical, too complete, or like something an AI writes, "
+        "believe a real founder typed it in one sitting? Does it read like a "
+        "founder or a salesperson? Is the product the main character (if so, make "
+        "the person the main character)? Could they reply in under ten seconds? "
+        "Would it still feel natural if no sale ever happened? If any sentence "
+        "feels polished, symmetrical, too complete, or like something an AI writes, "
         "rewrite ONLY that sentence. Keep the rest rough.\n\n"
         "Maximum 105 words. Output the email only, no preamble, no commentary.\n\n"
         "THREE emails from a founder, each describing the product a different way. "
@@ -910,6 +954,8 @@ REFINE_SYSTEM_PROMPT = (
     "  - empty transitions (that said, with that in mind, on that note);\n"
     "  - hedged closers (love to hear your thoughts, looking forward to "
     "connecting, no worries if not);\n"
+    "  - company/agency voice (I help, we automate, our platform, our product, "
+    "our AI) — make it one founder writing in the first person singular;\n"
     "  - stock openers (I hope this finds you well, I wanted to reach out, I "
     "noticed, I came across).\n\n"
     "KEEP it a founder email: 3-5 sentences, under 105 words, at least one very "

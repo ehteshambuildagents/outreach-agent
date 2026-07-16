@@ -25,7 +25,7 @@ Everything here is pure Python and never raises; a bad input scores 0 tells.
 import re
 import statistics
 
-from agents.writer_prompt import BANNED_MATCH
+from agents.writer_prompt import BANNED_MATCH, stem_present
 
 # ── Sentence / word tokenisers (self-contained; no cross-import) ──────────
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
@@ -248,7 +248,7 @@ def banned_hits(text: str) -> list:
     """Readable labels of banned AI *phrases* present (reuses the writer's list
     so wording and structure are measured against one dictionary)."""
     low = (text or "").lower()
-    return [readable for readable, stem in BANNED_MATCH if stem in low]
+    return [readable for readable, stem in BANNED_MATCH if stem_present(stem, low)]
 
 
 # ── Proxy AI-content score (0-100) for offline measurement ────────────────
