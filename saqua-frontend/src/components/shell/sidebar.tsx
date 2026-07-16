@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { usePathname } from "next/navigation";
+import { PanelLeftClose, Search } from "lucide-react";
 import { NAV } from "@/lib/nav";
 import { Logo } from "@/components/ui/logo";
 import { cn } from "@/lib/utils";
@@ -12,7 +13,7 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
-export function Sidebar() {
+export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const pathname = usePathname();
   const { user } = useUser();
   const displayName = user?.fullName || user?.primaryEmailAddress?.emailAddress || "Saqua user";
@@ -20,11 +21,31 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="glass-panel fixed inset-y-0 left-0 z-30 hidden w-[var(--rail-w)] flex-col border-r border-border lg:flex">
-        {/* Wordmark */}
-        <div className="flex h-[var(--nav-h)] items-center gap-2.5 px-5">
+      <aside
+        className={cn(
+          "glass-panel fixed inset-y-0 left-0 z-30 hidden w-[var(--rail-w)] flex-col border-r border-border transition-transform duration-300 ease-smooth lg:flex",
+          collapsed && "lg:-translate-x-full",
+        )}
+      >
+        {/* Header — wordmark left; search + collapse toggle top-right (Claude layout) */}
+        <div className="flex h-[var(--nav-h)] items-center gap-2 px-4">
           <Logo className="h-5 w-auto" />
-          <span className="text-[15px] font-semibold tracking-tight">Saqua</span>
+          <span className="flex-1 truncate text-[15px] font-semibold tracking-tight">Saqua</span>
+          <button
+            onClick={() => document.getElementById("topbar-search")?.focus()}
+            aria-label="Search"
+            className="grid size-7 place-items-center rounded-md text-muted transition-colors hover:bg-white/[0.06] hover:text-text"
+          >
+            <Search className="size-[17px]" />
+          </button>
+          <button
+            onClick={onToggle}
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar"
+            className="grid size-7 place-items-center rounded-md text-muted transition-colors hover:bg-white/[0.06] hover:text-text"
+          >
+            <PanelLeftClose className="size-[17px]" />
+          </button>
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-2">
