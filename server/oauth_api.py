@@ -950,6 +950,10 @@ def register(app, rl_read=None, rl_write=None):
         if not _debug_token_ok(request):
             raise HTTPException(status_code=404, detail="Not found.")
         from server.campaign_store import CampaignStore
+        # Same pure helper the real GET /api/campaigns/{id} runs (via
+        # _result_with_warnings), so the cadence_warning reported below is an exact
+        # mirror of what that Clerk-gated endpoint attaches — no DevTools needed.
+        from server.campaign_api import _cadence_warning
         cid = (request.query_params.get("campaign_id") or "").strip()
         name = (request.query_params.get("name") or "").strip()
         out = {"build_marker": getattr(push, "BUILD_MARKER", None),
@@ -998,6 +1002,7 @@ def register(app, rl_read=None, rl_write=None):
                 else:
                     diagnosis = (f"final_status={fs!r}: not sendable at preview, so follow-ups "
                                  "were never generated.")
+                cw = _cadence_warning(p)  # EXACT value GET /api/campaigns/{id} attaches
                 prospects.append({
                     "domain": p.get("domain") or p.get("website"),
                     "final_status": fs,
@@ -1009,6 +1014,12 @@ def register(app, rl_read=None, rl_write=None):
                                    "subject": f.get("subject")} for f in fups],
                     "cadence_steps_at_launch": 3 + nf,      # original + bump + writers + breakup
                     "diagnosis": diagnosis,
+                    # Faithful mirror of GET /api/campaigns/{id}: non-null => the real
+                    # endpoint includes a "cadence_warning" key on this prospect (the amber
+                    # badge renders once the frontend build is also live); null => the real
+                    # endpoint omits the key. This isolates backend/data from the frontend.
+                    "cadence_warning": cw,
+                    "cadence_warning_in_api": cw is not None,
                 })
             results.append({"campaign_id": c["id"], "name": c["name"], "status": c["status"],
                             "workflow_ids": c["workflow_ids"], "prospects": prospects})
