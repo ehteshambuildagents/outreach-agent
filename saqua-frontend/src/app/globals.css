@@ -3,14 +3,20 @@
 @tailwind utilities;
 
 /*
-  Saqua — design tokens, mapped from the reference image (single source of truth).
-  Dark-only, luxury, minimal. One purple accent; everything else neutral.
-  Spacing / radius / type / motion scales reuse the product's existing system.
+  Saqua — design tokens (single source of truth).
+  Dark, with depth (ambient indigo + teal blooms), not flat black. ONE accent:
+  a pale signal-green used only for interactive + live/verified state. Fonts:
+  Geist (sans), Geist Mono (data), Newsreader (upright serif — reserved for the
+  single case of showing Saqua's own generated email copy).
 */
 :root {
-  --font-inter: "Inter";
+  /* Type — loaded at runtime via <link> in layout.tsx (no build-time fetch) */
+  --font-sans: "Geist", system-ui;
+  --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
   /* Surfaces — near-black canvas up a precise neutral ramp */
-  --bg: #08080b;            /* app canvas */
+  --bg: #0a0a0c;            /* app canvas — near-black, not flat black */
   --panel: #0c0c10;         /* sidebar / sunken rails */
   --card: #131318;          /* cards / surfaces */
   --card-2: #17171e;        /* hover / raised surface */
@@ -27,16 +33,16 @@
   --muted: #6e6f79;
   --faint: #4c4d56;
 
-  /* Accent — the single hue (purple), used only for signal */
-  --accent: #7c5cff;
-  --accent-hi: #9277ff;
-  --accent-soft: rgba(124, 92, 255, 0.12);
-  --accent-line: rgba(124, 92, 255, 0.32);
-  --accent-ink: #ffffff;
+  /* Accent — the single hue (pale signal-green). Interactive + live/verified only. */
+  --accent: #7cffb2;
+  --accent-hi: #99ffc4;                        /* brighter — hover + accent text on dark */
+  --accent-soft: rgba(124, 255, 178, 0.12);
+  --accent-line: rgba(124, 255, 178, 0.30);
+  --accent-ink: #06140c;                        /* near-black ink on the pale-green accent */
 
-  /* Status */
-  --success: #3ecf8e;
-  --success-soft: rgba(62, 207, 142, 0.12);
+  /* Status — success IS the accent green (one "live/verified" signal); warn/danger stay semantic */
+  --success: #7cffb2;
+  --success-soft: rgba(124, 255, 178, 0.12);
   --warn: #f5a623;
   --warn-soft: rgba(245, 166, 35, 0.13);
   --danger: #f2777a;
@@ -48,6 +54,19 @@
 
 * {
   border-color: var(--border);
+}
+
+/* Respect prefers-reduced-motion everywhere: collapse animations/transitions to
+   the end state instantly (framer-driven reveals handle this in JS separately). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 html,
@@ -63,7 +82,7 @@ body {
 
 ::selection {
   background: var(--accent-soft);
-  color: #fff;
+  color: var(--text);
 }
 
 /* Custom scrollbar — quiet, premium */
@@ -88,14 +107,23 @@ body {
     @apply rounded-lg border border-border bg-card;
   }
 
-  /* Soft radial purple glow used behind the landing hero + AI orbs */
+  /* Green signal glow — behind live/interactive orbs only (the accent, used sparingly) */
   .accent-glow {
     background: radial-gradient(
       60% 60% at 50% 40%,
-      rgba(124, 92, 255, 0.35) 0%,
-      rgba(124, 92, 255, 0.08) 45%,
+      rgba(124, 255, 178, 0.20) 0%,
+      rgba(124, 255, 178, 0.05) 45%,
       transparent 70%
     );
+  }
+
+  /* Ambient depth blooms — decorative only (muted indigo + teal), never the accent.
+     Position off-center behind sections; keep opacity low so it reads as depth. */
+  .bloom-indigo {
+    background: radial-gradient(50% 50% at 50% 50%, rgba(99, 102, 241, 0.16) 0%, transparent 70%);
+  }
+  .bloom-teal {
+    background: radial-gradient(50% 50% at 50% 50%, rgba(45, 212, 191, 0.12) 0%, transparent 70%);
   }
 
   /* Loading skeleton shimmer */

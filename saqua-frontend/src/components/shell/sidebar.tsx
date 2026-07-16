@@ -71,7 +71,7 @@ export function Sidebar() {
         {/* User footer */}
         <div className="border-t border-border p-3">
           <div className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-white/[0.04]">
-            <div className="grid size-8 place-items-center rounded-full bg-gradient-to-br from-accent to-[#5b3fd6]">
+            <div className="grid size-8 place-items-center rounded-full border border-border bg-white/[0.06]">
               <UserButton afterSignOutUrl="/" />
             </div>
             <div className="min-w-0 flex-1">

@@ -1,0 +1,34 @@
+"use client";
+
+import { motion, useReducedMotion } from "framer-motion";
+
+/**
+ * Earned scroll reveal — content animates in the moment it enters the viewport,
+ * once. Respects prefers-reduced-motion: reduced-motion users get the end state
+ * instantly (no transform, no fade), never a delayed or hidden element.
+ */
+export function Reveal({
+  children,
+  delay = 0,
+  className,
+  y = 14,
+}: {
+  children: React.ReactNode;
+  delay?: number;
+  className?: string;
+  y?: number;
+}) {
+  const reduced = useReducedMotion();
+  if (reduced) return <div className={className}>{children}</div>;
+  return (
+    <motion.div
+      className={className}
+      initial={{ opacity: 0, y }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-80px" }}
+      transition={{ duration: 0.5, delay, ease: [0.22, 0.61, 0.36, 1] }}
+    >
+      {children}
+    </motion.div>
+  );
+}

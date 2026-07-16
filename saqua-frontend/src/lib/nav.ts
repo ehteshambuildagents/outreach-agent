@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   Megaphone,
+  MessageSquare,
   PlusCircle,
   Settings,
   Users,
@@ -22,10 +23,11 @@ export interface NavGroup {
 export const NAV: NavGroup[] = [
   {
     items: [
+      { label: "Chat", href: "/ai", icon: MessageSquare },
       { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
       { label: "New Campaign", href: "/campaigns/new", icon: PlusCircle },
       { label: "Prospects", href: "/prospects", icon: Users },
-      { label: "Campaigns", href: "/campaigns/saas-founders-us", icon: Megaphone },
+      { label: "Campaigns", href: "/campaigns", icon: Megaphone },
       { label: "Settings", href: "/settings", icon: Settings },
     ],
   },

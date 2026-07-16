@@ -58,7 +58,11 @@ const config: Config = {
         "5xl": ["52px", { lineHeight: "1.05" }],
       },
       fontFamily: {
-        sans: ["var(--font-inter)", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        sans: ["var(--font-sans)", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        // Reserved for exactly one thing: Saqua's own generated email copy (upright serif).
+        serif: ["var(--font-serif)", "Georgia", "Cambria", "serif"],
+        // Data-like elements: fit scores, timestamps, status tags, technical labels.
+        mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       boxShadow: {
         pop: "0 16px 50px rgba(0,0,0,.55)",

@@ -14,16 +14,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <ClerkProvider
       signInUrl="/sign-in"
       signUpUrl="/sign-up"
-      signInFallbackRedirectUrl="/dashboard"
-      signUpFallbackRedirectUrl="/dashboard"
+      signInFallbackRedirectUrl="/ai"
+      signUpFallbackRedirectUrl="/ai"
     >
       <html lang="en" className="dark">
         <head>
-          {/* Inter loads at runtime so production builds do not fetch Google fonts. */}
+          {/* Fonts load at runtime so production builds never fetch Google Fonts.
+              Geist (sans) + Geist Mono (data) + Newsreader (upright serif, no italic
+              axis requested — reserved for Saqua's generated email copy). */}
           <link rel="preconnect" href="https://fonts.googleapis.com" />
           <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
           <link
-            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+            href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Newsreader:opsz@6..72&display=swap"
             rel="stylesheet"
           />
         </head>
