@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { BrowserFrame } from "@/components/ui/browser-frame";
 import { Reveal } from "@/components/ui/reveal";
 import { Logo } from "@/components/ui/logo";
+import { AnimatedLogo } from "@/components/ui/animated-logo";
 
 const STAGES = [
   {
@@ -58,7 +59,7 @@ export default function LandingPage() {
 
       <header className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
         <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
-          <Logo className="h-6 w-auto" />
+          <AnimatedLogo markClassName="h-6 w-auto" />
           Saqua
         </Link>
         <nav className="hidden items-center gap-7 text-xs text-muted md:flex">
