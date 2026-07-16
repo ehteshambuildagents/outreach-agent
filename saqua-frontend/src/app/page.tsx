@@ -60,7 +60,7 @@ export default function LandingPage() {
               </Link>
             </Button>
             <Button asChild variant="secondary" size="lg">
-              <Link href="/sign-in">Book a demo</Link>
+              <a href="https://cal.com/saqua/demo-call" target="_blank" rel="noopener noreferrer">Book a demo</a>
             </Button>
           </div>
           <div className="mt-10 flex flex-wrap items-center gap-4 text-xs text-muted">
