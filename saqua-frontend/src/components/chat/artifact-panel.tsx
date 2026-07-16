@@ -25,7 +25,7 @@ export function ArtifactPanel({ draft, onClose }: { draft: EmailCardData; onClos
   }
 
   return (
-    <div className="flex h-full flex-col border-l border-border bg-panel">
+    <div className="glass-panel flex h-full flex-col border-l border-border">
       <div className="flex items-center gap-2 border-b border-border-faint px-4 py-3">
         <Mail className="size-4 text-accent-hi" />
         <span className="text-sm font-medium text-text">{draft.label || "Draft"}</span>

@@ -1,0 +1,15 @@
+<svg width="48" height="30" viewBox="0 0 48 30" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Saqua">
+  <defs>
+    <linearGradient id="saqua-wave" x1="2" y1="26" x2="46" y2="4" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1B2A9C"/>
+      <stop offset="0.55" stop-color="#1E7BD6"/>
+      <stop offset="1" stop-color="#18C6C9"/>
+    </linearGradient>
+  </defs>
+  <!-- main swell -->
+  <path d="M3 19C11 10 17 10 24 14.5C29.2 18 35 17.5 45 7.5"
+        stroke="url(#saqua-wave)" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- breaking curl -->
+  <path d="M26.5 13.5C35.5 7.5 45 12.5 42.8 21C41.3 27 33.5 28 29.5 23"
+        stroke="url(#saqua-wave)" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

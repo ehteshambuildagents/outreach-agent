@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 
 export function Topbar() {
   return (
-    <header className="sticky top-0 z-20 flex h-[var(--nav-h)] items-center gap-3 border-b border-border bg-bg/80 px-5 backdrop-blur-xl">
+    <header className="glass-panel sticky top-0 z-20 flex h-[var(--nav-h)] items-center gap-3 border-b border-border px-5">
       <div className="relative hidden max-w-sm flex-1 items-center md:flex">
         <Search className="pointer-events-none absolute left-3 size-4 text-muted" />
         <input
@@ -26,7 +26,7 @@ export function Topbar() {
             <Plus className="size-4" /> New campaign
           </Link>
         </Button>
-        <div className="ml-1 grid size-8 place-items-center rounded-full bg-gradient-to-br from-accent to-[#5b3fd6] text-[11px] font-semibold text-white">
+        <div className="ml-1 grid size-8 place-items-center rounded-full border border-border bg-white/[0.06] text-[11px] font-semibold text-text">
           <UserButton afterSignOutUrl="/" />
         </div>
       </div>

@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { BrowserFrame } from "@/components/ui/browser-frame";
 import { Reveal } from "@/components/ui/reveal";
+import { Logo } from "@/components/ui/logo";
 
 const STAGES = [
   {
@@ -57,9 +58,7 @@ export default function LandingPage() {
 
       <header className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
         <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
-          <span className="grid size-7 place-items-center rounded-md bg-accent text-[color:var(--accent-ink)]">
-            <ShieldCheck className="size-4" />
-          </span>
+          <Logo className="h-6 w-auto" />
           Saqua
         </Link>
         <nav className="hidden items-center gap-7 text-xs text-muted md:flex">
@@ -261,9 +260,7 @@ export default function LandingPage() {
       <footer className="mx-auto max-w-7xl px-6 py-10">
         <div className="flex flex-col items-center justify-between gap-4 border-t border-border-faint pt-8 text-xs text-muted sm:flex-row">
           <div className="flex items-center gap-2 text-text-2">
-            <span className="grid size-6 place-items-center rounded bg-accent text-[color:var(--accent-ink)]">
-              <ShieldCheck className="size-3.5" />
-            </span>
+            <Logo className="h-5 w-auto" />
             Saqua
           </div>
           <div className="flex items-center gap-6">

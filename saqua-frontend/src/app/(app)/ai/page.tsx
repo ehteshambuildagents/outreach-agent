@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Sparkles, ArrowUp, Loader2, AlertTriangle, User, Bot, Search } from "lucide-react";
-import { motion } from "framer-motion";
+import { ArrowUp, Loader2, AlertTriangle, User, Search } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Logo } from "@/components/ui/logo";
 import { cn } from "@/lib/utils";
 import { ProspectsCard } from "@/components/chat/prospects-card";
 import { ChannelCard } from "@/components/chat/channel-card";
@@ -12,6 +13,7 @@ import { DraftCard } from "@/components/chat/draft-card";
 import { ArtifactPanel } from "@/components/chat/artifact-panel";
 import { ThreadRail } from "@/components/chat/thread-rail";
 import { useStreamedText } from "@/components/chat/use-streamed-text";
+import { OnboardingTour } from "@/components/onboarding/tour";
 import {
   api,
   type ChatMessage,
@@ -25,9 +27,9 @@ import {
 } from "@/lib/api";
 
 const EXAMPLES = [
-  "Find B2B SaaS founders hiring an SDR and tell me who's worth pursuing",
-  "Here's my list: Stripe, Ramp, Linear — which are worth it?",
-  "Research linear.app and score it as a prospect",
+  "Find SaaS founders hiring an SDR",
+  "Score my list: Stripe, Ramp, Linear",
+  "Research linear.app as a prospect",
 ];
 
 const ACTION_PROMPT: Record<string, (company: string) => string> = {
@@ -123,6 +125,15 @@ export default function AIChatPage() {
     setError("");
   }, []);
 
+  const deleteThread = useCallback(
+    (id: string) => {
+      setThreads((prev) => prev.filter((t) => t.id !== id)); // optimistic
+      void api.deleteConversation(id);
+      if (id === convId) newChat();
+    },
+    [convId, newChat],
+  );
+
   const onAction = useCallback(
     (action: string, prospect: ProspectEntry) => {
       const build = ACTION_PROMPT[action];
@@ -135,19 +146,21 @@ export default function AIChatPage() {
 
   return (
     <div className="-mx-5 -mb-28 -mt-6 flex h-[calc(100vh-var(--nav-h))] md:-mx-8 md:-my-8">
+      <OnboardingTour />
       {/* Left rail — threads + campaigns */}
-      <aside className="hidden w-60 shrink-0 border-r border-border bg-panel md:flex md:flex-col">
+      <aside data-tour="rail" className="glass-panel hidden w-60 shrink-0 border-r border-border md:flex md:flex-col">
         <ThreadRail
           threads={threads}
           activeId={convId}
           campaigns={campaigns}
           onSelect={selectThread}
           onNew={newChat}
+          onDelete={deleteThread}
         />
       </aside>
 
       {/* Conversation */}
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section data-tour="artifact-hint" className="flex min-w-0 flex-1 flex-col">
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
             {empty ? (
@@ -179,19 +192,28 @@ export default function AIChatPage() {
           </div>
         </div>
 
-        <div className="border-t border-border-faint bg-bg/80 p-3 backdrop-blur">
+        <div data-tour="composer" className="glass border-t border-border-faint p-3">
           <div className="mx-auto max-w-3xl">
             <Composer value={input} onChange={setInput} onSend={() => send(input)} disabled={sending} />
           </div>
         </div>
       </section>
 
-      {/* Artifact panel — the draft canvas (serif copy lives here) */}
-      {artifact && (
-        <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-md lg:static lg:z-auto lg:w-[380px] lg:max-w-none xl:w-[420px]">
-          <ArtifactPanel draft={artifact.data} onClose={() => setArtifact(null)} />
-        </aside>
-      )}
+      {/* Artifact panel — the draft canvas (serif copy lives here). Slides in/out. */}
+      <AnimatePresence>
+        {artifact && (
+          <motion.aside
+            key="artifact"
+            initial={{ x: 40, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 40, opacity: 0 }}
+            transition={{ duration: 0.28, ease: [0.22, 0.61, 0.36, 1] }}
+            className="fixed inset-y-0 right-0 z-40 w-full max-w-md lg:static lg:z-auto lg:w-[380px] lg:max-w-none xl:w-[420px]"
+          >
+            <ArtifactPanel draft={artifact.data} onClose={() => setArtifact(null)} />
+          </motion.aside>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -281,8 +303,8 @@ function Bubble({
       className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}
     >
       {!isUser && (
-        <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-white/[0.03] text-accent-hi">
-          <Bot className="size-3.5" />
+        <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-white/[0.03]">
+          <Logo className="w-4" />
         </div>
       )}
       <div
@@ -330,8 +352,8 @@ function Thinking() {
   }, []);
   return (
     <div className="flex items-center gap-3">
-      <div className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-white/[0.03] text-accent-hi">
-        <Bot className="size-3.5" />
+      <div className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-white/[0.03]">
+        <Logo className="w-4 animate-pulse-soft" />
       </div>
       <div className="inline-flex items-center gap-2.5 rounded-lg border border-border-faint bg-white/[0.02] px-4 py-2.5 text-sm text-text-2">
         <Search className="size-3.5 animate-pulse-soft text-accent-hi" />
@@ -351,9 +373,9 @@ function EmptyState({ onPick }: { onPick: (text: string) => void }) {
       className="flex min-h-[52vh] flex-col items-center justify-center text-center"
     >
       <div className="relative mb-5">
-        <div className="accent-glow absolute inset-0 scale-[2.2] opacity-60" />
-        <div className="relative grid size-12 place-items-center rounded-xl border border-border bg-white/[0.03] text-accent-hi">
-          <Sparkles className="size-6" />
+        <div className="accent-glow absolute inset-0 scale-[2.4] opacity-50" />
+        <div className="relative grid size-14 place-items-center rounded-2xl border border-border bg-white/[0.03]">
+          <Logo className="w-8" />
         </div>
       </div>
       <h1 className="text-xl font-semibold text-text">Who should we go after?</h1>
@@ -361,12 +383,13 @@ function EmptyState({ onPick }: { onPick: (text: string) => void }) {
         Describe who to find, or paste a list of companies. Saqua researches each one, scores fit,
         and drafts the opener — right here. Nothing sends without you.
       </p>
-      <div className="mx-auto mt-6 flex w-full max-w-lg flex-col gap-2">
+      {/* Starter prompts: quiet, secondary chips — not the visual focus. */}
+      <div className="mx-auto mt-5 flex max-w-xl flex-wrap items-center justify-center gap-1.5">
         {EXAMPLES.map((ex) => (
           <button
             key={ex}
             onClick={() => onPick(ex)}
-            className="rounded-md border border-border bg-white/[0.02] px-4 py-2.5 text-left text-sm text-text-2 transition-colors hover:border-border-strong hover:bg-white/[0.05] hover:text-text"
+            className="rounded-full border border-border-faint bg-white/[0.02] px-3 py-1.5 text-xs text-muted transition-colors hover:border-border hover:bg-white/[0.05] hover:text-text-2"
           >
             {ex}
           </button>

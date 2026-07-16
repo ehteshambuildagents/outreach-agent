@@ -4,6 +4,7 @@ import Link from "next/link";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { usePathname } from "next/navigation";
 import { NAV } from "@/lib/nav";
+import { Logo } from "@/components/ui/logo";
 import { cn } from "@/lib/utils";
 
 function isActive(pathname: string, href: string) {
@@ -19,10 +20,10 @@ export function Sidebar() {
 
   return (
     <>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[var(--rail-w)] flex-col border-r border-border bg-panel lg:flex">
+      <aside className="glass-panel fixed inset-y-0 left-0 z-30 hidden w-[var(--rail-w)] flex-col border-r border-border lg:flex">
         {/* Wordmark */}
         <div className="flex h-[var(--nav-h)] items-center gap-2.5 px-5">
-          <LogoMark />
+          <Logo className="h-5 w-auto" />
           <span className="text-[15px] font-semibold tracking-tight">Saqua</span>
         </div>
 
@@ -41,6 +42,7 @@ export function Sidebar() {
                   <Link
                     key={item.href}
                     href={item.href}
+                    data-tour={item.href === "/campaigns" ? "nav-campaigns" : undefined}
                     className={cn(
                       "group relative mb-0.5 flex items-center gap-3 rounded-md px-3 py-[7px] text-sm transition-colors duration-150",
                       active
@@ -82,7 +84,7 @@ export function Sidebar() {
         </div>
       </aside>
 
-      <nav className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-5 rounded-xl border border-border bg-panel/95 p-1 shadow-pop backdrop-blur lg:hidden">
+      <nav className="glass-panel fixed inset-x-3 bottom-3 z-40 grid grid-cols-6 rounded-xl border border-border p-1 shadow-pop lg:hidden">
         {NAV[0].items.map((item) => {
           const active = isActive(pathname, item.href);
           const Icon = item.icon;
@@ -106,12 +108,3 @@ export function Sidebar() {
   );
 }
 
-function LogoMark() {
-  return (
-    <div className="grid size-6 place-items-center rounded-md bg-accent text-white shadow-[0_2px_10px_-2px_var(--accent-line)]">
-      <svg viewBox="0 0 24 24" className="size-3.5" fill="none">
-        <path d="M12 2c2.5 3 6 4.5 6 9a6 6 0 1 1-12 0c0-4.5 3.5-6 6-9Z" fill="currentColor" />
-      </svg>
-    </div>
-  );
-}

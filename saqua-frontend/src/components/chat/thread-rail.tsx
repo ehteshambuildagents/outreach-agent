@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Plus, MessageSquare, Megaphone } from "lucide-react";
+import { Plus, MessageSquare, Megaphone, Trash2 } from "lucide-react";
 import { StatusPill } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { ConversationSummary, CampaignDetail } from "@/lib/api";
@@ -17,12 +17,14 @@ export function ThreadRail({
   campaigns,
   onSelect,
   onNew,
+  onDelete,
 }: {
   threads: ConversationSummary[];
   activeId: string | null;
   campaigns: CampaignDetail[];
   onSelect: (id: string) => void;
   onNew: () => void;
+  onDelete: (id: string) => void;
 }) {
   const [tab, setTab] = useState<"threads" | "campaigns">("threads");
 
@@ -62,19 +64,27 @@ export function ThreadRail({
             </p>
           ) : (
             threads.map((t) => (
-              <button
+              <div
                 key={t.id}
-                onClick={() => onSelect(t.id)}
                 className={cn(
-                  "mb-0.5 flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors",
+                  "group mb-0.5 flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
                   t.id === activeId ? "bg-accent-soft text-text" : "text-text-2 hover:bg-white/[0.04] hover:text-text",
                 )}
               >
-                <MessageSquare
-                  className={cn("size-3.5 shrink-0", t.id === activeId ? "text-accent-hi" : "text-muted")}
-                />
-                <span className="truncate">{t.title || "New chat"}</span>
-              </button>
+                <button onClick={() => onSelect(t.id)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
+                  <MessageSquare
+                    className={cn("size-3.5 shrink-0", t.id === activeId ? "text-accent-hi" : "text-muted")}
+                  />
+                  <span className="truncate">{t.title || "New chat"}</span>
+                </button>
+                <button
+                  onClick={() => onDelete(t.id)}
+                  aria-label="Delete thread"
+                  className="grid size-6 shrink-0 place-items-center rounded text-muted opacity-0 transition-opacity hover:bg-white/[0.06] hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
             ))
           )
         ) : campaigns.length === 0 ? (
