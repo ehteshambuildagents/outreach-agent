@@ -269,6 +269,106 @@ export interface ManualRecipientRequest {
   email: string;
 }
 
+// ── Chat workspace (research_prospects / draft_channel_message cards) ───
+export type ChatMessageKind = "text" | "email" | "research" | "notice" | "prospects" | "channel";
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  kind: ChatMessageKind;
+  content: string;
+  data: unknown | null;
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  panel?: unknown;
+}
+
+/** Sidebar row from GET /api/conversations (list_summaries). */
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  updated_at?: number | null;
+}
+
+/** One finding in a prospect's expanded detail — reuses the research enrichment
+ * schema (value + source + confidence). */
+export interface ProspectFinding {
+  label: string;
+  value: string;
+  source?: string | null;
+  confidence?: number | null;
+  quote?: string | null;
+}
+
+/** A researched + scored prospect (backend `_prospect_public`). `preview` is the
+ * collapsed one-paragraph headline; `detail` is revealed on expand. */
+export interface ProspectEntry {
+  company: string;
+  website: string;
+  status: string;
+  score: number;
+  fit_level: string;
+  priority: string;
+  recommendation: string;
+  recommended: boolean;
+  score_reason: string;
+  preview: string;
+  actions: string[];
+  detail: {
+    what_they_do?: string | null;
+    research_confidence?: number | null;
+    findings?: ProspectFinding[];
+    sources?: { domain: string; url: string }[];
+    score_breakdown?: Record<string, unknown>;
+    strongest_signals?: string[];
+    missing_information?: string[];
+    disqualifiers?: string[];
+    why_discovered?: string | null;
+  };
+}
+
+export interface ProspectsCardData {
+  summary?: { total?: number; researched?: number; top?: string | null; by_recommendation?: Record<string, number> };
+  prospects: ProspectEntry[];
+}
+
+/** A safe-channel draft (backend `channel` card). `posted` is always false — this
+ * feature drafts only; the user posts manually. */
+export interface ChannelCardData {
+  channel: string;
+  label: string;
+  body: string;
+  char_count?: number;
+  company?: string | null;
+  posted: boolean;
+  guard?: "ALLOW" | "WARN" | "BLOCK" | null;
+}
+
+export interface EmailCardData {
+  subject?: string | null;
+  body?: string | null;
+  to?: string | null;
+  company?: string | null;
+  label?: string | null;
+  /** Optional — only present if the backend attaches the prospect's fit score /
+   * pre-send check count to the draft payload. The artifact panel shows them when
+   * present and omits them otherwise (never fabricated). */
+  fit_score?: number | null;
+  checks_passed?: number | null;
+}
+
+export interface ResearchCardData {
+  company?: string | null;
+  what_they_do?: string | null;
+  research_score?: number | null;
+  pages_crawled?: string[];
+  hooks?: { text?: string }[] | string[];
+  stop_reason?: string | null;
+}
+
 export const api = {
   publicConfig: () => req<PublicConfig>("/api/public-config"),
   health: () => req<{ ok: boolean }>("/api/health"),
@@ -318,4 +418,21 @@ export const api = {
   resumeCampaign: (id: string) => req<CampaignDetail>(`/api/campaigns/${id}/resume`, { method: "POST" }),
   cancelCampaign: (id: string) => req<CampaignDetail>(`/api/campaigns/${id}/cancel`, { method: "POST" }),
   prospects: () => req<{ prospects: CampaignPreviewProspect[] }>("/api/prospects"),
+
+  // Chat workspace — research_prospects / draft_channel_message run here.
+  conversations: () => req<{ conversations: ConversationSummary[] }>("/api/conversations"),
+  createConversation: () => req<Conversation>("/api/conversations", { method: "POST" }),
+  conversation: (id: string) => req<Conversation>(`/api/conversations/${encodeURIComponent(id)}`),
+  renameConversation: (id: string, title: string) =>
+    req<Conversation>(`/api/conversations/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+  deleteConversation: (id: string) =>
+    req<{ ok: boolean }>(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  sendMessage: (id: string, text: string) =>
+    req<Conversation>(`/api/conversations/${encodeURIComponent(id)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
 };
