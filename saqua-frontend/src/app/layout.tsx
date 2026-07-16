@@ -1,6 +1,7 @@
 import { Analytics } from "@vercel/analytics/next";
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
+import { VisibilityRepaint } from "@/components/shell/visibility-repaint";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           />
         </head>
        <body className="min-h-screen bg-bg font-sans text-text antialiased">
+  <VisibilityRepaint />
   {children}
   <Analytics />
 </body>

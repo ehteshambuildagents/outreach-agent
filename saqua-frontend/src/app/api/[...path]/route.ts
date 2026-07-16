@@ -5,7 +5,35 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const API_ORIGIN = process.env.SAQUA_API_ORIGIN || "http://127.0.0.1:8000";
+const RAW_API_ORIGIN = process.env.SAQUA_API_ORIGIN?.trim();
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+// Local-dev convenience only. In production the origin MUST come from
+// SAQUA_API_ORIGIN — if it is unset, requests fail loudly (see `proxy`) instead of
+// silently hitting a nonexistent localhost backend.
+const DEV_FALLBACK_ORIGIN = "http://127.0.0.1:8000";
+const API_ORIGIN = RAW_API_ORIGIN
+  ? RAW_API_ORIGIN.replace(/\/+$/, "")
+  : IS_PRODUCTION
+    ? ""
+    : DEV_FALLBACK_ORIGIN;
+
+if (IS_PRODUCTION && !API_ORIGIN) {
+  console.error(
+    JSON.stringify({
+      event: "api_proxy_misconfigured",
+      reason: "SAQUA_API_ORIGIN is not set in production — /api requests will 500",
+    }),
+  );
+} else if (!RAW_API_ORIGIN && !IS_PRODUCTION) {
+  console.warn(
+    JSON.stringify({
+      event: "api_proxy_dev_fallback",
+      origin: DEV_FALLBACK_ORIGIN,
+      hint: "Set SAQUA_API_ORIGIN in saqua-frontend/.env.local to point at your backend",
+    }),
+  );
+}
+
 const PROXY_TIMEOUT_MS = 10 * 60 * 1000;
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -66,6 +94,21 @@ function forwardedHeaders(request: NextRequest, traceId: string): Headers {
 async function proxy(request: NextRequest, { params }: { params: { path: string[] } }) {
   const started = Date.now();
   const traceId = randomUUID();
+
+  if (!API_ORIGIN) {
+    logProxy("error", "api_proxy_misconfigured", {
+      trace_id: traceId,
+      reason: "SAQUA_API_ORIGIN is not configured",
+    });
+    return NextResponse.json(
+      {
+        error: "Backend not configured",
+        reason: "SAQUA_API_ORIGIN is not set for this environment.",
+        trace_id: traceId,
+      },
+      { status: 500, headers: { "x-saqua-trace-id": traceId } },
+    );
+  }
   const path = `/api/${(params.path || []).join("/")}`;
   const url = backendUrl(params.path || [], request.nextUrl.search);
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
