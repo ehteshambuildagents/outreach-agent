@@ -10,7 +10,6 @@ delimiters, and the system prompt tells the model never to obey instructions
 found inside them (prompt-injection defence, mirroring research/extractor.py).
 """
 
-import random
 import re
 
 from config.settings import (
@@ -18,69 +17,14 @@ from config.settings import (
     WRITER_FIELD_CHAR_CAP,
 )
 
-# Style nudges. With a fixed prompt the model converges on one favorite
-# greeting/opening/close/shape across emails; selecting a different nudge per lead
-# (deterministically, see build_user_content) breaks that shared skeleton so no
-# two companies get the same-shaped email. Each axis is drawn from the SAME
-# per-lead seed, so the selection is reproducible while spreading across the whole
-# space over a campaign. Pools are intentionally larger than the number of axes so
-# repetition stays low even across 100+ emails.
-
-# GREETING: the single biggest "templated" tell was every email opening
-# "Hey <Name>,". These vary the opener while staying personal and safe (the real
-# first name, or no invented name). "<First>" is substituted with the real name.
-_GREETINGS_NAMED = (
-    "open 'Hey <First>,' then go straight into the observation",
-    "open 'Hi <First>,' then the observation",
-    "open with just '<First>,' (no Hey or Hi), then the observation",
-    "skip the greeting line, open on the observation itself and use <First>'s "
-    "first name naturally in the first sentence or two",
-)
-_GREETINGS_NONAME = (
-    "open 'Hey,' then the observation",
-    "skip a greeting entirely, open straight on the observation",
-    "open by naming the company, then the observation",
-)
-# Openers: state the ONE observation flat and move on. Never explain it back or
-# narrate an inference.
-_OPENING_MOVES = (
-    "state the one detail flat, no wind-up, then move on",
-    "drop the fact, then one short reaction, then stop",
-    "mention the thing you noticed like you're mid-conversation",
-    "name the number and leave it there, no unpacking",
-    "start mid-thought, like you're continuing a conversation they can't see",
-    "lead with the plain fact, understated, almost throwaway",
-)
-# Closes: a MIX of genuine questions and natural non-question closes, so not every
-# email ends with "?". Never a hard sales CTA (no "book a call", "are you free").
-_CLOSING_MOVES = (
-    # genuine questions (an opening, not a closing ask)
-    "end by asking, plainly, if they're even the right person for this",
-    "end by asking whether that problem is actually real for a team like theirs",
-    "end by asking one low-friction question tied to the exact problem you noticed",
-    "end with a sanity-check question, like whether this is dumb or worth a look",
-    "end by offering to send the one specific example you'd write for them",
-    "end by asking if a concrete example would be useful",
-)
-# How to DESCRIBE the product this email: an angle, never the mechanism. Never
-# "it reads / researches / finds / analyzes / turns".
-_PRODUCT_ANGLES = (
-    "the RESULT it gets them, tied to their situation (replies, outbound that lands)",
-    "the PROBLEM it takes off their plate (the hours per prospect, the blast)",
-    "what it REPLACES for them (the manual research, the generic template)",
-    "barely explain it, just gesture at what it's for and move on",
-    "the SHIFT it makes (from spray-and-pray to a few emails that actually fit)",
-    "leave the product almost implicit, one half-sentence, and move on",
-)
-# STRUCTURE: vary where the observation sits and how many short paragraphs, so the
-# overall shape differs email to email (not always observation->why->product->ask).
-_STRUCTURE_SHAPES = (
-    "observation first, then why you're writing, then the product angle, then the close",
-    "open on the observation, then go almost straight to the close, product kept to a half-sentence",
-    "one tight paragraph, no line breaks",
-    "two very short paragraphs with a blank line between them",
-    "lead with the problem your product removes, tie it to what you noticed, then close",
-)
+# NOTE (fingerprint redesign): the old approach picked a greeting/opening/structure/
+# close at RANDOM from fixed menus per lead. Randomness over a finite menu is itself
+# a fingerprint at scale — the menu recurs and the shape carries no signal because
+# it's decoupled from the prospect. Those menus are retired. Structure now EMERGES
+# from the specific research: the model first commits to the one detail it's building
+# on and the shape that detail dictates (the required `angle` field), so 1,000
+# different research inputs yield 1,000 differently-shaped emails with no menu to
+# detect. Measured by eval/writer_fingerprint.py (distribution/entropy across a batch).
 
 # ── Banned wording (single source of truth) ───────────────────────────
 # Each entry is (human-readable phrase shown in the prompt, lowercase stem used
@@ -189,10 +133,15 @@ def stem_present(stem: str, text_lower: str) -> bool:
 WRITER_SCHEMA = {
     "type": "object",
     "properties": {
+        # Reasoned FIRST (property order matters for structured output): the one
+        # specific detail this email is built on and the shape that detail dictates.
+        # Forces structure to emerge from the research, not a habit. Internal —
+        # writer.py ignores it; it only exists to condition the body that follows.
+        "angle": {"type": "string"},
         "subject": {"type": "string"},
         "body": {"type": "string"},
     },
-    "required": ["subject", "body"],
+    "required": ["angle", "subject", "body"],
     "additionalProperties": False,
 }
 
@@ -388,25 +337,33 @@ def _build_system_prompt() -> str:
         "\", ensuring/allowing/helping/driving ...\" clause onto the end of a "
         "sentence, that subordinate tail is the clearest tell you're a machine. No "
         "perfect symmetry. Don't wrap the observation into a lesson, don't conclude "
-        "every thought, don't end on a polished sales CTA. Vary the SHAPE of each "
-        "email, where the observation sits, how many short paragraphs, following the "
-        "STYLE NUDGE, so two emails never share the same skeleton. If any sentence "
-        "sounds like a LinkedIn post, cut it.\n\n"
+        "every thought, don't end on a polished sales CTA. The SHAPE of each email — "
+        "where the observation sits, how many short paragraphs, the order of the "
+        "beats, whether every beat is even present — must come from the specific "
+        "detail you're building on (see `angle`), not from a habit. Two emails "
+        "should never share the same skeleton because two prospects never have the "
+        "same sharpest detail. If any sentence sounds like a LinkedIn post, cut it.\n\n"
         f"NEVER SAY any of these: {banned}.\n\n"
-        "GREETING: follow the greeting style in the STYLE NUDGE below. When you "
-        "greet by name, use the contact's REAL first name only. If there's no name, "
-        "never invent one, open with the company or straight on the observation. "
-        "Never \"Hey there\".\n"
+        "GREETING: let the opening you chose decide it — sometimes 'Hey <First>,', "
+        "sometimes just '<First>,', sometimes no greeting line at all with the name "
+        "used naturally in the first sentence, sometimes (no name) open on the "
+        "company or straight on the observation. Don't default to the same greeting "
+        "twice in a row. When you greet by name, use the contact's REAL first name "
+        "only; never invent one. Never \"Hey there\".\n"
         "SUBJECT: short, lowercase, like a note to one person.\n\n"
-        "END with ONE tiny ask they could answer in under fifteen seconds: are "
-        "they the right person, is the problem real, or do they want to see the "
-        "one example you'd write for their specific market/proof point. Deliver "
-        "value, don't promise it, offering the specific thing you'd actually write "
-        "for them beats saying you \"could help\". Never ask for a meeting, a call, "
-        "a demo, or \"30 minutes\"; never \"book a call\", \"are you free this "
-        "week\", or \"worth exploring?\". Do not drift into vague endings like "
-        "\"I'll leave it with you\" or \"you'll know if it's relevant\". Tie the "
-        "ask to their real context, not a generic founder-outbound pitch.\n\n"
+        "CLOSE: keep the ending short and low-pressure — never a hard sales CTA. But "
+        "do NOT end the same way every time: the ask is a SHAPE chosen for this "
+        "email, not a fixed move. Depending on the evidence and how warm it is, that "
+        "might be a genuine question (are they the right person, is the problem "
+        "real), a flat statement that simply stops, a specific offer to send the one "
+        "example you'd write for their exact market, or no explicit ask at all when "
+        "the email already invites a reply. Not every email should end on \"?\". "
+        "Deliver value, don't promise it — offering the specific thing you'd write "
+        "beats saying you \"could help\". Never ask for a meeting, a call, a demo, or "
+        "\"30 minutes\"; never \"book a call\", \"are you free this week\", or "
+        "\"worth exploring?\". Don't drift into vague endings like \"I'll leave it "
+        "with you\" or \"you'll know if it's relevant\". Whatever the shape, tie it "
+        "to their real context, not a generic founder-outbound pitch.\n\n"
         "SELF-CHECK before returning: if this landed in your own inbox, would you "
         "believe a real founder typed it in one sitting? Does it read like a "
         "founder or a salesperson? Is the product the main character (if so, make "
@@ -422,7 +379,12 @@ def _build_system_prompt() -> str:
         "3)\n" + _GOOD_3 + "\n\n"
         "NEVER write like this:\n" + _BAD + "\n\n"
         "Return ONLY a JSON object of the form "
-        '{"subject": "<the subject>", "body": "<the email>"}. '
+        '{"angle": "<...>", "subject": "<the subject>", "body": "<the email>"}. '
+        "Fill `angle` FIRST and let it drive the rest: name the ONE concrete detail "
+        "from the research you're building on, then in a few words the shape it "
+        "dictates (where you open, roughly how long, how you close). It's your "
+        "private planning note, never shown to the recipient — its only job is to "
+        "make this email's structure come from this prospect. "
         "No markdown, no code fences, no commentary."
     )
 
@@ -598,19 +560,6 @@ def build_user_content(data: dict, feedback=None, guidance=None,
     target = _clean_scalar(data.get("target_customer"))
     unique_hook = _clean_scalar(data.get("unique_hook"))
 
-    # Style nudges chosen DETERMINISTICALLY from the lead itself: the same company
-    # always yields the same prompt (reproducible + debuggable), while different
-    # companies spread across the whole nudge space (the variation we want). A
-    # local Random keeps this off the process-global RNG that claude_client's
-    # retry jitter also draws from.
-    rng = random.Random(f"{company}|{first}|{unique_hook}")
-    greetings = _GREETINGS_NAMED if first else _GREETINGS_NONAME
-    greeting_move = rng.choice(greetings).replace("<First>", first or "")
-    opening_move = rng.choice(_OPENING_MOVES)
-    product_angle = rng.choice(_PRODUCT_ANGLES)
-    structure_shape = rng.choice(_STRUCTURE_SHAPES)
-    closing_move = rng.choice(_CLOSING_MOVES)
-
     # On a revision the user may redirect to a different person on file, so we
     # present the default contact without hard-pinning it (see the People-on-file
     # block below). On a first draft we pin the default contact as before.
@@ -661,13 +610,27 @@ def build_user_content(data: dict, feedback=None, guidance=None,
         "",
         "What you (the sender) offer: " + SENDER_PRODUCT_PITCH,
         "",
-        "STYLE NUDGE FOR THIS EMAIL (do not quote these words, just let them shape "
-        "THIS email so it has its own shape, different from the last one you wrote):",
-        f"  - greeting: {greeting_move}",
-        f"  - opening move: {opening_move}",
-        "  - describe your product by " + product_angle + " (never how it works)",
-        f"  - structure: {structure_shape}",
-        f"  - closing: {closing_move}",
+        "SHAPE THIS EMAIL FROM THE SPECIFICS ABOVE (there is no template, and there "
+        "is no menu of shapes to pick from — the shape has to come from THIS "
+        "prospect, not a habit):",
+        "  - Fill `angle` first: name the ONE concrete detail above you're building "
+        "on, and in a few words the shape it dictates — where you open, how long, "
+        "how you close. Then write the email FROM that. Different prospects have "
+        "different sharpest details, so no two emails should end up the same shape.",
+        "  - Let the detail choose the OPENING. A number wants to be stated flat; a "
+        "shipped feature wants a mid-thought remark; a hire wants a different beat. "
+        "Do not reach for a default opening line.",
+        "  - Let how much you genuinely know choose the LENGTH and how many beats: a "
+        "lot of specific signal can carry two short paragraphs; one thin detail "
+        "should stay a few sentences. Don't pad to a fixed size.",
+        "  - Let their own tone (above) choose your REGISTER.",
+        "  - Describe your product whatever way fits THIS email — the result, the "
+        "problem it removes, what it replaces, the shift, or barely at all — never "
+        "how it works, and not the same way you would for a different prospect.",
+        "  - The beats (what you noticed, why it matters, what you're building, the "
+        "ask) are moves you MAY use, not a fixed order and not all required. Reorder "
+        "or drop them to fit the detail. Never march observation -> why -> product "
+        "-> ask every time; that sameness is the fingerprint.",
     ]
 
     audience = _audience_note(role)

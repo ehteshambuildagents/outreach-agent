@@ -322,7 +322,7 @@ class HumanExamplesTests(unittest.TestCase):
         low = writer_prompt.SYSTEM_PROMPT.lower()
         self.assertNotIn("gets founders replies", low)
         self.assertNotIn("help other founders reach", low)
-        self.assertIn("tie the ask to their real context", low)
+        self.assertIn("tie it to their real context", low)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -536,21 +536,27 @@ class PromptInjectionTests(unittest.TestCase):
 # ──────────────────────────────────────────────────────────────────────
 class StyleNudgeTests(unittest.TestCase):
     @staticmethod
-    def _nudge_block(name):
-        content = writer_prompt.build_user_content(
+    def _content(name):
+        return writer_prompt.build_user_content(
             {"company_name": name, "unique_hook": "did a specific thing"})
-        return content.split("STYLE NUDGE FOR THIS EMAIL")[1]
 
     def test_same_lead_is_reproducible(self):
         # Deterministic: identical input -> byte-identical prompt (debuggable).
-        self.assertEqual(self._nudge_block("Acme Co"), self._nudge_block("Acme Co"))
+        self.assertEqual(self._content("Acme Co"), self._content("Acme Co"))
 
-    def test_different_leads_spread_across_nudges(self):
-        # Variation: distinct companies get distinct nudge combinations.
-        names = ["Acme", "Beacon", "Maple", "Vellum", "Lyto", "Resend",
-                 "Mosaic", "Hearth", "Cadence", "Tinybird"]
-        blocks = {self._nudge_block(n) for n in names}
-        self.assertGreaterEqual(len(blocks), 6)  # well spread, not collapsed
+    def test_no_random_style_nudge(self):
+        # Fingerprint redesign: the randomness is gone. No STYLE NUDGE block, and the
+        # fixed greeting/opening/structure/closing menus are retired entirely.
+        self.assertNotIn("STYLE NUDGE", self._content("Acme Co"))
+        for menu in ("_GREETINGS_NAMED", "_GREETINGS_NONAME", "_OPENING_MOVES",
+                     "_CLOSING_MOVES", "_PRODUCT_ANGLES", "_STRUCTURE_SHAPES"):
+            self.assertFalse(hasattr(writer_prompt, menu), menu)
+
+    def test_structure_is_driven_from_the_specifics(self):
+        # Variety now emerges from per-prospect reasoning (the `angle`), not a pick.
+        c = self._content("Acme Co")
+        self.assertIn("SHAPE THIS EMAIL FROM THE SPECIFICS", c)
+        self.assertIn("angle", c.lower())
 
     def test_greets_primary_contact_when_no_founder(self):
         # The PLC Group payoff: a verified CEO becomes the greeted contact.
@@ -1031,13 +1037,11 @@ class StyleNoteInjectionTests(unittest.TestCase):
 # ──────────────────────────────────────────────────────────────────────
 #  Structural-diversity nudges (greeting / closing-form / structure)
 # ──────────────────────────────────────────────────────────────────────
-class DiversityNudgeTests(unittest.TestCase):
-    import re as _re
-
-    def _nudge(self, text, prompt_str):
-        import re
-        m = re.search(text + r": (.+)", prompt_str)
-        return m.group(1) if m else None
+class StructureFromReasoningTests(unittest.TestCase):
+    """Fingerprint redesign: variety emerges from per-prospect reasoning (the
+    `angle`), not a random pick from fixed menus. These verify the MECHANISM
+    offline; the actual output distribution across a batch (openings, CTAs, beat
+    order, lengths) is measured live by eval/writer_fingerprint."""
 
     def _content(self, company, first, hook):
         return writer_prompt.build_user_content({
@@ -1045,49 +1049,43 @@ class DiversityNudgeTests(unittest.TestCase):
             "unique_hook": hook, "has_enough_detail": True,
             "target_customer": "teams"})
 
-    def test_prompt_exposes_all_diversity_axes(self):
+    def test_schema_reasons_before_writing(self):
+        # `angle` is required and FIRST, so structured output commits to a
+        # content-derived shape before the body is generated.
+        props = list(writer_prompt.WRITER_SCHEMA["properties"])
+        self.assertEqual(props[0], "angle")
+        self.assertIn("angle", writer_prompt.WRITER_SCHEMA["required"])
+        self.assertFalse(writer_prompt.WRITER_SCHEMA["additionalProperties"])
+
+    def test_prompt_drives_shape_from_specifics(self):
         c = self._content("Acme", "Jane", "cut picking time 40%")
-        for axis in ("greeting", "opening move", "structure", "closing"):
-            self.assertIsNotNone(self._nudge(axis, c), axis)
+        self.assertIn("SHAPE THIS EMAIL FROM THE SPECIFICS", c)
+        self.assertIn("angle", c.lower())
+        self.assertNotIn("STYLE NUDGE", c)             # randomness retired
 
-    def test_greeting_is_not_always_hey(self):
-        # Across many companies the greeting nudge must span more than just "Hey".
-        greets = {self._nudge("greeting", self._content(f"Co{i}", f"Name{i}", f"hook {i}"))
-                  for i in range(40)}
-        starts_hey = sum(1 for g in greets if g and g.lower().startswith("open 'hey"))
-        self.assertGreater(len(greets), 1)
-        self.assertLess(starts_hey, len(greets))     # not every greeting is "Hey"
+    def test_retired_menus_are_gone(self):
+        for menu in ("_GREETINGS_NAMED", "_GREETINGS_NONAME", "_OPENING_MOVES",
+                     "_CLOSING_MOVES", "_PRODUCT_ANGLES", "_STRUCTURE_SHAPES"):
+            self.assertFalse(hasattr(writer_prompt, menu), menu)
 
-    def test_closing_pool_uses_clear_low_friction_ctas(self):
-        # After the live eval, passive no-question closes were removed. Every
-        # nudge should steer toward a concrete low-friction ask or example offer.
-        pool = writer_prompt._CLOSING_MOVES
-        self.assertFalse(any("no question" in m for m in pool))
-        self.assertTrue(all(("ask" in m or "question" in m or "offer" in m)
-                            for m in pool))
+    def test_beats_are_not_a_fixed_order(self):
+        low = writer_prompt.SYSTEM_PROMPT.lower()
+        self.assertIn("order of the beats", low)       # shape comes from the detail
+        self.assertNotIn("end with one tiny ask", low)  # old universal CTA is gone
 
-    def test_closing_varies_across_companies(self):
-        closes = {self._nudge("closing", self._content(f"C{i}", f"P{i}", f"h{i}"))
-                  for i in range(40)}
-        self.assertGreaterEqual(len(closes), 4)      # spread across the pool
-
-    def test_structure_varies_across_companies(self):
-        shapes = {self._nudge("structure", self._content(f"C{i}", f"P{i}", f"h{i}"))
-                  for i in range(40)}
-        self.assertGreaterEqual(len(shapes), 3)
+    def test_close_is_not_forced_to_a_question(self):
+        # Middle-path CTA: short + low-pressure, but the shape varies with the
+        # evidence; not every email ends on "?".
+        low = writer_prompt.SYSTEM_PROMPT.lower()
+        self.assertIn("not every email should end on", low)
+        self.assertIn("never a hard sales cta", low)
 
     def test_selection_is_deterministic(self):
+        # Same input still yields a byte-identical prompt (debuggable) — variety
+        # comes from different inputs + reasoning, never from an RNG.
         a = self._content("Linear", "Karri", "issue tracking")
         b = self._content("Linear", "Karri", "issue tracking")
-        self.assertEqual(a, b)                        # same lead -> same prompt
-
-    def test_no_name_uses_nameless_greetings(self):
-        c = writer_prompt.build_user_content({"company_name": "Acme",
-            "unique_hook": "x", "has_enough_detail": True})
-        greeting = self._nudge("greeting", c)
-        self.assertIsNotNone(greeting)
-        # a nameless greeting never contains a fabricated first name token
-        self.assertNotRegex(greeting, r"'Hey [A-Z][a-z]+,'")
+        self.assertEqual(a, b)
 
 
 if __name__ == "__main__":
