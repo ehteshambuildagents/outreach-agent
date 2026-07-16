@@ -264,6 +264,21 @@ export interface CampaignCreateRequest {
   };
 }
 
+/** A discovered ICP-matching company from GET /api/prospects (discovery store,
+ * `Prospect.public()`). Company-level and pre-research — no person, no fit score. */
+export interface DiscoveryProspect {
+  company_name: string;
+  website?: string | null;
+  industry?: string | null;
+  location?: string | null;
+  estimated_company_size?: string | null;
+  estimated_stage?: string | null;
+  confidence?: number | null;
+  why_it_matches?: string | null;
+  discovery_source?: string | null;
+  basic_signals?: string[] | null;
+}
+
 export interface ManualRecipientRequest {
   name: string;
   email: string;
@@ -417,7 +432,7 @@ export const api = {
   pauseCampaign: (id: string) => req<CampaignDetail>(`/api/campaigns/${id}/pause`, { method: "POST" }),
   resumeCampaign: (id: string) => req<CampaignDetail>(`/api/campaigns/${id}/resume`, { method: "POST" }),
   cancelCampaign: (id: string) => req<CampaignDetail>(`/api/campaigns/${id}/cancel`, { method: "POST" }),
-  prospects: () => req<{ prospects: CampaignPreviewProspect[] }>("/api/prospects"),
+  prospects: () => req<{ prospects: DiscoveryProspect[] }>("/api/prospects"),
 
   // Chat workspace — research_prospects / draft_channel_message run here.
   conversations: () => req<{ conversations: ConversationSummary[] }>("/api/conversations"),

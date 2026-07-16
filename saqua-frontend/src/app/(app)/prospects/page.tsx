@@ -1,115 +1,169 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle2, Eye, Plus, Users, X } from "lucide-react";
+import { Eye, Plus, Users, X, Globe, Sparkles, RefreshCw, MessageSquare } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
-import { Badge, StatusPill } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DataTable, Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import { prospects } from "@/lib/mock";
-import { useState } from "react";
+import { api, type DiscoveryProspect } from "@/lib/api";
 
-type Prospect = (typeof prospects)[number];
+type State =
+  | { status: "loading" }
+  | { status: "error"; error: string }
+  | { status: "loaded"; prospects: DiscoveryProspect[] };
 
-const previews = [
-  "Noticed Linear's focus on quality product workflows.",
-  "Could tie outreach to Notion's team expansion.",
-  "Developer workflow angle around Vercel launch velocity.",
-  "Ops automation angle for Retool builders.",
-  "Founder-led AI tooling campaign fit.",
-  "Database platform use case with dev-first language.",
-  "Technical docs and RAG workflow personalization.",
-];
+function pct(c?: number | null): string | null {
+  return typeof c === "number" ? `${Math.round(c * 100)}%` : null;
+}
+
+function host(url?: string | null): string {
+  if (!url) return "";
+  try {
+    return new URL(url.startsWith("http") ? url : `https://${url}`).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
 
 export default function ProspectsPage() {
-  const [selected, setSelected] = useState<Prospect | null>(null);
+  const [state, setState] = useState<State>({ status: "loading" });
+  const [selected, setSelected] = useState<DiscoveryProspect | null>(null);
+
+  function load() {
+    setState({ status: "loading" });
+    void api.prospects().then((res) => {
+      if (!res.ok) setState({ status: "error", error: res.error });
+      else setState({ status: "loaded", prospects: res.data.prospects || [] });
+    });
+  }
+  useEffect(load, []);
 
   return (
     <div>
       <PageHeader
         title="Prospects"
-        subtitle="Discovered and qualified leads ready for campaign review."
+        subtitle="Companies Saqua discovered matching your ICP. They accumulate here as you research."
         actions={
-          <>
-            <Badge tone="accent">demo fallback</Badge>
-            <Button asChild variant="primary">
-              <Link href="/campaigns/new">
-                <Plus className="size-4" /> Add to campaign
-              </Link>
-            </Button>
-          </>
+          <Button asChild variant="primary">
+            <Link href="/campaigns/new">
+              <Plus className="size-4" /> New campaign
+            </Link>
+          </Button>
         }
       />
-      <DataTable>
-        <Table>
-          <THead>
-            <TR>
-              <TH>Person</TH>
-              <TH>Company</TH>
-              <TH>Status</TH>
-              <TH className="text-right">Score</TH>
-              <TH>Email preview</TH>
-              <TH className="text-right">Action</TH>
-            </TR>
-          </THead>
-          <TBody>
-            {prospects.length === 0 ? (
+
+      {state.status === "loading" && (
+        <Card>
+          <div className="space-y-2 p-4">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-12" />
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {state.status === "error" && (
+        <EmptyState
+          icon={Users}
+          title="Couldn't load prospects"
+          body={`Saqua could not reach the backend: ${state.error}`}
+          action={
+            <Button variant="primary" onClick={load}>
+              <RefreshCw className="size-4" /> Retry
+            </Button>
+          }
+        />
+      )}
+
+      {/* Genuinely empty until the user actually discovers/researches companies —
+          no demo names. */}
+      {state.status === "loaded" && state.prospects.length === 0 && (
+        <EmptyState
+          icon={Users}
+          title="No prospects yet"
+          body="Ask Saqua in Chat to find companies matching your ICP, or launch a campaign. Everyone it discovers and qualifies will show up here."
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button asChild variant="primary">
+                <Link href="/ai">
+                  <MessageSquare className="size-4" /> Find prospects in Chat
+                </Link>
+              </Button>
+              <Button asChild variant="secondary">
+                <Link href="/campaigns/new">
+                  <Plus className="size-4" /> New campaign
+                </Link>
+              </Button>
+            </div>
+          }
+        />
+      )}
+
+      {state.status === "loaded" && state.prospects.length > 0 && (
+        <DataTable>
+          <Table>
+            <THead>
               <TR>
-                <TD colSpan={6} className="p-5">
-                  <EmptyState
-                    icon={Users}
-                    title="No prospects yet."
-                    body="Start a campaign and Saqua will discover qualified people for your ICP."
-                    action={
-                      <Button asChild variant="primary">
-                        <Link href="/campaigns/new">
-                          <Plus className="size-4" /> Find prospects
-                        </Link>
-                      </Button>
-                    }
-                  />
-                </TD>
+                <TH>Company</TH>
+                <TH>Industry · Stage</TH>
+                <TH>Location</TH>
+                <TH className="text-right">Match</TH>
+                <TH>Why it matches</TH>
+                <TH className="text-right">Action</TH>
               </TR>
-            ) : (
-              prospects.map((person, index) => (
-                <TR key={person.name}>
+            </THead>
+            <TBody>
+              {state.prospects.map((p, i) => (
+                <TR key={`${p.company_name}-${i}`}>
                   <TD>
-                    <button onClick={() => setSelected(person)} className="flex items-center gap-3 text-left">
-                      <Avatar name={person.name} />
-                      <div>
-                        <div className="font-medium text-text">{person.name}</div>
-                        <div className="text-xs text-muted">{person.role}</div>
+                    <button onClick={() => setSelected(p)} className="flex items-center gap-3 text-left">
+                      <Avatar name={p.company_name} />
+                      <div className="min-w-0">
+                        <div className="font-medium text-text">{p.company_name}</div>
+                        {p.website && <div className="truncate font-mono text-[11px] text-muted">{host(p.website)}</div>}
                       </div>
                     </button>
                   </TD>
-                  <TD>{person.company}</TD>
-                  <TD>
-                    <StatusPill state={person.status} />
+                  <TD className="text-text-2">
+                    {[p.industry, p.estimated_stage].filter(Boolean).join(" · ") || "—"}
                   </TD>
-                  <TD className="text-right font-medium text-text tabular-nums">{person.score}</TD>
-                  <TD className="max-w-[320px] truncate text-muted">{previews[index] ?? "Personalized first email ready for review."}</TD>
+                  <TD className="text-text-2">{p.location || "—"}</TD>
                   <TD className="text-right">
-                    <Button variant="secondary" size="sm" onClick={() => setSelected(person)}>
+                    {pct(p.confidence) ? (
+                      <span className="font-mono font-medium text-accent-hi">{pct(p.confidence)}</span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </TD>
+                  <TD className="max-w-[320px] truncate text-muted">{p.why_it_matches || "—"}</TD>
+                  <TD className="text-right">
+                    <Button variant="secondary" size="sm" onClick={() => setSelected(p)}>
                       <Eye className="size-4" /> Review
                     </Button>
                   </TD>
                 </TR>
-              ))
-            )}
-          </TBody>
-        </Table>
-      </DataTable>
+              ))}
+            </TBody>
+          </Table>
+        </DataTable>
+      )}
 
-      <AnimatePresence>{selected && <ProspectDrawer prospect={selected} onClose={() => setSelected(null)} />}</AnimatePresence>
+      <AnimatePresence>
+        {selected && <ProspectDrawer prospect={selected} onClose={() => setSelected(null)} />}
+      </AnimatePresence>
     </div>
   );
 }
 
-function ProspectDrawer({ prospect, onClose }: { prospect: Prospect; onClose: () => void }) {
+function ProspectDrawer({ prospect: p, onClose }: { prospect: DiscoveryProspect; onClose: () => void }) {
+  const signals = p.basic_signals || [];
   return (
     <motion.div className="fixed inset-0 z-50" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button aria-label="Close prospect detail" className="absolute inset-0 bg-black/50" onClick={onClose} />
@@ -118,86 +172,83 @@ function ProspectDrawer({ prospect, onClose }: { prospect: Prospect; onClose: ()
         animate={{ x: 0 }}
         exit={{ x: 520 }}
         transition={{ duration: 0.22, ease: "easeOut" }}
-        className="absolute right-0 top-0 flex h-full w-full max-w-lg flex-col border-l border-border bg-panel shadow-card"
+        className="glass-panel absolute right-0 top-0 flex h-full w-full max-w-lg flex-col border-l border-border shadow-card"
       >
         <div className="flex items-start justify-between gap-4 border-b border-border p-5">
           <div className="flex items-center gap-3">
-            <Avatar name={prospect.name} />
-            <div>
-              <div className="text-base font-semibold text-text">{prospect.name}</div>
-              <div className="text-sm text-muted">{prospect.role} at {prospect.company}</div>
+            <Avatar name={p.company_name} />
+            <div className="min-w-0">
+              <div className="text-base font-semibold text-text">{p.company_name}</div>
+              {p.website && (
+                <a
+                  href={p.website.startsWith("http") ? p.website : `https://${p.website}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 font-mono text-xs text-accent-hi hover:underline"
+                >
+                  <Globe className="size-3" /> {host(p.website)}
+                </a>
+              )}
             </div>
           </div>
           <Button variant="ghost" size="icon" aria-label="Close" onClick={onClose}>
             <X className="size-4" />
           </Button>
         </div>
+
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
           <Card>
             <CardHeader>
-              <CardTitle>Research summary</CardTitle>
-              <StatusPill state="Qualified" />
+              <CardTitle>Why it matches your ICP</CardTitle>
+              {pct(p.confidence) && <Badge tone="accent">{pct(p.confidence)} match</Badge>}
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-text-2">
-              <p>{prospect.company} matches the ICP because the public site shows founder-led product growth and enough detail for grounded personalization.</p>
-              <p className="rounded-md border border-accent-line bg-accent-soft p-3 text-xs text-accent-hi">
-                Demo fallback: the backend does not currently expose a saved prospects list endpoint for this page.
-              </p>
+              <p>{p.why_it_matches || "No match rationale was recorded for this company."}</p>
               <div className="grid grid-cols-2 gap-3 text-xs">
-                <Info label="Email" value={prospect.email} />
-                <Info label="Location" value={prospect.location} />
-                <Info label="Score" value={`${prospect.score}/100`} />
-                <Info label="Status" value={prospect.status} />
+                <Info label="Industry" value={p.industry} />
+                <Info label="Stage" value={p.estimated_stage} />
+                <Info label="Company size" value={p.estimated_company_size} />
+                <Info label="Location" value={p.location} />
               </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Email preview</CardTitle>
-              <Badge tone="accent">draft</Badge>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-md border border-border-faint bg-white/[0.02] p-4 text-sm leading-6 text-text-2">
-                Noticed {prospect.company}&apos;s work around product velocity. Saqua could help test a small founder-led outbound motion without generic personalization risk.
-              </div>
-              <Button asChild variant="primary" className="mt-4 w-full">
-                <Link href="/campaigns/new">Add to campaign</Link>
-              </Button>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent activity</CardTitle>
-              <Badge tone="accent">live</Badge>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {["Research completed", "Qualified for founder-led growth angle", "Draft generated and ready"].map((item) => (
-                <div key={item} className="flex items-center gap-3 rounded-md border border-border-faint bg-white/[0.02] p-3 text-sm text-text-2">
-                  <CheckCircleMini />
-                  {item}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+
+          {signals.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Signals found</CardTitle>
+                {p.discovery_source && <Badge tone="neutral">via {p.discovery_source}</Badge>}
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {signals.map((sig, k) => (
+                  <div
+                    key={k}
+                    className="flex items-start gap-2.5 rounded-md border border-border-faint bg-white/[0.02] p-3 text-sm text-text-2"
+                  >
+                    <Sparkles className="mt-0.5 size-3.5 shrink-0 text-accent-hi" />
+                    {sig}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          <Button asChild variant="primary" className="w-full">
+            <Link href="/campaigns/new">
+              <Plus className="size-4" /> Research &amp; add to a campaign
+            </Link>
+          </Button>
         </div>
       </motion.aside>
     </motion.div>
   );
 }
 
-function Info({ label, value }: { label: string; value: string | number }) {
+function Info({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="rounded-md border border-border-faint bg-white/[0.02] p-3">
       <div className="text-muted">{label}</div>
-      <div className="mt-1 truncate font-medium text-text">{value}</div>
+      <div className="mt-1 truncate font-medium text-text">{value || "—"}</div>
     </div>
-  );
-}
-
-function CheckCircleMini() {
-  return (
-    <span className="grid size-5 shrink-0 place-items-center rounded-full bg-success-soft text-success">
-      <CheckCircle2 className="size-3.5" />
-    </span>
   );
 }
