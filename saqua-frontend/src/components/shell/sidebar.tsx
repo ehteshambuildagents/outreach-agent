@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { usePathname } from "next/navigation";
-import { PanelLeftClose, Search } from "lucide-react";
+import { PanelLeftClose, Search, PenSquare, MessageSquare, Trash2 } from "lucide-react";
 import { NAV } from "@/lib/nav";
 import { Logo } from "@/components/ui/logo";
+import { useChatNav } from "@/components/chat/chat-nav";
 import { cn } from "@/lib/utils";
 
 function isActive(pathname: string, href: string) {
@@ -16,6 +17,8 @@ function isActive(pathname: string, href: string) {
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const pathname = usePathname();
   const { user } = useUser();
+  const { conversations, activeId, open, startNew, remove } = useChatNav();
+  const onChat = pathname === "/ai";
   const displayName = user?.fullName || user?.primaryEmailAddress?.emailAddress || "Saqua user";
   const displayEmail = user?.primaryEmailAddress?.emailAddress || "Signed in";
 
@@ -48,48 +51,72 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto px-3 py-2">
-          {NAV.map((group, gi) => (
-            <div key={gi} className="mb-1">
-              {group.title && (
-                <div className="px-3 pb-1.5 pt-4 text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">
-                  {group.title}
-                </div>
-              )}
-              {group.items.map((item) => {
-                const active = isActive(pathname, item.href);
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    data-tour={item.href === "/campaigns" ? "nav-campaigns" : undefined}
-                    className={cn(
-                      "group relative mb-0.5 flex items-center gap-3 rounded-md px-3 py-[7px] text-sm transition-colors duration-150",
-                      active
-                        ? "bg-accent-soft text-text"
-                        : "text-text-2 hover:bg-white/[0.04] hover:text-text",
-                    )}
-                  >
-                    {active && (
-                      <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent" />
-                    )}
-                    <Icon
-                      className={cn("size-[17px] shrink-0", active ? "text-accent-hi" : "text-muted group-hover:text-text-2")}
-                    />
-                    <span className="flex-1 truncate">{item.label}</span>
-                    {item.badge && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-accent-hi">
-                        <span className="size-1 animate-pulse-soft rounded-full bg-accent-hi" />
-                        {item.badge}
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
+        {/* Page nav */}
+        <nav className="px-3 pb-1 pt-1">
+          {NAV[0].items.map((item) => {
+            const active = isActive(pathname, item.href);
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                data-tour={item.href === "/campaigns" ? "nav-campaigns" : undefined}
+                className={cn(
+                  "group relative mb-0.5 flex items-center gap-3 rounded-md px-3 py-[7px] text-sm transition-colors duration-150",
+                  active ? "bg-accent-soft text-text" : "text-text-2 hover:bg-white/[0.04] hover:text-text",
+                )}
+              >
+                {active && <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent" />}
+                <Icon className={cn("size-[17px] shrink-0", active ? "text-accent-hi" : "text-muted group-hover:text-text-2")} />
+                <span className="flex-1 truncate">{item.label}</span>
+              </Link>
+            );
+          })}
         </nav>
+
+        {/* Chat history — beneath the nav, ChatGPT-style compose (new chat) top-right */}
+        <div data-tour="rail" className="mt-3 flex items-center justify-between border-t border-border-faint px-4 pb-1 pt-3">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-faint">Recents</span>
+          <button
+            onClick={startNew}
+            aria-label="New chat"
+            title="New chat"
+            className="grid size-6 place-items-center rounded text-muted transition-colors hover:bg-white/[0.06] hover:text-text"
+          >
+            <PenSquare className="size-3.5" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+          {conversations.length === 0 ? (
+            <p className="px-3 py-4 text-center text-[11px] leading-4 text-muted">
+              No chats yet. Start one from Chat.
+            </p>
+          ) : (
+            conversations.map((t) => (
+              <div
+                key={t.id}
+                className={cn(
+                  "group mb-0.5 flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm transition-colors",
+                  onChat && t.id === activeId ? "bg-accent-soft text-text" : "text-text-2 hover:bg-white/[0.04] hover:text-text",
+                )}
+              >
+                <button onClick={() => open(t.id)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
+                  <MessageSquare
+                    className={cn("size-3.5 shrink-0", onChat && t.id === activeId ? "text-accent-hi" : "text-muted")}
+                  />
+                  <span className="truncate">{t.title || "New chat"}</span>
+                </button>
+                <button
+                  onClick={() => remove(t.id)}
+                  aria-label="Delete chat"
+                  className="grid size-6 shrink-0 place-items-center rounded text-muted opacity-0 transition-opacity hover:bg-white/[0.06] hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
 
         {/* User footer */}
         <div className="border-t border-border p-3">
@@ -128,4 +155,3 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     </>
   );
 }
-

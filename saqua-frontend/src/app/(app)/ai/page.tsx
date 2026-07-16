@@ -11,13 +11,12 @@ import { ProspectsCard } from "@/components/chat/prospects-card";
 import { ChannelCard } from "@/components/chat/channel-card";
 import { DraftCard } from "@/components/chat/draft-card";
 import { ArtifactPanel } from "@/components/chat/artifact-panel";
-import { ThreadRail } from "@/components/chat/thread-rail";
 import { useStreamedText } from "@/components/chat/use-streamed-text";
+import { useChatNav } from "@/components/chat/chat-nav";
 import { OnboardingTour } from "@/components/onboarding/tour";
 import {
   api,
   type ChatMessage,
-  type ConversationSummary,
   type ProspectEntry,
   type ProspectsCardData,
   type ChannelCardData,
@@ -40,9 +39,9 @@ const ACTION_PROMPT: Record<string, (company: string) => string> = {
 };
 
 export default function AIChatPage() {
+  const { activeId, setActive, refresh } = useChatNav();
   const [convId, setConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [threads, setThreads] = useState<ConversationSummary[]>([]);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -51,13 +50,35 @@ export default function AIChatPage() {
   const [artifact, setArtifact] = useState<{ idx: number; data: EmailCardData } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const loadThreads = useCallback(() => {
-    void api.conversations().then((r) => r.ok && setThreads(r.data.conversations || []));
-  }, []);
-
+  // Load whichever conversation the sidebar selected (or reset for a new chat).
   useEffect(() => {
-    loadThreads();
-  }, [loadThreads]);
+    if (activeId === convId) return;
+    if (!activeId) {
+      setConvId(null);
+      setMessages([]);
+      setArtifact(null);
+      setStreamAt(-1);
+      setError("");
+      return;
+    }
+    let cancelled = false;
+    setArtifact(null);
+    setStreamAt(-1);
+    setError("");
+    void api.conversation(activeId).then((res) => {
+      if (cancelled) return;
+      if (!res.ok) {
+        setError(reachError(res.error));
+        return;
+      }
+      setConvId(activeId);
+      setMessages(res.data.messages || []);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -83,6 +104,7 @@ export default function AIChatPage() {
         }
         id = created.data.id;
         setConvId(id);
+        setActive(id); // highlight in the sidebar without triggering a reload
       }
 
       const res = await api.sendMessage(id, trimmed);
@@ -96,39 +118,9 @@ export default function AIChatPage() {
       setMessages(next);
       // Reveal the last assistant message's narration progressively.
       setStreamAt(next.length && next[next.length - 1].role === "assistant" ? next.length - 1 : -1);
-      loadThreads(); // title may have been auto-generated this turn
+      refresh(); // sidebar Recents — the title may have been auto-generated this turn
     },
-    [convId, sending, loadThreads],
-  );
-
-  const selectThread = useCallback(async (id: string) => {
-    setError("");
-    setArtifact(null);
-    setStreamAt(-1);
-    const res = await api.conversation(id);
-    if (!res.ok) {
-      setError(reachError(res.error));
-      return;
-    }
-    setConvId(id);
-    setMessages(res.data.messages || []);
-  }, []);
-
-  const newChat = useCallback(() => {
-    setConvId(null);
-    setMessages([]);
-    setArtifact(null);
-    setStreamAt(-1);
-    setError("");
-  }, []);
-
-  const deleteThread = useCallback(
-    (id: string) => {
-      setThreads((prev) => prev.filter((t) => t.id !== id)); // optimistic
-      void api.deleteConversation(id);
-      if (id === convId) newChat();
-    },
-    [convId, newChat],
+    [convId, sending, setActive, refresh],
   );
 
   const onAction = useCallback(
@@ -144,18 +136,7 @@ export default function AIChatPage() {
   return (
     <div className="-mx-5 -mb-28 -mt-6 flex h-[calc(100vh-var(--nav-h))] md:-mx-8 md:-my-8">
       <OnboardingTour />
-      {/* Left rail — threads + campaigns */}
-      <aside data-tour="rail" className="glass-panel hidden w-60 shrink-0 border-r border-border md:flex md:flex-col">
-        <ThreadRail
-          threads={threads}
-          activeId={convId}
-          onSelect={selectThread}
-          onNew={newChat}
-          onDelete={deleteThread}
-        />
-      </aside>
-
-      {/* Conversation */}
+      {/* Conversation (chat history now lives in the single app sidebar) */}
       <section data-tour="artifact-hint" className="flex min-w-0 flex-1 flex-col">
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
