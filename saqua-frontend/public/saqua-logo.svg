@@ -1,15 +1,15 @@
-<svg width="48" height="30" viewBox="0 0 48 30" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Saqua">
+<svg width="96" height="56" viewBox="0 0 96 56" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Saqua">
   <defs>
-    <linearGradient id="saqua-wave" x1="2" y1="26" x2="46" y2="4" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#1B2A9C"/>
-      <stop offset="0.55" stop-color="#1E7BD6"/>
-      <stop offset="1" stop-color="#18C6C9"/>
+    <linearGradient id="saqua-wave" x1="8" y1="46" x2="88" y2="10" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#12208F"/>
+      <stop offset="0.5" stop-color="#1F7AD4"/>
+      <stop offset="1" stop-color="#15C7CB"/>
     </linearGradient>
   </defs>
-  <!-- main swell -->
-  <path d="M3 19C11 10 17 10 24 14.5C29.2 18 35 17.5 45 7.5"
-        stroke="url(#saqua-wave)" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- breaking curl -->
-  <path d="M26.5 13.5C35.5 7.5 45 12.5 42.8 21C41.3 27 33.5 28 29.5 23"
-        stroke="url(#saqua-wave)" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- main swell: a tapered ribbon, thin at the tail, cresting to a point on the right -->
+  <path fill="url(#saqua-wave)"
+        d="M9 40C24 31 38 30 52 20C62 13 75 13 86 21C76 17 64 19 53 26C40 35 26 38 12 44Z"/>
+  <!-- breaking curl: a crescent barrel opening back toward the swell -->
+  <path fill="url(#saqua-wave)"
+        d="M56 22C71 12 89 20 85 37C82 50 66 53 57 45C67 49 78 44 78 34C78 25 66 26 58 31Z"/>
 </svg>
