@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { SignUp } from "@clerk/nextjs";
 import { AuthDiagnostics } from "@/components/auth/auth-diagnostics";
 
@@ -28,6 +29,17 @@ export default function SignUpPage() {
             },
           }}
         />
+        <p className="mx-auto mt-4 max-w-xs text-center text-xs text-text-muted">
+          By creating an account you agree to our{" "}
+          <Link className="underline" href="/terms">
+            Terms of Service
+          </Link>{" "}
+          and{" "}
+          <Link className="underline" href="/privacy">
+            Privacy Policy
+          </Link>
+          .
+        </p>
       </div>
     </main>
   );

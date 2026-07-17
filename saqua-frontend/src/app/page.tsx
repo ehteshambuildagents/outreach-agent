@@ -50,14 +50,15 @@ const STAGES = [
 export default function LandingPage() {
   return (
     <main className="relative min-h-screen overflow-hidden bg-bg text-text">
-      {/* Ambient depth — muted indigo + teal blooms, off-center, low opacity */}
+      {/* Ambient depth — muted indigo + teal blooms, off-center, low opacity,
+          drifting slowly so the glass surfaces always have living depth behind them */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-        <div className="bloom-indigo absolute -left-40 -top-40 size-[680px] rounded-full" />
-        <div className="bloom-teal absolute -right-52 top-[38%] size-[620px] rounded-full" />
-        <div className="bloom-indigo absolute -bottom-52 left-[30%] size-[560px] rounded-full opacity-70" />
+        <div className="bloom-indigo animate-drift absolute -left-40 -top-40 size-[680px] rounded-full" />
+        <div className="bloom-teal animate-drift-2 absolute -right-52 top-[38%] size-[620px] rounded-full" />
+        <div className="bloom-indigo animate-drift absolute -bottom-52 left-[30%] size-[560px] rounded-full opacity-70" />
       </div>
 
-      <header className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
+      <header className="flex h-16 items-center justify-between px-6 lg:px-12">
         <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
           <AnimatedLogo markClassName="h-6 w-auto" />
           Saqua
@@ -78,7 +79,7 @@ export default function LandingPage() {
       </header>
 
       {/* ── Hero ─────────────────────────────────────────────────────── */}
-      <section className="mx-auto grid max-w-7xl items-center gap-14 px-6 pb-24 pt-10 lg:grid-cols-[1fr_540px] lg:pt-16">
+      <section className="grid items-center gap-14 px-6 pb-24 pt-10 lg:grid-cols-[1fr_540px] lg:px-12 lg:pt-16">
         <div className="max-w-2xl">
           <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-border bg-white/[0.03] px-3 py-1.5 text-xs text-text-2">
             <span className="size-1.5 animate-pulse-soft rounded-full bg-accent" />
@@ -149,7 +150,7 @@ export default function LandingPage() {
       </section>
 
       {/* ── The pipeline: five stages ────────────────────────────────── */}
-      <section id="pipeline" className="mx-auto max-w-7xl px-6 py-20">
+      <section id="pipeline" className="px-6 py-20 lg:px-12">
         <Reveal>
           <h2 className="max-w-2xl text-3xl font-semibold tracking-tight">
             One pipeline. Five stages. All of it yours.
@@ -161,13 +162,13 @@ export default function LandingPage() {
         </Reveal>
         <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {STAGES.map((s, i) => (
-            <Reveal key={s.n} delay={i * 0.06}>
-              <div className="h-full rounded-xl border border-border bg-card p-5 transition-colors hover:border-border-strong">
+            <Reveal key={s.n} delay={i * 0.07}>
+              <div className="group glass hover-lift h-full rounded-xl border border-border p-5 shadow-card">
                 <div className="mb-5 flex items-center justify-between">
-                  <span className="grid size-10 place-items-center rounded-md bg-accent-soft text-accent-hi">
+                  <span className="grid size-10 place-items-center rounded-md bg-accent-soft text-accent-hi transition-transform duration-300 ease-smooth group-hover:scale-110">
                     <s.icon className="size-5" />
                   </span>
-                  <span className="font-mono text-xs text-faint">{s.n}</span>
+                  <span className="font-mono text-xs text-faint transition-colors group-hover:text-muted">{s.n}</span>
                 </div>
                 <div className="font-medium text-text">{s.title}</div>
                 <p className="mt-2 text-sm leading-6 text-text-2">{s.body}</p>
@@ -178,7 +179,7 @@ export default function LandingPage() {
       </section>
 
       {/* ── Compose: the one place serif appears (generated email copy) ── */}
-      <section className="mx-auto max-w-7xl px-6 py-20">
+      <section className="px-6 py-20 lg:px-12">
         <div className="grid items-center gap-12 lg:grid-cols-[1fr_1.1fr]">
           <Reveal>
             <h2 className="max-w-md text-3xl font-semibold tracking-tight">
@@ -231,9 +232,9 @@ export default function LandingPage() {
       </section>
 
       {/* ── The reply guarantee — the single strongest live signal ─────── */}
-      <section className="mx-auto max-w-7xl px-6 py-16">
+      <section className="px-6 py-16 lg:px-12">
         <Reveal>
-          <div className="relative overflow-hidden rounded-2xl border border-accent-line bg-card p-8 md:p-12">
+          <div className="glass relative overflow-hidden rounded-2xl border border-accent-line p-8 shadow-glow md:p-12">
             <div className="accent-glow absolute -right-20 -top-20 size-80 opacity-60" />
             <div className="relative flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
               <div className="max-w-xl">
@@ -258,7 +259,7 @@ export default function LandingPage() {
         </Reveal>
       </section>
 
-      <footer className="mx-auto max-w-7xl px-6 py-10">
+      <footer className="px-6 py-10 lg:px-12">
         <div className="flex flex-col items-center justify-between gap-4 border-t border-border-faint pt-8 text-xs text-muted sm:flex-row">
           <div className="flex items-center gap-2 text-text-2">
             <Logo className="h-5 w-auto" />

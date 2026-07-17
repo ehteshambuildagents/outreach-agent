@@ -73,11 +73,11 @@ export default function PricingPage() {
   return (
     <main className="relative min-h-screen overflow-hidden bg-bg text-text">
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-        <div className="bloom-indigo absolute -left-40 -top-40 size-[620px] rounded-full" />
-        <div className="bloom-teal absolute -right-48 top-[36%] size-[560px] rounded-full" />
+        <div className="bloom-indigo animate-drift absolute -left-40 -top-40 size-[620px] rounded-full" />
+        <div className="bloom-teal animate-drift-2 absolute -right-48 top-[36%] size-[560px] rounded-full" />
       </div>
 
-      <header className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
+      <header className="flex h-16 items-center justify-between px-6 lg:px-12">
         <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
           <Logo className="h-6 w-auto" /> Saqua
         </Link>
@@ -134,10 +134,10 @@ export default function PricingPage() {
               <div
                 key={p.name}
                 className={cn(
-                  "glass relative flex flex-col rounded-2xl border p-6 text-left transition-all duration-200",
+                  "glass relative flex flex-col rounded-2xl border p-6 text-left",
                   featured
                     ? "border-accent-line shadow-glow lg:-mt-3 lg:pb-8"
-                    : "border-border hover:-translate-y-0.5 hover:border-border-strong",
+                    : "hover-lift border-border shadow-card",
                 )}
               >
                 {featured && (

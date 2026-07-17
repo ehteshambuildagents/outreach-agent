@@ -127,16 +127,42 @@ body {
   }
 
   /* Glassmorphism — frosted translucent surfaces layered over the ambient blooms
-     so the depth shows through. Two weights: cards vs. structural rails/panels. */
+     so the depth shows through. Two weights: cards vs. structural rails/panels.
+     A faint top-edge sheen (light catching the lip of the glass) reads premium and
+     costs no layout — it fades out over the first ~96px so tall rails only glint
+     at the very top while small cards get a gentle wash. */
   .glass {
-    background: rgba(19, 19, 24, 0.55);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0) 96px),
+      rgba(19, 19, 24, 0.55);
     backdrop-filter: blur(16px) saturate(140%);
     -webkit-backdrop-filter: blur(16px) saturate(140%);
   }
   .glass-panel {
-    background: rgba(12, 12, 16, 0.5);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 128px),
+      rgba(12, 12, 16, 0.5);
     backdrop-filter: blur(22px) saturate(140%);
     -webkit-backdrop-filter: blur(22px) saturate(140%);
+  }
+
+  /* Elevation on intent — the single source of truth for interactive-surface
+     motion. Any surface (card, tile, pricing plan) opts in with `hover-lift` so
+     the whole app rises, strengthens its border, and deepens its shadow on the
+     same curve. Reduced-motion collapses the transition (see media query above);
+     the 2px settle is imperceptible without it. */
+  .hover-lift {
+    transition:
+      transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1),
+      border-color 0.3s cubic-bezier(0.22, 0.61, 0.36, 1),
+      box-shadow 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  .hover-lift:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-strong);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.05) inset,
+      0 18px 44px -14px rgba(0, 0, 0, 0.55);
   }
   /* Graceful fallback where backdrop-filter is unsupported: stay legible (opaque). */
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

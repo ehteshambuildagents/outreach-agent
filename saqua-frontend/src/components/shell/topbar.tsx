@@ -1,9 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
-import { Bell, Plus, Search, PanelLeftOpen } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Search, PanelLeftOpen } from "lucide-react";
 
 export function Topbar({ collapsed, onExpand }: { collapsed: boolean; onExpand: () => void }) {
   return (
@@ -29,15 +27,6 @@ export function Topbar({ collapsed, onExpand }: { collapsed: boolean; onExpand: 
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <Button variant="ghost" size="icon" aria-label="Notifications" className="relative">
-          <Bell className="size-[18px]" />
-          <span className="absolute right-2 top-2 size-1.5 rounded-full bg-accent" />
-        </Button>
-        <Button asChild variant="primary" size="md">
-          <Link href="/campaigns/new">
-            <Plus className="size-4" /> New campaign
-          </Link>
-        </Button>
         <div className="ml-1 grid size-8 place-items-center rounded-full border border-border bg-white/[0.06] text-[11px] font-semibold text-text">
           <UserButton afterSignOutUrl="/" />
         </div>

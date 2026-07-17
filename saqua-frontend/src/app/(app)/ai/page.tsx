@@ -10,6 +10,9 @@ import { cn } from "@/lib/utils";
 import { ProspectsCard } from "@/components/chat/prospects-card";
 import { ChannelCard } from "@/components/chat/channel-card";
 import { DraftCard } from "@/components/chat/draft-card";
+import { StatsCard } from "@/components/chat/stats-card";
+import { RepliesCard } from "@/components/chat/replies-card";
+import { CampaignsCard } from "@/components/chat/campaigns-card";
 import { ArtifactPanel } from "@/components/chat/artifact-panel";
 import { useStreamedText } from "@/components/chat/use-streamed-text";
 import { useChatNav } from "@/components/chat/chat-nav";
@@ -22,6 +25,9 @@ import {
   type ChannelCardData,
   type EmailCardData,
   type ResearchCardData,
+  type StatsCardData,
+  type RepliesCardData,
+  type CampaignsCardData,
 } from "@/lib/api";
 
 const EXAMPLES = [
@@ -254,6 +260,30 @@ function MessageView({
       <div className="space-y-2">
         {narration}
         <ResearchCard data={m.data as ResearchCardData} />
+      </div>
+    );
+  }
+  if (m.kind === "stats") {
+    return (
+      <div className="space-y-2">
+        {narration}
+        <StatsCard data={m.data as StatsCardData} />
+      </div>
+    );
+  }
+  if (m.kind === "replies") {
+    return (
+      <div className="space-y-2">
+        {narration}
+        <RepliesCard data={m.data as RepliesCardData} />
+      </div>
+    );
+  }
+  if (m.kind === "campaigns") {
+    return (
+      <div className="space-y-2">
+        {narration}
+        <CampaignsCard data={m.data as CampaignsCardData} />
       </div>
     );
   }

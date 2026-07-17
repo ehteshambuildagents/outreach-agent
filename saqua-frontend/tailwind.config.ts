@@ -84,10 +84,32 @@ const config: Config = {
           "0%,100%": { opacity: "1" },
           "50%": { opacity: "0.45" },
         },
+        // Water/wave feel: the mark recedes out to the right, then washes back
+        // in from the left. Plays once on hover (see Logo).
+        "wave-wipe": {
+          "0%": { clipPath: "inset(0 0 0 0)" },
+          "42%": { clipPath: "inset(0 0 0 100%)" },
+          "50%": { clipPath: "inset(0 100% 0 0)" },
+          "100%": { clipPath: "inset(0 0 0 0)" },
+        },
+        // Ambient bloom drift — very slow float + breathe so the depth behind the
+        // glass never sits perfectly still. Two variants push opposite directions
+        // for an organic parallax. Disabled under prefers-reduced-motion (globals).
+        drift: {
+          "0%,100%": { transform: "translate(0,0) scale(1)" },
+          "50%": { transform: "translate(4%,-3%) scale(1.05)" },
+        },
+        "drift-2": {
+          "0%,100%": { transform: "translate(0,0) scale(1)" },
+          "50%": { transform: "translate(-5%,4%) scale(1.08)" },
+        },
       },
       animation: {
         "fade-up": "fade-up .35s cubic-bezier(.22,.61,.36,1) both",
         "pulse-soft": "pulse-soft 1.6s ease-in-out infinite",
+        "wave-wipe": "wave-wipe .9s ease-in-out",
+        drift: "drift 28s ease-in-out infinite",
+        "drift-2": "drift-2 34s ease-in-out infinite",
       },
     },
   },

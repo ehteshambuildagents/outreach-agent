@@ -27,8 +27,8 @@ export function DraftCard({
       transition={{ duration: 0.25 }}
       onClick={onOpen}
       className={cn(
-        "group flex w-full items-center gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors",
-        active ? "border-accent-line bg-accent-soft/40" : "border-border hover:border-border-strong hover:bg-card-2",
+        "group flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line",
+        active ? "border-accent-line bg-accent-soft/40" : "glass hover-lift border-border",
       )}
     >
       <span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent-soft text-accent-hi">

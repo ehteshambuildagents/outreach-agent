@@ -22,7 +22,7 @@ export function StatCard({ label, value, delta, deltaLabel = "vs last 7 days", i
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: index * 0.05, ease: [0.22, 0.61, 0.36, 1] }}
     >
-      <Card className="group p-5 transition-colors hover:border-border-strong hover:bg-card-2">
+      <Card className="group p-5">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-text-2">{label}</span>
           {Icon && (

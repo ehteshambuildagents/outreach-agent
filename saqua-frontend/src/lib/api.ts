@@ -147,6 +147,24 @@ export interface PublicConfig {
   authEnabled: boolean;
 }
 
+/** The sender's own company details, remembered in every chat (GET/PUT /api/company). */
+export interface CompanyProfile {
+  name: string;
+  website: string;
+  one_liner: string;
+  audience: string;
+  value_prop: string;
+  tone: string;
+}
+
+/** The user's real plan + free-tier usage (GET /api/billing). */
+export interface Billing {
+  plan: string;
+  prospect_limit: number;
+  prospects_used: number;
+  prospects_remaining: number | null;
+}
+
 export interface CampaignSummary {
   discovered: number;
   research_ok: number;
@@ -285,7 +303,16 @@ export interface ManualRecipientRequest {
 }
 
 // ── Chat workspace (research_prospects / draft_channel_message cards) ───
-export type ChatMessageKind = "text" | "email" | "research" | "notice" | "prospects" | "channel";
+export type ChatMessageKind =
+  | "text"
+  | "email"
+  | "research"
+  | "notice"
+  | "prospects"
+  | "channel"
+  | "stats"
+  | "replies"
+  | "campaigns";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -384,9 +411,55 @@ export interface ResearchCardData {
   stop_reason?: string | null;
 }
 
+// ── Co-founder cards — the user's REAL operating state (never fabricated) ──
+
+/** Live outreach analytics for the signed-in user (backend `stats` card). */
+export interface StatsCardData {
+  emails_sent: number;
+  replies: number;
+  reply_rate: number; // fraction, e.g. 0.18
+  sequences_active: number;
+  sequences_paused: number;
+  prospects_contacted: number;
+  campaigns: number;
+}
+
+/** One prospect that replied. Reply TEXT is never stored — who + when only. */
+export interface ReplyEntry {
+  company: string;
+  to?: string | null;
+  replied_at?: number | null;
+  emails_before_reply?: number | null;
+}
+
+export interface RepliesCardData {
+  count: number;
+  replies: ReplyEntry[];
+}
+
+/** One of the user's campaigns and where it stands (backend `campaigns` card). */
+export interface CampaignEntry {
+  id: string;
+  name: string;
+  status: string;
+  launched: number; // live sequences launched from it
+  discovered?: number | null;
+  updated_at?: number | null;
+}
+
+export interface CampaignsCardData {
+  count: number;
+  campaigns: CampaignEntry[];
+}
+
 export const api = {
   publicConfig: () => req<PublicConfig>("/api/public-config"),
   health: () => req<{ ok: boolean }>("/api/health"),
+
+  company: () => req<{ company: Partial<CompanyProfile> }>("/api/company"),
+  saveCompany: (body: CompanyProfile) =>
+    req<{ company: CompanyProfile }>("/api/company", { method: "PUT", body: JSON.stringify(body) }),
+  billing: () => req<Billing>("/api/billing"),
 
   workflows: () => req<{ workflows: WorkflowStatus[] }>("/api/automation/workflows"),
   workflow: (id: string) => req<WorkflowStatus & { events: WorkflowEvent[] }>(`/api/automation/workflows/${id}`),
