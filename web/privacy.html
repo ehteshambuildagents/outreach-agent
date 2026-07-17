@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Privacy — Saqua</title>
+  <title>Privacy Policy — Saqua</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet" />
@@ -14,22 +14,124 @@
   <div data-nav></div>
   <div class="container page-head">
     <span class="eyebrow reveal"><span class="dot"></span> Legal</span>
-    <h1 class="reveal" style="margin-top:16px">Privacy</h1>
-    <p class="muted reveal" style="margin-top:10px">A plain-language summary of how Saqua handles your data.</p>
+    <h1 class="reveal" style="margin-top:16px">Privacy Policy</h1>
+    <p class="muted reveal" style="margin-top:10px">How Saqua collects, uses, and protects your data. Last updated: 13 July 2026.</p>
   </div>
   <div class="container section" style="padding-top:32px">
     <div class="prose reveal">
-      <h2>What we store</h2>
-      <p>Conversations you create — the companies you research and the emails you draft — so you can return to them. That's it.</p>
-      <h2>What we research</h2>
-      <p>Only the public web pages you point Saqua at. It doesn't access private data, mailboxes, or accounts.</p>
-      <h2>Secrets</h2>
-      <p>API keys are read from the server environment. They're never shown in the interface, never logged, and never sent to the browser.</p>
-      <h2>Third parties</h2>
-      <p>Saqua sends page text and your prompts to the language-model provider that powers research and drafting, solely to produce your results.</p>
-      <h2>Your control</h2>
-      <p>You can delete any conversation from your workspace at any time. When self-hosted, all data remains within infrastructure you control.</p>
-      <p class="faint" style="font-size:13px">This page is a summary, not a contract, and will be expanded into a full policy before general availability.</p>
+
+      <p class="faint" style="font-size:13px;border-left:3px solid var(--border);padding-left:14px">
+        This is a clear, plain-English policy written in good faith. It is not yet a
+        lawyer-reviewed document — we intend to have it formally reviewed before
+        general availability. If anything here is unclear, please
+        <a href="/contact.html">contact us</a>.
+      </p>
+
+      <h2>Who we are</h2>
+      <p>Saqua is a B2B sales-research and cold-outreach assistant. It researches
+      companies you point it at, drafts personalized emails, and — when you connect a
+      mailbox and explicitly ask — sends them on your behalf. This policy covers the
+      hosted Saqua product.</p>
+
+      <h2>What data we collect</h2>
+      <ul>
+        <li><strong>Account information</strong> — your name and email address, provided
+        by our authentication provider (Clerk) when you sign in.</li>
+        <li><strong>Email content you create</strong> — the subject lines and bodies of
+        the cold emails and sequences you draft, edit, and (if you choose) send through
+        Saqua.</li>
+        <li><strong>Prospect and research data</strong> — the companies and people you
+        ask Saqua to research, and the public information it gathers about them
+        (website content, news, public social posts, and business contact details).</li>
+        <li><strong>Mailbox access tokens</strong> — if you connect Gmail or Outlook,
+        we store the OAuth access and refresh tokens needed to send email and detect
+        replies on your behalf. These are <strong>encrypted at rest</strong> and are
+        never shown in the interface or sent to your browser.</li>
+        <li><strong>Conversations and workspace state</strong> — your chat threads with
+        the assistant and the research/drafts attached to them, so you can return to
+        your work.</li>
+        <li><strong>Operational metadata</strong> — usage counts, timing, error logs,
+        and cost/telemetry data we use to run the service reliably and control cost.
+        We do not sell this or use it for advertising.</li>
+      </ul>
+
+      <h2>Google user data (Gmail)</h2>
+      <p>If you connect a Google account, Saqua requests only the Gmail scopes needed to
+      send the messages you approve and to detect replies to your sequences. Saqua's use
+      of information received from Google APIs adheres to the
+      <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener" target="_blank">Google API Services User Data Policy</a>,
+      including its Limited Use requirements. We do not use Gmail data for advertising,
+      we do not sell it, and we do not allow humans to read it except where you explicitly
+      ask us to, where required for security or to comply with the law, or where the data
+      is aggregated/anonymized. You can revoke Saqua's access at any time from your
+      <a href="https://myaccount.google.com/permissions" rel="noopener" target="_blank">Google account permissions</a>
+      or by disconnecting the mailbox on the Connections page.</p>
+
+      <h2>How we use your data</h2>
+      <ul>
+        <li>To research the companies you ask about and generate grounded, personalized
+        outreach drafts.</li>
+        <li>To send email and detect replies <em>only</em> when you connect a mailbox and
+        explicitly ask us to send.</li>
+        <li>To keep your conversations and drafts available in your workspace.</li>
+        <li>To operate, secure, debug, and control the cost of the service (usage caps,
+        error monitoring, abuse prevention).</li>
+      </ul>
+      <p>We do not sell your data, and we do not use the content of your emails or
+      research to train third-party advertising models.</p>
+
+      <h2>Third-party services your data passes through</h2>
+      <p>To do its job, Saqua sends the minimum necessary data to specialized providers.
+      Each processes it only to return a result to you:</p>
+      <ul>
+        <li><strong>Anthropic (Claude)</strong> — page text and prompts, to power research
+        synthesis and email drafting.</li>
+        <li><strong>Firecrawl, Tavily, Exa, Jina</strong> — target URLs and search queries,
+        to gather public web and news content about the companies you research.</li>
+        <li><strong>Hunter</strong> — company domains, to look up public business contact
+        details where enabled.</li>
+        <li><strong>X (Twitter) API</strong> — search terms, to read recent public posts
+        when you ask for recent social signal.</li>
+        <li><strong>Google (Gmail) / Microsoft (Outlook)</strong> — your approved email
+        content and the OAuth tokens you granted, to send mail and detect replies.</li>
+        <li><strong>Clerk</strong> — authentication and account identity.</li>
+        <li><strong>Our hosting and database providers</strong> — to store your workspace
+        and run the application.</li>
+      </ul>
+      <p>We are not responsible for the independent privacy practices of these providers;
+      each publishes its own policy.</p>
+
+      <h2>Data retention</h2>
+      <p>We keep your conversations, drafts, and research for as long as your account is
+      active so your workspace stays usable. You can delete any conversation at any time,
+      which removes it from our systems. Mailbox tokens are kept until you disconnect the
+      mailbox or delete your account. Operational logs (usage, errors) are retained for a
+      limited period for security and reliability and then aged out. If you delete your
+      account, we remove your workspace data and revoke stored tokens; some minimal records
+      may be retained where required by law.</p>
+
+      <h2>Security</h2>
+      <p>Mailbox tokens and other secrets are encrypted at rest. API keys live only in our
+      server environment — they are never shown in the interface, never logged, and never
+      sent to the browser. Access to production data is limited to what is needed to operate
+      the service.</p>
+
+      <h2>Your choices</h2>
+      <ul>
+        <li>Delete any conversation from your workspace at any time.</li>
+        <li>Disconnect a mailbox to stop all sending and revoke stored tokens.</li>
+        <li>Request access to, or deletion of, your account data by contacting us.</li>
+      </ul>
+
+      <h2>Contact</h2>
+      <p>Questions about privacy, or requests to access or delete your data? Use the
+      <a href="/contact.html">contact page</a> or email
+      <a href="mailto:mehdiehtesham2@gmail.com">mehdiehtesham2@gmail.com</a>. (We plan to
+      move to a dedicated support address before general availability.)</p>
+
+      <p class="faint" style="font-size:13px">This policy will be expanded and formally
+      reviewed before general availability. We'll post the updated date above when it
+      changes.</p>
     </div>
   </div>
   <div data-footer></div>

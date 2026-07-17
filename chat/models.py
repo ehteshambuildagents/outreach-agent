@@ -20,6 +20,12 @@ RESEARCH = "research"
 NOTICE = "notice"
 PROSPECTS = "prospects"     # a scored, browsable list (collapsed preview + expand)
 CHANNEL = "channel"         # a safe-channel draft (X/Reddit/HN reply, contact form)
+# Co-founder cards — the user's REAL operating state (grounded in live automation
+# data, never fabricated). See chat/tools.py get_stats / summarize_replies /
+# list_campaigns.
+STATS = "stats"             # the user's outreach analytics (sent / replies / rate)
+REPLIES = "replies"         # prospects who replied across the user's sequences
+CAMPAIGNS = "campaigns"     # the user's campaigns + where each one stands
 
 
 @dataclass

@@ -187,6 +187,26 @@ class RenameConversation(BaseModel):
         return v[:80]
 
 
+_COMPANY_FIELD_MAX = 400
+
+
+class CompanyProfile(BaseModel):
+    """The sender's own company details (set in Settings, remembered in every
+    chat). Every field is optional and sanitized to a single capped line."""
+    name: str = ""
+    website: str = ""
+    one_liner: str = ""
+    audience: str = ""
+    value_prop: str = ""
+    tone: str = ""
+
+    @field_validator("*")
+    @classmethod
+    def _clean(cls, v: str) -> str:
+        v = " ".join((v or "").replace("\x00", "").split()).strip()
+        return v[:_COMPANY_FIELD_MAX]
+
+
 def _valid_id(cid: str) -> str:
     if not ID_RE.match(cid or ""):
         raise HTTPException(status_code=404, detail="Conversation not found.")
@@ -231,6 +251,22 @@ def _message_public(m) -> dict:
             safe = {k: data.get(k) for k in
                     ("channel", "label", "body", "char_count", "company",
                      "posted", "guard")}
+        elif m.kind == "stats":
+            # The user's own outreach analytics (co-founder). Numbers only.
+            safe = {k: data.get(k) for k in
+                    ("emails_sent", "replies", "reply_rate", "sequences_active",
+                     "sequences_paused", "prospects_contacted", "campaigns")}
+        elif m.kind == "replies":
+            safe = {"count": data.get("count"),
+                    "replies": [{k: r.get(k) for k in
+                                 ("company", "to", "replied_at", "emails_before_reply")}
+                                for r in (data.get("replies") or [])]}
+        elif m.kind == "campaigns":
+            safe = {"count": data.get("count"),
+                    "campaigns": [{k: c.get(k) for k in
+                                   ("id", "name", "status", "launched", "discovered",
+                                    "updated_at")}
+                                  for c in (data.get("campaigns") or [])]}
     return {"role": m.role, "kind": m.kind, "content": m.content or "", "data": safe}
 
 
@@ -461,6 +497,37 @@ def send_message(cid: str, body: SendMessage, request: Request,
         raise HTTPException(status_code=502,
                             detail="The assistant couldn't respond just now. Please try again.")
     return _conversation_public(conv)
+
+
+# ── Company profile (the sender's own details, remembered in every chat) ─
+@app.get("/api/company")
+def get_company(request: Request, _=Depends(_rl_read),
+                user: str = Depends(require_approved_user)):
+    return {"company": _store_for(user).load_company()}
+
+
+@app.put("/api/company")
+def put_company(body: CompanyProfile, request: Request, _=Depends(_rl_write),
+                user: str = Depends(require_approved_user)):
+    data = body.model_dump()
+    _store_for(user).save_company(data)
+    return {"company": data}
+
+
+# ── Billing / plan (the user's real plan + free-tier usage) ────────────
+@app.get("/api/billing")
+def get_billing(request: Request, _=Depends(_rl_read),
+                user: str = Depends(require_approved_user)):
+    from config.settings import FREE_PROSPECT_LIMIT
+    usage = _store_for(user).load_usage()
+    used = len(usage.get("prospects") or [])
+    limit = FREE_PROSPECT_LIMIT
+    return {
+        "plan": "free",
+        "prospect_limit": limit,
+        "prospects_used": used,
+        "prospects_remaining": (max(0, limit - used) if limit > 0 else None),
+    }
 
 
 # ── Automation Agent routes (Clerk-gated, per-user) ────────────────────

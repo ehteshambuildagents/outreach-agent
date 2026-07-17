@@ -38,6 +38,32 @@ def get_key(env_name: str) -> str:
     return (os.environ.get(env_name) or "").strip()
 
 
+# ── Per-user usage caps (best-effort; never break a provider call) ─────
+def _cap_user():
+    """The ambient user this call is serving, or None for a system call."""
+    try:
+        from telemetry import context
+        return context.get("user_id")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _cap_allow(provider: str, user_id: str):
+    try:
+        import limits
+        return limits.allow(provider, user_id)
+    except Exception:  # noqa: BLE001 - caps must never break a research call
+        return None
+
+
+def _cap_record(provider: str, user_id: str) -> None:
+    try:
+        import limits
+        limits.record(provider, user_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def request_json(method: str, url: str, *, provider: str,
                  headers=None, json_body=None, params=None,
                  timeout: float = PROVIDER_TIMEOUT_SECONDS):
@@ -48,6 +74,18 @@ def request_json(method: str, url: str, *, provider: str,
     orchestrator simply continues with the other providers. The key/headers are
     never logged; only the provider name, status, and a short reason are.
     """
+    # Per-user spend cap (public-signup safety). The ambient telemetry user_id is
+    # set by the chat/campaign layers around this call; a system call has none and
+    # is never capped. A capped user gets None — the same graceful-degradation
+    # signal every provider already handles — instead of a paid API hit.
+    user_id = _cap_user()
+    if user_id:
+        decision = _cap_allow(provider, user_id)
+        if decision is not None and not decision.allowed:
+            log.info("%s: usage cap reached for user — skipping paid call (%s)",
+                     provider, decision.reason)
+            return None
+
     last_reason = "request failed"
     for attempt in range(PROVIDER_MAX_RETRIES + 1):
         try:
@@ -65,10 +103,13 @@ def request_json(method: str, url: str, *, provider: str,
         else:
             if resp.status_code == 200:
                 try:
-                    return resp.json()
+                    parsed = resp.json()
                 except ValueError:
                     log.info("%s: non-JSON response", provider)
                     return None
+                if user_id:
+                    _cap_record(provider, user_id)   # meter the real, paid read
+                return parsed
             if resp.status_code not in _RETRYABLE_STATUS:
                 log.info("%s: HTTP %s (not retrying)", provider, resp.status_code)
                 return None                               # 4xx -> permanent

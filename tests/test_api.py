@@ -32,6 +32,11 @@ def _client(auth=True, user="user_test"):
     api.app.dependency_overrides.clear()
     if auth:
         api.app.dependency_overrides[api.require_user] = lambda: user
+        # require_approved_user layers access-gating + the account kill switch on
+        # top of require_user; override it too so these transport/contract tests
+        # exercise the endpoints as an approved, active user (gating is covered by
+        # its own tests). auth=False leaves it un-overridden to test real rejection.
+        api.app.dependency_overrides[api.require_approved_user] = lambda: user
     return TestClient(api.app)
 
 
@@ -222,6 +227,7 @@ class ApiTests(unittest.TestCase):
         def client(user):
             api.app.dependency_overrides.clear()
             api.app.dependency_overrides[api.require_user] = lambda: user
+            api.app.dependency_overrides[api.require_approved_user] = lambda: user
             return TestClient(api.app)
         alice = client("user_alice"); a_cid = alice.post("/api/conversations").json()["id"]
         bob = client("user_bob")

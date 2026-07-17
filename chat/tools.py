@@ -38,11 +38,21 @@ from agents.writer import (
 from chat import resolver
 from chat import research_pipeline
 from chat.context import intel_digest, research_digest
-from chat.models import CHANNEL, EMAIL, PROSPECTS, RESEARCH, Message
+from chat.models import (
+    CAMPAIGNS,
+    CHANNEL,
+    EMAIL,
+    PROSPECTS,
+    REPLIES,
+    RESEARCH,
+    STATS,
+    Message,
+)
 from agents import channels
 from discovery import engine as discovery_engine
 from discovery.models import DiscoveryQuery
 from research import orchestrator
+from research import x_search
 
 
 @dataclass
@@ -97,6 +107,74 @@ def _company_label(result: dict, fallback_url: str) -> str:
         return name
     host = urlparse(fallback_url or "").hostname or fallback_url or "Company"
     return host[4:] if host.startswith("www.") else host
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  Free-tier entitlement (distinct prospects worked)
+#  Everyone is on the Free plan until a billing backend exists. A prospect is
+#  "used" the first time its company is researched; capping research bounds the
+#  whole funnel (write/send all need research first). Usage lives in
+#  workspace["usage"] (loaded + persisted per-user by chat.agent), so tools read
+#  and update it without plumbing the store through every handler.
+# ──────────────────────────────────────────────────────────────────────
+def _free_limit() -> int:
+    from config import settings
+    return int(getattr(settings, "FREE_PROSPECT_LIMIT", 3))
+
+
+def _usage_prospects(conversation) -> list:
+    u = conversation.workspace.get("usage")
+    if isinstance(u, dict) and isinstance(u.get("prospects"), list):
+        return u["prospects"]
+    return []
+
+
+def _prospect_key(company=None, url=None) -> str:
+    if url:
+        host = urlparse(url).hostname or url or ""
+        host = host[4:] if host.startswith("www.") else host
+        if host:
+            return host.lower().strip()
+    return re.sub(r"[^a-z0-9]", "", (company or "").lower())
+
+
+def _free_slot_blocked(conversation, key: str) -> bool:
+    """True if working a NEW prospect `key` would exceed the free plan cap."""
+    limit = _free_limit()
+    if limit <= 0 or not key:
+        return False
+    used = _usage_prospects(conversation)
+    return key not in used and len(used) >= limit
+
+
+def _remaining_prospects(conversation) -> int:
+    limit = _free_limit()
+    if limit <= 0:
+        return 10 ** 9
+    return max(0, limit - len(_usage_prospects(conversation)))
+
+
+def _record_prospect(conversation, *keys) -> dict:
+    """An updated usage dict with each non-empty `key` recorded (deduped)."""
+    u = conversation.workspace.get("usage")
+    u = dict(u) if isinstance(u, dict) else {}
+    lst = list(u.get("prospects") or [])
+    for key in keys:
+        if key and key not in lst:
+            lst.append(key)
+    u["prospects"] = lst
+    return u
+
+
+def _upgrade_result() -> ToolResult:
+    limit = _free_limit()
+    return ToolResult(summary=(
+        f"The user has used all {limit} prospects on their free plan, and this "
+        f"would be a new one. Do NOT research, write, or send for a new prospect. "
+        f"Warmly tell them they've hit the free limit of {limit} prospects and need "
+        f"to upgrade to keep going — point them to Pricing (in Settings, or the "
+        f"/pricing page). They can still revisit the prospects they've already "
+        f"worked."))
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -185,6 +263,10 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
     if not url:
         return ToolResult(summary="No company website or name was provided to research.")
 
+    # Free-tier gate: a new prospect beyond the plan cap is not researched.
+    if _free_slot_blocked(conversation, _prospect_key(company=query, url=url)):
+        return _upgrade_result()
+
     try:
         result = research_company(url, find_founder=find_founder)
     except Exception:  # noqa: BLE001 - research is designed not to raise, belt-and-braces
@@ -204,6 +286,10 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
             summary=(f"Researched {label} but found too little to personalize: "
                      f"{result.get('reason')}. Tell the user honestly; do not invent."),
             workspace_updates=updates)
+
+    # A usable prospect was researched — count it against the free-tier cap.
+    updates["usage"] = _record_prospect(
+        conversation, _prospect_key(company=label, url=url))
 
     card = Message(
         role="assistant", kind=RESEARCH,
@@ -256,6 +342,10 @@ def _tool_deep_research(inp: dict, conversation) -> ToolResult:
         return ToolResult(summary="No company or website was given to research. "
                           "Ask the user which company they'd like me to look into.")
 
+    # Free-tier gate: a new prospect beyond the plan cap is not researched.
+    if _free_slot_blocked(conversation, _prospect_key(company=company or query, url=url)):
+        return _upgrade_result()
+
     try:
         intel = orchestrator.research(company, url=url, focus=focus)
     except Exception:  # noqa: BLE001 - orchestrator is designed not to raise
@@ -290,9 +380,10 @@ def _tool_deep_research(inp: dict, conversation) -> ToolResult:
         summary=("Multi-source research complete for " + label + ". Reference these "
                  "findings and hooks naturally in your reply, and mention a source "
                  "where it helps; don't dump the whole list.\n\n" + intel_digest(intel)),
-        message=card, workspace_updates={"intel": intel,
-                                         "company": label,
-                                         **({"company_url": url} if url else {})})
+        message=card, workspace_updates={
+            "intel": intel, "company": label,
+            "usage": _record_prospect(conversation, _prospect_key(company=label, url=url)),
+            **({"company_url": url} if url else {})})
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1012,6 +1103,14 @@ def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
                           "founders hiring an SDR') or WHICH companies to evaluate "
                           "(a list of names or websites).")
 
+    # Free-tier gate: research at most the remaining prospect allowance.
+    remaining = _remaining_prospects(conversation)
+    if remaining <= 0:
+        return _upgrade_result()
+    truncated = len(leads) > remaining
+    if truncated:
+        leads = leads[:remaining]
+
     icp = conversation.workspace.get("icp")
     result = research_pipeline.research_and_qualify(
         leads, icp=icp, limit=limit, user_id=user_id)
@@ -1020,6 +1119,8 @@ def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
                           or "Couldn't research those prospects just now."))
 
     prospects = result["prospects"]
+    usage = _record_prospect(
+        conversation, *[_prospect_key(company=e.get("company")) for e in prospects])
     card = Message(role="assistant", kind=PROSPECTS,
                    content=f"Researched and scored {result['researched']} of "
                            f"{result['count']} companies.",
@@ -1029,6 +1130,9 @@ def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
              f"({e['recommendation'] or e['status']}) — {e['preview']}"
              for i, e in enumerate(prospects, 1)]
     more = " More candidates are available for a bigger batch." if has_more else ""
+    cap_note = (f" NOTE: the free plan is limited to {_free_limit()} prospects, so "
+                "only that many were researched here — tell the user this and that "
+                "upgrading unlocks more." if truncated else "")
     return ToolResult(
         summary=("Researched a scored prospect list (shown as an interactive card: "
                  "each row is a one-line preview that expands to the full research "
@@ -1036,12 +1140,12 @@ def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
                  "using ONLY the previews below — do NOT paste the full research, the "
                  "card already holds it. Call out the top one or two, and offer to "
                  "expand any, or draft an email / X reply / Reddit / HN / contact-form "
-                 "message for one. Nothing sends or posts automatically." + more
+                 "message for one. Nothing sends or posts automatically." + more + cap_note
                  + "\n" + "\n".join(lines)),
         message=card,
         workspace_updates={"prospects_researched": {
             "run_id": result["run_id"], "prospects": prospects,
-            "summary": result["summary"]}})
+            "summary": result["summary"]}, "usage": usage})
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1112,6 +1216,304 @@ def _channel_research_data(conversation, company) -> dict:
                     "what_they_do": (e.get("detail") or {}).get("what_they_do"),
                     "unique_hook": hook}
     return {"company_name": company} if company else {}
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  Tool: search recent X (Twitter) posts — OPTIONAL recent-social-signal
+#  source. Read-only, cached, cost-logged; only used when a request needs
+#  recent social signal (NOT default company research — it costs money).
+# ──────────────────────────────────────────────────────────────────────
+def _tool_search_recent_posts(inp: dict, conversation) -> ToolResult:
+    query = str(inp.get("query") or "").strip()
+    if not query:
+        return ToolResult(summary="Ask the user what to search recent X/Twitter posts "
+                          "for (a topic, company, or phrase).")
+    result = x_search.search_recent_posts(query, max_results=inp.get("max_results"))
+    status = result.get("status")
+    if status == "unavailable":
+        return ToolResult(summary="Recent X/Twitter search isn't set up in this "
+                          "environment (no API token). Tell the user it's unavailable; "
+                          "do NOT pretend you searched or invent posts.")
+    if status == "error":
+        return ToolResult(summary="Couldn't search recent X posts right now ("
+                          + (result.get("reason") or "unknown") + "). Say so plainly.")
+    posts = result.get("posts") or []
+    if status == "empty" or not posts:
+        return ToolResult(
+            summary=(f"Searched recent X posts for {query!r} and found nothing "
+                     "relevant. Tell the user plainly that no recent posts matched — "
+                     "do NOT invent any."),
+            workspace_updates={"x_posts": result})
+    lines = [f"  - @{p.get('author_username') or '?'}: "
+             f"{(p.get('text') or '').replace(chr(10), ' ')[:180]}" for p in posts[:8]]
+    cached = " (from cache)" if result.get("cached") else ""
+    return ToolResult(
+        summary=(f"Found {len(posts)} recent X post(s) for {query!r}{cached}. "
+                 "Summarize only the genuinely relevant ones in plain language; quote "
+                 "sparingly and ONLY the real text below, never fabricate. Offer to "
+                 "research or draft outreach to anyone worth pursuing:\n" + "\n".join(lines)),
+        workspace_updates={"x_posts": result})
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  Co-founder tools — operate on the user's REAL campaign + automation state.
+#  Owner-scoped via conversation._user_id (like send_email). The READ tools
+#  (get_stats, summarize_replies, list_campaigns) only read live state and render
+#  a grounded card; the ACTION tools (pause_campaign, launch_campaign) go through
+#  the SAME engine.pause/resume the dashboard uses, are transition-guarded, and
+#  report ONLY what the engine confirms — they never claim a change they can't
+#  verify, and never send or launch anything on their own.
+# ──────────────────────────────────────────────────────────────────────
+def _owner_id(conversation):
+    return getattr(conversation, "_user_id", None)
+
+
+def _no_account_result(what: str) -> ToolResult:
+    return ToolResult(summary=(f"Couldn't confirm the signed-in account, so I can't "
+                      f"{what}. Ask the user to retry from the workspace; do NOT invent "
+                      "any numbers, replies, or campaigns."))
+
+
+def _cofounder_unavailable(what: str) -> ToolResult:
+    return ToolResult(summary=(f"The campaign/automation backend isn't reachable right "
+                      f"now, so I can't {what}. Tell the user honestly it's temporarily "
+                      "unavailable; do NOT invent state."))
+
+
+def _user_workflows(user_id: str):
+    """The user's live sequences (automation Workflow objects). Raises on backend
+    failure so the caller can report 'unavailable' honestly rather than '0'."""
+    from automation.store import WorkflowStore
+    return WorkflowStore().list_for_user(user_id)
+
+
+def _tool_get_stats(inp: dict, conversation) -> ToolResult:
+    """The signed-in user's real outreach analytics, computed from THEIR workflows."""
+    user_id = _owner_id(conversation)
+    if not user_id:
+        return _no_account_result("pull your stats")
+    try:
+        from automation import states as st
+        wfs = _user_workflows(user_id)
+    except Exception:  # noqa: BLE001 - a data-layer hiccup must not fabricate stats
+        return _cofounder_unavailable("read your outreach stats")
+
+    sent = contacted = replies = active = paused = 0
+    for w in wfs:
+        wf_sent = sum(1 for s in w.steps if s.status == st.STEP_SENT)
+        sent += wf_sent
+        if wf_sent:
+            contacted += 1
+        if w.reply_detected:
+            replies += 1
+        if w.state == st.PAUSED:
+            paused += 1
+        elif not st.is_terminal(w.state):
+            active += 1
+    reply_rate = (replies / contacted) if contacted else 0.0
+
+    campaigns_total = 0
+    try:
+        from server.campaign_store import CampaignStore
+        campaigns_total = len(CampaignStore().list_for_owner(user_id))
+    except Exception:  # noqa: BLE001 - campaigns are a nice-to-have here
+        pass
+
+    if not wfs and not campaigns_total:
+        return ToolResult(summary=(
+            "The user has NO campaigns or live sequences yet — there are genuinely no "
+            "stats to report. Encourage them to get started (research a prospect, or "
+            "find and score a list), and do NOT invent any numbers."))
+
+    data = {"emails_sent": sent, "replies": replies, "reply_rate": round(reply_rate, 4),
+            "sequences_active": active, "sequences_paused": paused,
+            "prospects_contacted": contacted, "campaigns": campaigns_total}
+    card = Message(role="assistant", kind=STATS, content="Your outreach so far.", data=data)
+    return ToolResult(
+        summary=("Live outreach stats for THIS user (shown as a card — reference the "
+                 "numbers naturally, don't just list them all): "
+                 f"{sent} emails sent; {replies} replies "
+                 f"({round(reply_rate * 100)}% reply rate across {contacted} prospects "
+                 f"contacted); {active} active and {paused} paused sequences; "
+                 f"{campaigns_total} campaigns. Give a short, grounded read of how "
+                 "they're doing and, if useful, ONE concrete next step. Never state a "
+                 "number that isn't in this list."),
+        message=card)
+
+
+def _tool_summarize_replies(inp: dict, conversation) -> ToolResult:
+    """Who has replied across ALL the user's sequences (not just this thread)."""
+    user_id = _owner_id(conversation)
+    if not user_id:
+        return _no_account_result("check your replies")
+    try:
+        wfs = _user_workflows(user_id)
+    except Exception:  # noqa: BLE001
+        return _cofounder_unavailable("check your replies")
+
+    from automation import states as st
+    replied = [w for w in wfs if w.reply_detected]
+    if not replied:
+        return ToolResult(summary=(
+            "No prospect has replied yet across the user's sequences. Tell them plainly "
+            "there are no replies to summarize — do NOT invent any."))
+
+    items = []
+    for w in sorted(replied, key=lambda x: (x.reply_at or 0), reverse=True):
+        items.append({"company": w.company or w.to_email or "A prospect",
+                      "to": w.to_email,
+                      "replied_at": w.reply_at,
+                      "emails_before_reply": sum(1 for s in w.steps
+                                                 if s.status == st.STEP_SENT)})
+    data = {"count": len(items), "replies": items}
+    listed = "\n".join(f"  - {it['company']} ({it['to'] or 'no address'})" for it in items[:12])
+    card = Message(role="assistant", kind=REPLIES,
+                   content=(f"{len(items)} "
+                            + ("reply" if len(items) == 1 else "replies")
+                            + " across your campaigns."), data=data)
+    return ToolResult(
+        summary=(f"{len(items)} prospect(s) have replied across the user's sequences "
+                 "(shown as a card). IMPORTANT: Saqua detects that a reply ARRIVED (and "
+                 "auto-stops that sequence) but does NOT store the reply text — so "
+                 "summarize WHO replied and roughly when, and do NOT invent what they "
+                 "said. Nudge the user to reply to them personally now. Prospects:\n"
+                 + listed),
+        message=card)
+
+
+def _tool_list_campaigns(inp: dict, conversation) -> ToolResult:
+    """The user's campaigns and where each one stands."""
+    user_id = _owner_id(conversation)
+    if not user_id:
+        return _no_account_result("list your campaigns")
+    try:
+        from server.campaign_store import CampaignStore
+        campaigns = CampaignStore().list_for_owner(user_id)
+    except Exception:  # noqa: BLE001
+        return _cofounder_unavailable("list your campaigns")
+    if not campaigns:
+        return ToolResult(summary=(
+            "The user has no campaigns yet. Encourage them to create one (find and "
+            "research prospects, then build a campaign) — do NOT invent campaigns."))
+
+    items = []
+    for c in campaigns:
+        summary_obj = (c.get("result") or {}).get("summary") or {}
+        items.append({"id": c["id"], "name": c.get("name") or "Untitled campaign",
+                      "status": c.get("status") or "", "updated_at": c.get("updated_at"),
+                      "launched": len(c.get("workflow_ids") or []),
+                      "discovered": summary_obj.get("discovered")})
+    data = {"count": len(items), "campaigns": items}
+    listed = "\n".join(
+        f"  - {it['name']} [{it['status'] or 'unknown'}]"
+        + (f", {it['launched']} live" if it['launched'] else "")
+        for it in items[:15])
+    card = Message(role="assistant", kind=CAMPAIGNS,
+                   content=(f"You have {len(items)} campaign"
+                            + ("" if len(items) == 1 else "s") + "."), data=data)
+    return ToolResult(
+        summary=("The user's campaigns (shown as a card). Present them briefly and offer "
+                 "the natural next move — launch a ready one, pause a live one, or open "
+                 "one for detail. Do NOT invent campaigns beyond these:\n" + listed),
+        message=card)
+
+
+def _resolve_campaign(user_id: str, query: str):
+    """Match the user's campaigns to `query` (name or id). Returns
+    (campaign, choices): exactly one of them is meaningful — a resolved campaign,
+    or a candidate list to disambiguate (empty list => none exist)."""
+    from server.campaign_store import CampaignStore
+    campaigns = CampaignStore().list_for_owner(user_id)
+    if not campaigns:
+        return None, []
+    q = (query or "").strip().lower()
+    if not q:
+        return (campaigns[0], []) if len(campaigns) == 1 else (None, campaigns)
+    exact = [c for c in campaigns
+             if (c.get("name") or "").lower() == q or str(c.get("id", "")).lower() == q]
+    if len(exact) == 1:
+        return exact[0], []
+    partial = [c for c in campaigns if q in (c.get("name") or "").lower()]
+    if len(partial) == 1:
+        return partial[0], []
+    return None, (partial or campaigns)
+
+
+def _campaign_action(inp: dict, conversation, *, verb: str) -> ToolResult:
+    """Shared body for pause_campaign / launch_campaign. `verb` is 'pause' | 'resume'."""
+    user_id = _owner_id(conversation)
+    if not user_id:
+        return _no_account_result(f"{verb} a campaign")
+    query = str(inp.get("campaign") or "").strip()
+    try:
+        from automation.store import WorkflowStore
+        from automation import engine as _eng, states as st
+        campaign, choices = _resolve_campaign(user_id, query)
+    except Exception:  # noqa: BLE001
+        return _cofounder_unavailable(f"{verb} that campaign")
+
+    if campaign is None:
+        if not choices:
+            return ToolResult(summary=(f"The user has no campaigns to {verb}. Tell them "
+                              f"plainly; do NOT pretend to {verb} anything."))
+        names = "; ".join((c.get("name") or c.get("id")) for c in choices[:8])
+        return ToolResult(summary=(f"It's not clear which campaign to {verb}. ASK the "
+                          f"user to pick one — candidates: {names}. Do NOT act until "
+                          "they choose."))
+
+    name = campaign.get("name") or "the campaign"
+    wf_ids = campaign.get("workflow_ids") or []
+    if not wf_ids:
+        if verb == "pause":
+            return ToolResult(summary=(f"'{name}' has no live sequences running, so "
+                              "there's nothing to pause. Tell the user plainly."))
+        return ToolResult(summary=(f"'{name}' hasn't been launched into live sequences "
+                          "yet. To start it, the user opens the campaign and launches it "
+                          "from the campaign builder — I can't fabricate sends. Point "
+                          "them there; do NOT claim it was launched."))
+
+    store = WorkflowStore()
+    changed = 0
+    for wid in wf_ids:
+        try:
+            wf = store.load(wid, user_id=user_id)
+            if wf is None:
+                continue
+            if verb == "pause" and wf.state in st.PAUSABLE:
+                res = _eng.pause(store, user_id, wid)
+                if res is not None and res.state == st.PAUSED:
+                    changed += 1
+            elif verb == "resume" and wf.state == st.PAUSED:
+                res = _eng.resume(store, user_id, wid)
+                if res is not None and res.state != st.PAUSED:
+                    changed += 1
+        except Exception:  # noqa: BLE001 - one bad workflow must not abort the batch
+            continue
+
+    if changed == 0:
+        state_word = "pausable (running/queued/waiting)" if verb == "pause" \
+            else "paused"
+        return ToolResult(summary=(
+            f"Nothing changed for '{name}' — none of its sequences were in a "
+            f"{state_word} state (they may have already {verb}d, gotten a reply, or "
+            f"finished). Tell the user honestly; do NOT claim you {verb}d it."))
+
+    past = "paused" if verb == "pause" else "resumed"
+    tail = ("It won't send any more emails until it's resumed."
+            if verb == "pause" else "It's sending and following up again.")
+    return ToolResult(
+        summary=(f"Really {past} {changed} live sequence(s) in '{name}'. Confirm "
+                 f"briefly and naturally that the campaign is now {past}. {tail}"),
+        workspace_updates={"last_campaign_action":
+                           {"campaign": name, "action": verb, "changed": changed}})
+
+
+def _tool_pause_campaign(inp: dict, conversation) -> ToolResult:
+    return _campaign_action(inp, conversation, verb="pause")
+
+
+def _tool_launch_campaign(inp: dict, conversation) -> ToolResult:
+    return _campaign_action(inp, conversation, verb="resume")
 
 
 REGISTRY = {}
@@ -1399,6 +1801,126 @@ register(Tool(
         "required": ["channel"],
     },
     handler=_tool_draft_channel,
+))
+
+register(Tool(
+    name="search_recent_posts",
+    description=(
+        "Search RECENT public posts on X (Twitter) for a topic, company, or phrase "
+        "— read-only. This is the ONLY tool that reads live X/Twitter posts; "
+        "research_company and deep_research read WEBSITES, not the timeline. Use it "
+        "whenever the request is about a tweet or post or what people are SAYING on "
+        "X/Twitter, e.g.: 'find a SaaS founder's recent tweet about sales in X', "
+        "'who tweeted about Y', 'recent posts/tweets about Z', 'what are people "
+        "posting about X', 'find founders complaining about Y on X/Twitter', 'who's "
+        "talking about Z recently'. If the user mentions a tweet, a post, X, or "
+        "Twitter, prefer THIS tool. Do NOT use it for ordinary company research and "
+        "NEVER call it by default — this endpoint costs money per read, so it must "
+        "be justified by an explicit need for recent social chatter. Pass the X "
+        "search `query` (X search operators are allowed) and optionally "
+        "`max_results` (kept small/capped). Results are cached to avoid repeat cost. "
+        "If nothing relevant comes back, say so plainly rather than forcing a weak "
+        "result."),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string",
+                      "description": "The X search query (topic/company/phrase; "
+                                     "X search operators allowed)."},
+            "max_results": {"type": "integer",
+                            "description": "How many posts to read (capped; small "
+                                           "by default to control cost)."},
+        },
+        "required": ["query"],
+    },
+    handler=_tool_search_recent_posts,
+))
+
+register(Tool(
+    name="get_stats",
+    description=(
+        "Pull the SIGNED-IN user's real outreach analytics — emails sent, replies, "
+        "reply rate, active vs paused sequences, prospects contacted, and campaign "
+        "count — computed live from their own automation data. Call this whenever "
+        "the user asks how their outreach is doing, for numbers/metrics/stats, or a "
+        "question you can only answer from real state: 'how's my outreach going?', "
+        "'how many emails have I sent?', 'what's my reply rate?', 'how am I doing?', "
+        "'give me my numbers'. ALWAYS call this before quoting any figure — never "
+        "invent stats. It only reads; it changes nothing. Shown as a card; then give "
+        "a short grounded read and, if useful, one next step."),
+    input_schema={"type": "object", "properties": {}, "required": []},
+    handler=_tool_get_stats,
+))
+
+register(Tool(
+    name="summarize_replies",
+    description=(
+        "Summarize which prospects have REPLIED across ALL of the user's sequences "
+        "(not just this chat). Call this for 'did anyone reply?', 'who replied?', "
+        "'any responses yet?', 'catch me up on replies', 'summarize my replies'. It "
+        "reports WHO replied and roughly when — Saqua detects that a reply arrived "
+        "and auto-stops that sequence, but it does NOT store the reply text, so never "
+        "invent what anyone said. Read-only. Shown as a card; nudge the user to reply "
+        "personally."),
+    input_schema={"type": "object", "properties": {}, "required": []},
+    handler=_tool_summarize_replies,
+))
+
+register(Tool(
+    name="list_campaigns",
+    description=(
+        "List the user's campaigns and where each one stands (status + how many live "
+        "sequences it launched). Call this for 'show my campaigns', 'what campaigns "
+        "do I have?', 'what am I running?', or when you need to know which campaigns "
+        "exist before pausing/launching one, or to advise on what to do next. "
+        "Read-only. Shown as a card; then offer the natural next move."),
+    input_schema={"type": "object", "properties": {}, "required": []},
+    handler=_tool_list_campaigns,
+))
+
+register(Tool(
+    name="pause_campaign",
+    description=(
+        "PAUSE a campaign — stops its live sequences so no more emails go out until "
+        "it's resumed. Call ONLY when the user explicitly asks to pause/stop/halt a "
+        "campaign ('pause the Acme campaign', 'stop my SaaS founders outreach', "
+        "'halt everything'). Pass `campaign` = the name (or id) they mean; if it's "
+        "ambiguous or you don't know their campaigns, call list_campaigns / ask which "
+        "one first. It pauses only sequences that are actually running and reports "
+        "exactly how many — NEVER claim a pause the tool didn't confirm."),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "campaign": {"type": "string",
+                         "description": "Campaign name or id to pause. Omit only if "
+                                        "the user has exactly one campaign."},
+        },
+        "required": [],
+    },
+    handler=_tool_pause_campaign,
+))
+
+register(Tool(
+    name="launch_campaign",
+    description=(
+        "LAUNCH (resume) a campaign — restarts its paused sequences so they send and "
+        "follow up again. Call ONLY when the user explicitly asks to launch / start / "
+        "resume / unpause a campaign ('launch the SaaS founders campaign', 'resume "
+        "Acme', 'start sending again'). Pass `campaign` = the name (or id); if it's "
+        "ambiguous, call list_campaigns / ask which one first. It resumes only paused "
+        "sequences and reports how many — NEVER claim a launch the tool didn't "
+        "confirm. If the campaign has never been launched into live sequences, tell "
+        "the user to launch it from the campaign builder; do not fabricate sends."),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "campaign": {"type": "string",
+                         "description": "Campaign name or id to launch/resume. Omit "
+                                        "only if the user has exactly one campaign."},
+        },
+        "required": [],
+    },
+    handler=_tool_launch_campaign,
 ))
 
 for _name, _desc in (

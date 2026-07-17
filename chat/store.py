@@ -71,12 +71,66 @@ class ConversationStore:
     def save_profile(self, profile: dict) -> None:
         if not isinstance(profile, dict):
             return
-        payload = json.dumps(profile, ensure_ascii=False, indent=2)
+        self._write_reserved(self._PROFILE_NAME, profile)
+
+    # ── Per-user company profile (the SENDER's own company details) ────
+    # The user's company identity, set from Settings and injected into every
+    # chat so the agent researches and drafts on their behalf. Stored beside the
+    # threads under a reserved, underscore-prefixed name (skipped by
+    # list_summaries) so it is never mistaken for a conversation.
+    _COMPANY_NAME = "_company_profile.json"
+
+    def load_company(self) -> dict:
+        path = os.path.join(self.directory, self._COMPANY_NAME)
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, OSError):
+            return {}
+
+    def save_company(self, company: dict) -> None:
+        if not isinstance(company, dict):
+            return
+        self._write_reserved(self._COMPANY_NAME, company)
+
+    # ── Per-user free-tier usage (distinct prospects worked) ───────────
+    # A dependency-free entitlement counter: the set of prospect keys (domains /
+    # normalized company names) this user has researched, used to enforce the
+    # Free plan's prospect cap. Reserved, underscore-prefixed (skipped by
+    # list_summaries). Swap for the billing/entitlement DB when one exists.
+    _USAGE_NAME = "_usage.json"
+
+    def load_usage(self) -> dict:
+        path = os.path.join(self.directory, self._USAGE_NAME)
+        if not os.path.exists(path):
+            return {"prospects": []}
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                return {"prospects": []}
+            if not isinstance(data.get("prospects"), list):
+                data["prospects"] = []
+            return data
+        except (json.JSONDecodeError, OSError):
+            return {"prospects": []}
+
+    def save_usage(self, usage: dict) -> None:
+        if not isinstance(usage, dict):
+            return
+        self._write_reserved(self._USAGE_NAME, usage)
+
+    def _write_reserved(self, name: str, data: dict) -> None:
+        """Atomic write for a reserved (non-conversation) per-user JSON file."""
+        payload = json.dumps(data, ensure_ascii=False, indent=2)
         fd, tmp = tempfile.mkstemp(dir=self.directory, suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(payload)
-            os.replace(tmp, os.path.join(self.directory, self._PROFILE_NAME))
+            os.replace(tmp, os.path.join(self.directory, name))
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)

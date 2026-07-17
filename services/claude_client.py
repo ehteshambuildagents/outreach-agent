@@ -38,6 +38,43 @@ class ClaudeClientError(Exception):
     """Raised for any failure talking to Claude. Messages are user-safe."""
 
 
+# ── Per-user usage cap (public-signup safety) ──────────────────────────
+# Metered per user via the ambient telemetry context, so no signature changes.
+# A system call (no user in context) is never capped. Best-effort: any internal
+# error fails OPEN so metering can't take down the model call.
+def _cap_user():
+    try:
+        from telemetry import context
+        return context.get("user_id")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _enforce_anthropic_cap() -> None:
+    """Raise a user-safe ClaudeClientError if this user is over their limit."""
+    user_id = _cap_user()
+    if not user_id:
+        return
+    try:
+        import limits
+        decision = limits.allow("anthropic", user_id)
+    except Exception:  # noqa: BLE001
+        return
+    if decision is not None and not decision.allowed:
+        raise ClaudeClientError(decision.reason or "Usage limit reached. Please try later.")
+
+
+def _record_anthropic() -> None:
+    user_id = _cap_user()
+    if not user_id:
+        return
+    try:
+        import limits
+        limits.record("anthropic", user_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # Errors worth retrying: transient transport/rate-limit/server faults. Client
 # errors (auth, 400/422 schema, not-found) are NOT retryable and fail fast.
 _RETRYABLE_ERRORS = (
@@ -135,6 +172,7 @@ def _call_model(system_prompt: str, schema: dict, user_content: str,
                 stage: str = "model") -> dict:
     """One structured-output call. Returns parsed JSON dict or raises ClaudeClientError."""
     selected_model = _select_model(stage)
+    _enforce_anthropic_cap()                        # per-user usage cap (never breaks a system call)
     token_estimate = _estimate_tokens(system_prompt, user_content, json.dumps(schema, ensure_ascii=False))
     span = llm_span("anthropic", selected_model)   # telemetry: tokens/cost/latency
     started = time.perf_counter()
@@ -155,6 +193,7 @@ def _call_model(system_prompt: str, schema: dict, user_content: str,
         )
         raise
     span.done(response)
+    _record_anthropic()                             # meter the real, paid model call
     _log_request_metrics(
         stage=stage,
         model=selected_model,
@@ -254,6 +293,7 @@ def call_with_tools(system_prompt: str, messages: list, tools: list,
     """
     stage = "chat"
     selected_model = _select_model(stage)
+    _enforce_anthropic_cap()                        # per-user usage cap (never breaks a system call)
     span = llm_span("anthropic", selected_model)   # telemetry: tokens/cost/latency
     client = anthropic.Anthropic(api_key=get_api_key(), max_retries=0)
     token_estimate = _estimate_tokens(system_prompt, json.dumps(messages, ensure_ascii=False),
@@ -279,6 +319,7 @@ def call_with_tools(system_prompt: str, messages: list, tools: list,
         )
         raise
     span.done(response)
+    _record_anthropic()                             # meter the real, paid model call
     _log_request_metrics(
         stage=stage,
         model=selected_model,

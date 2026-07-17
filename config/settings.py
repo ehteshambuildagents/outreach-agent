@@ -250,6 +250,16 @@ GUARD_DAILY_BUDGET_USD = 10.0
 GUARD_MONTHLY_BUDGET_USD = 200.0
 
 
+# ── Free tier (self-serve entitlement) ─────────────────────────────────
+# With no billing backend yet, every account is on the Free plan: it may WORK a
+# small number of distinct prospects (research → write → send), after which the
+# chat prompts an upgrade. Metered per-user (chat/store `_usage.json`), counted
+# on research (the gateway to a prospect). Set FREE_PROSPECT_LIMIT=0 to disable
+# the cap (e.g. local dev). The paid plans on /pricing are Starter (50) / Growth
+# (150) / Enterprise — wire a real plan lookup here when billing exists.
+FREE_PROSPECT_LIMIT = int(os.getenv("FREE_PROSPECT_LIMIT", "3"))
+
+
 # ── Per-user usage caps & account kill switch (public-signup safety) ────
 # With public signups there's no informal "I know how much I've used" bound, so
 # every paid provider call is metered per user against these hard caps (limits/).

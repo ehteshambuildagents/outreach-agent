@@ -7,6 +7,13 @@
       "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "uvicorn", "server.api:app", "--host", "127.0.0.1", "--port", "8613"],
       "port": 8613
+    },
+    {
+      "name": "frontend",
+      "autoPort": false,
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "cd saqua-frontend && npx next dev -p 3200"],
+      "port": 3200
     }
   ]
 }

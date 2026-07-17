@@ -46,6 +46,21 @@ def respond(conversation, user_text: str, store=None, user_id=None):
             conversation.workspace["style_profile"] = store.load_profile()
         except Exception:  # noqa: BLE001 - never let profile IO break a reply
             pass
+    # The user's own company details (set in Settings) — loaded fresh each turn so
+    # edits take effect immediately and the agent works on their behalf in every
+    # chat. Read-only here; it is written from the /api/company endpoint.
+    if store is not None and hasattr(store, "load_company"):
+        try:
+            conversation.workspace["company_profile"] = store.load_company()
+        except Exception:  # noqa: BLE001 - never let company IO break a reply
+            pass
+    # Free-tier usage (distinct prospects worked) — loaded so the research tools
+    # can enforce the plan cap, persisted per-user (not per-thread) below.
+    if store is not None and hasattr(store, "load_usage"):
+        try:
+            conversation.workspace["usage"] = store.load_usage()
+        except Exception:  # noqa: BLE001 - never let usage IO break a reply
+            pass
     # Learn from THIS message directly — a preference like "no emojis" or "never
     # say X" is captured whether or not it triggers a rewrite, so the user never
     # has to repeat it. style.learn only reacts to explicit style cues, so an
@@ -60,11 +75,18 @@ def respond(conversation, user_text: str, store=None, user_id=None):
     system = build_system_prompt(conversation.workspace)
     messages = _history_to_messages(conversation)
 
+    # Tool-selection visibility: log the tools offered to the model for this turn
+    # ONCE up front, so a later "was the tool available but not chosen?" question is
+    # a log read, not a guess. The per-hop lines below then record what was chosen.
+    specs = tools.tool_specs()
+    log.info("tools offered (%d) for %r: %s", len(specs),
+             (user_text or "")[:80], ", ".join(s["name"] for s in specs))
+
     for _hop in range(CHAT_MAX_TOOL_HOPS):
         try:
             # Attribute the orchestration LLM call to the "chat" agent (telemetry).
             with telemetry.scope(user_id=user_id, agent="chat"):
-                resp = claude_client.call_with_tools(system, messages, tools.tool_specs())
+                resp = claude_client.call_with_tools(system, messages, specs)
         except claude_client.ClaudeClientError as exc:
             conversation.add_assistant(
                 f"I hit a problem reaching the model: {exc}", kind=NOTICE)
@@ -77,10 +99,15 @@ def respond(conversation, user_text: str, store=None, user_id=None):
             return conversation
 
         if not resp["tool_uses"]:
+            # No tool chosen — the model answered directly. Logged explicitly so
+            # "tool offered but not selected" is distinguishable from "not offered".
+            log.info("tool selection (hop %d): none - model answered directly", _hop)
             conversation.add_assistant(resp["text"] or "Done.")
             break
 
         # The model narrated + decided to use tools: show the narration first.
+        log.info("tool selection (hop %d): %s", _hop,
+                 ", ".join(c["name"] for c in resp["tool_uses"]))
         if resp["text"]:
             conversation.add_assistant(resp["text"])
 
@@ -155,3 +182,11 @@ def _save(store, conversation) -> None:
                 store.save_profile(profile)
             except Exception:  # noqa: BLE001
                 log.warning("failed to persist style profile")
+        # Persist the free-tier usage counter per-user (separate from the thread)
+        # so the prospect cap carries across every conversation.
+        usage = (conversation.workspace or {}).get("usage")
+        if isinstance(usage, dict) and hasattr(store, "save_usage"):
+            try:
+                store.save_usage(usage)
+            except Exception:  # noqa: BLE001
+                log.warning("failed to persist usage")
