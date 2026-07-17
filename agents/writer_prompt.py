@@ -57,6 +57,8 @@ _BANNED = (
     ("cutting edge", "cutting edg"),
     ("best-in-class", "best-in-class"),
     ("world-class", "world-class"),
+    ("state-of-the-art", "state-of-the-art"),
+    ("state of the art", "state of the art"),
     # Empty transition phrases — pure connective filler, never how a person types.
     ("that said", "that said"),
     ("with that in mind", "with that in mind"),
@@ -68,6 +70,10 @@ _BANNED = (
     ("happy to revisit", "happy to revisit"),
     ("whenever works", "whenever works"),
     ("whenever the timing", "whenever the timing"),
+    # Overt CTA asks — a first email earns a reply, it never books a meeting.
+    ("would you be interested", "would you be interested"),
+    ("schedule a demo", "schedule a demo"),
+    ("book time", "book time"),
     # Hedged, overly-polite closers that beg rather than ask.
     ("I'd love to hear your thoughts", "hear your thoughts"),
     ("looking forward to connecting", "forward to connecting"),
@@ -310,7 +316,9 @@ def _build_system_prompt() -> str:
         "observations, do not summarize the company, do not describe their whole "
         "business. State that one thing plainly and move on. Don't explain why "
         "it's impressive, don't unpack it, don't teach them about their own "
-        "company. People don't explain someone's own website back to them.\n\n"
+        "company. People don't explain someone's own website back to them. That "
+        "one detail is the reason this email exists, it should feel impossible to "
+        "send to anyone else.\n\n"
         "WHY YOU'RE EMAILING: don't jump to the product. Connect the one thing you "
         "noticed to a real problem or tension a company like theirs probably feels, "
         "and leave it slightly open so they finish the thought, \"that usually "
@@ -328,6 +336,18 @@ def _build_system_prompt() -> str:
         "working on is plenty (\"I'm working on a different approach to outbound\"), "
         "never a feature list. If the product is the main character, rewrite it so "
         "the person is.\n\n"
+        "MAKE THEM THE MAIN CHARACTER: this email is about them, not you. Name what "
+        "you're working on at most ONCE, in a single sentence, if your product or "
+        "company turns up more than once, cut it back until it appears just once. "
+        "Almost every sentence should be about them and their world, not yours. And "
+        "leave something before you ask for anything, one real observation, insight, "
+        "or genuine question worth the reader's ten seconds even if they never reply "
+        "and never buy, the email should still have earned being opened.\n\n"
+        "DON'T ASSUME THE PROBLEM: never tell them how hard their business must be, "
+        "never invent a pain to sound relevant. Stay curious, not certain, \"I was "
+        "curious ...\", \"my guess is ...\", \"I wondered if ...\", \"it made me "
+        "think ...\", never \"you probably ...\", \"you must ...\", or \"I imagine "
+        "you're struggling ...\". If you're guessing, own that you're guessing.\n\n"
         "STYLE: write like someone typing fast. At least one sentence must be very "
         "short (under five words). Then a longer one. Don't balance the lengths, "
         "don't smooth every transition, let one sentence feel a little abrupt. "
@@ -358,6 +378,10 @@ def _build_system_prompt() -> str:
         "real), a flat statement that simply stops, a specific offer to send the one "
         "example you'd write for their exact market, or no explicit ask at all when "
         "the email already invites a reply. Not every email should end on \"?\". "
+        "When you DO ask, ask something you'd genuinely want to know that starts a "
+        "conversation, not a meeting: \"how are you handling this today?\", \"was "
+        "that intentional?\", \"did that change how the team works?\", never "
+        "\"would you like a demo?\", \"interested?\", or \"open to seeing more?\". "
         "Deliver value, don't promise it — offering the specific thing you'd write "
         "beats saying you \"could help\". Never ask for a meeting, a call, a demo, or "
         "\"30 minutes\"; never \"book a call\", \"are you free this week\", or "
@@ -367,8 +391,10 @@ def _build_system_prompt() -> str:
         "SELF-CHECK before returning: if this landed in your own inbox, would you "
         "believe a real founder typed it in one sitting? Does it read like a "
         "founder or a salesperson? Is the product the main character (if so, make "
-        "the person the main character)? Could they reply in under ten seconds? "
-        "Would it still feel natural if no sale ever happened? If any sentence "
+        "the person the main character)? Is the recipient the one doing most of the "
+        "talking, and does your product appear at most once? Could they reply in "
+        "under ten seconds? Would it still feel natural if no sale ever happened, "
+        "worth having opened even if they never buy? If any sentence "
         "feels polished, symmetrical, too complete, or like something an AI writes, "
         "rewrite ONLY that sentence. Keep the rest rough.\n\n"
         "Maximum 105 words. Output the email only, no preamble, no commentary.\n\n"
