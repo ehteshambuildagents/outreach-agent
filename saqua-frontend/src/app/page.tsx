@@ -67,6 +67,8 @@ export default function LandingPage() {
           <a href="#pipeline" className="hover:text-text">How it works</a>
           <Link href="/pricing" className="hover:text-text">Pricing</Link>
           <Link href="/about" className="hover:text-text">About</Link>
+          <Link href="/privacy" className="hover:text-text">Privacy</Link>
+          <Link href="/terms" className="hover:text-text">Terms</Link>
         </nav>
         <div className="flex items-center gap-2">
           <Button asChild variant="ghost" size="sm">

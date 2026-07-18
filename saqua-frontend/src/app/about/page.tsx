@@ -45,6 +45,8 @@ export default function AboutPage() {
         <nav className="hidden items-center gap-7 text-xs text-muted md:flex">
           <Link href="/#pipeline" className="hover:text-text">How it works</Link>
           <Link href="/pricing" className="hover:text-text">Pricing</Link>
+          <Link href="/privacy" className="hover:text-text">Privacy</Link>
+          <Link href="/terms" className="hover:text-text">Terms</Link>
         </nav>
         <div className="flex items-center gap-2">
           <Button asChild variant="ghost" size="sm">

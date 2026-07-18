@@ -90,8 +90,8 @@ export default function PrivacyPage() {
             <h2 className="text-lg font-medium">Contact</h2>
             <p className="mt-2 text-text-2">
               Email{" "}
-              <a className="text-accent-hi underline" href="mailto:mehdiehtesham2@gmail.com">
-                mehdiehtesham2@gmail.com
+              <a className="text-accent-hi underline" href="mailto:support@saqua.io">
+                support@saqua.io
               </a>
               .
             </p>
