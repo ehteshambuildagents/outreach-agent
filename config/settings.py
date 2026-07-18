@@ -235,6 +235,17 @@ APOLLO_ENRICH_ENABLED = (os.getenv("APOLLO_ENRICH_ENABLED", "0").strip().lower()
                          in ("1", "true", "yes", "on"))
 
 
+# ── Source planner — paid recency escalation (news + X) kill switch ────
+# The post-crawl planner (research/source_planner.py) may escalate a prospect with
+# no recent on-site signal to Tavily news and then X recent-search. Both cost money
+# / carry rate limits, so the escalation is a KILL SWITCH: OFF by default until it
+# has been watched on real campaigns. This controls ONLY the news + X steps; Apollo
+# enrichment has its own gate (APOLLO_ENRICH_ENABLED). With this OFF the planner
+# still runs, but the paid escalation is skipped (recorded as a skip, with reason).
+PLANNER_ESCALATION_ENABLED = (os.getenv("PLANNER_ESCALATION_ENABLED", "0")
+                              .strip().lower() in ("1", "true", "yes", "on"))
+
+
 # ── Automation Agent (the conductor: scheduling, sending, recovery) ────
 # All tunable; nothing about timing is hard-coded in the engine.
 AUTOMATION_MAX_RETRIES = 4              # send retries before a step is FAILED-terminal

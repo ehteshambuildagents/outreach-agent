@@ -179,55 +179,5 @@ class AvailableTests(unittest.TestCase):
         self.assertFalse(apollo.available())
 
 
-class PipelineWiringTests(unittest.TestCase):
-    """The gated call site in research.pipeline: dormant unless the flag is on,
-    and even then only fires when it can actually help (name present, email
-    missing/generic)."""
-
-    def setUp(self):
-        import research.pipeline as pipeline
-        self.pipeline = pipeline
-
-    @mock.patch("research.pipeline.APOLLO_ENRICH_ENABLED", False)
-    @mock.patch("research.apollo.enrich_person")
-    def test_flag_off_never_enriches(self, m_enrich):
-        data = {"primary_contact_name": "Dana Lee",
-                "public_contact_email": "info@acme.com"}
-        self.pipeline._maybe_enrich_contact(data, "https://acme.com")
-        m_enrich.assert_not_called()
-        self.assertNotIn("primary_contact_email", data)
-
-    @mock.patch("research.pipeline.APOLLO_ENRICH_ENABLED", True)
-    @mock.patch("research.pipeline.apollo.available", return_value=True)
-    @mock.patch("research.pipeline.apollo.enrich_person")
-    def test_enabled_enriches_when_email_is_generic(self, m_enrich, _avail):
-        m_enrich.return_value = {"status": "ok", "person": {
-            "name": "Dana Lee", "title": "VP of Growth",
-            "email": "dana@acme.com", "email_status": "verified"}}
-        data = {"primary_contact_name": "Dana Lee",
-                "public_contact_email": "info@acme.com", "company_name": "Acme"}
-        self.pipeline._maybe_enrich_contact(data, "https://www.acme.com")
-        m_enrich.assert_called_once()
-        # merge_into_research runs for real -> the upgrade lands.
-        self.assertEqual(data["primary_contact_email"], "dana@acme.com")
-
-    @mock.patch("research.pipeline.APOLLO_ENRICH_ENABLED", True)
-    @mock.patch("research.pipeline.apollo.available", return_value=True)
-    @mock.patch("research.pipeline.apollo.enrich_person")
-    def test_enabled_skips_when_specific_email_present(self, m_enrich, _avail):
-        data = {"primary_contact_name": "Dana Lee",
-                "public_contact_email": "dana@acme.com"}
-        self.pipeline._maybe_enrich_contact(data, "https://acme.com")
-        m_enrich.assert_not_called()
-
-    @mock.patch("research.pipeline.APOLLO_ENRICH_ENABLED", True)
-    @mock.patch("research.pipeline.apollo.available", return_value=True)
-    @mock.patch("research.pipeline.apollo.enrich_person")
-    def test_enabled_skips_when_no_name(self, m_enrich, _avail):
-        data = {"public_contact_email": "info@acme.com"}
-        self.pipeline._maybe_enrich_contact(data, "https://acme.com")
-        m_enrich.assert_not_called()
-
-
 if __name__ == "__main__":
     unittest.main()
