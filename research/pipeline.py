@@ -43,6 +43,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
 from config.settings import (
+    APOLLO_ENRICH_ENABLED,
     DIMINISHING_DELTA,
     DIMINISHING_STALLS,
     JS_RENDER_TEXT_THRESHOLD,
@@ -69,7 +70,7 @@ from research.crawler import (
 from research.extractor import extract_evidence, extract_names_only
 from research.fetcher import RenderFetcher, fetch_static, validate_url
 from research.hooks import backfill_facts_from_hooks, rank_hooks, research_score
-from research import exa, tavily
+from research import apollo, exa, tavily
 from research.verifier import select_primary_contact, verify
 from services.claude_client import ClaudeClientError
 
@@ -254,6 +255,7 @@ def _finalize(url, pages, graph, hooks, score, breakdown, used_render, stop_reas
     #    is always completed; when nobody is found, say WHY and WHERE we looked.
     data = output["data"]
     _attach_contact_routes(data, pages_urls, contact_routes or {})
+    _maybe_enrich_contact(data, url)
     person_sources = [u for u in pages_urls if is_person_source_page(u)]
     person_found = bool(data.get("founder_name") or data.get("team_members"))
     data["person_found"] = person_found
@@ -331,6 +333,43 @@ def _attach_contact_routes(data: dict, pages_urls: list, routes: dict) -> None:
         or data.get("linkedin_url")
         or data.get("contact_page_url")
     )
+
+
+def _maybe_enrich_contact(data: dict, url: str) -> None:
+    """Apollo person-enrichment step — OFF by default (``APOLLO_ENRICH_ENABLED``).
+
+    When enabled AND we have a named contact but only a generic/missing email,
+    ask Apollo to resolve that person's verified work email + title from (name,
+    company domain, LinkedIn), then merge it in ONLY when it beats what we scraped
+    (research/apollo.merge_into_research). Skipped entirely when we already have a
+    specific person address, so no paid call is wasted.
+
+    Never raises: a disabled flag, missing key, capped user, no-match, or any
+    failure leaves ``data`` exactly as it was — enrichment can only ever ADD
+    confidence, never break research.
+    """
+    if not APOLLO_ENRICH_ENABLED or not apollo.available():
+        return
+    name = data.get("primary_contact_name") or data.get("founder_name")
+    if not name:
+        return                                   # nobody to enrich
+    email = (data.get("public_contact_email") or "").strip()
+    if email and not apollo.is_generic_email(email):
+        return                                   # already have a specific address
+    try:
+        result = apollo.enrich_person(
+            name=name,
+            domain=urlparse(url).hostname or "",
+            organization_name=data.get("company_name"),
+            linkedin_url=data.get("linkedin_url"),
+        )
+    except Exception:  # noqa: BLE001 - enrichment must never break research
+        log.debug("apollo enrichment errored", exc_info=True)
+        return
+    if result.get("status") == "ok" and result.get("person"):
+        apollo.merge_into_research(data, result["person"])
+        log.info("apollo: enriched contact for %s",
+                 data.get("company_name") or url)
 
 
 def _provider_person_pages(url: str, company_name: str = None) -> list:

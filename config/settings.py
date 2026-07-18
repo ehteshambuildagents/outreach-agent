@@ -222,6 +222,19 @@ X_SEARCH_CACHE_TTL_SECONDS = int(os.getenv("X_SEARCH_CACHE_TTL_SECONDS", str(6 *
 X_SEARCH_COST_PER_READ_USD = float(os.getenv("X_SEARCH_COST_PER_READ_USD", "0.005"))
 
 
+# ── Apollo People-Match enrichment — OPTIONAL verified-contact source ──
+# research/apollo.py enriches a known contact (name + company domain, optionally a
+# LinkedIn URL) into a verified professional email + exact title/seniority via
+# Apollo's People Match endpoint. It costs Apollo credits PER match, so — like X
+# search — it is deliberately OFF the always-on research path and metered through
+# providers_common.request_json (provider "apollo": cost + daily-call caps above).
+# Key: APOLLO_API_KEY (server-side ONLY, never logged; rotate in Apollo's console
+# if a key was ever exposed). APOLLO_ENRICH_ENABLED gates whether a caller may run
+# it at all — default OFF so it never fires (or spends) until deliberately enabled.
+APOLLO_ENRICH_ENABLED = (os.getenv("APOLLO_ENRICH_ENABLED", "0").strip().lower()
+                         in ("1", "true", "yes", "on"))
+
+
 # ── Automation Agent (the conductor: scheduling, sending, recovery) ────
 # All tunable; nothing about timing is hard-coded in the engine.
 AUTOMATION_MAX_RETRIES = 4              # send retries before a step is FAILED-terminal
@@ -283,6 +296,7 @@ LIMIT_DAILY_CALLS = {
     "exa":       int(os.getenv("LIMIT_EXA_DAILY_CALLS", "300")),
     "jina":      int(os.getenv("LIMIT_JINA_DAILY_CALLS", "300")),
     "hunter":    int(os.getenv("LIMIT_HUNTER_DAILY_CALLS", "100")),
+    "apollo":    int(os.getenv("LIMIT_APOLLO_DAILY_CALLS", "100")),
     "x_search":  int(os.getenv("LIMIT_XSEARCH_DAILY_CALLS", "60")),
     "anthropic": int(os.getenv("LIMIT_ANTHROPIC_DAILY_CALLS", "600")),
 }
@@ -295,6 +309,7 @@ LIMIT_PROVIDER_COST_USD = {
     "exa":       0.005,
     "jina":      0.0,
     "hunter":    0.010,
+    "apollo":    0.010,
     "x_search":  round(X_SEARCH_COST_PER_READ_USD * X_SEARCH_MAX_RESULTS, 5),
     "anthropic": 0.020,
 }
