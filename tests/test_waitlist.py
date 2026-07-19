@@ -8,6 +8,7 @@ honeypot, or the client-IP parsing is directly exploitable from the internet.
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -66,22 +67,81 @@ def _fresh_default_db():
 
 
 class ClientIpTests(unittest.TestCase):
-    def test_rightmost_entry_wins(self):
-        """The leftmost X-Forwarded-For entry is client-supplied. Trusting it would
-        let anyone mint a fresh rate-limit bucket per request by forging a header."""
-        ip = W.client_ip(_Req({"x-forwarded-for": "1.2.3.4, 203.0.113.9"}))
-        self.assertEqual(ip, "203.0.113.9")
+    """Pinned against the two forwarding chains PRODUCTION actually produced, captured
+    via /api/admin/echo-ip on 2026-07-19. The previous version of these tests passed
+    on invented chains while production bucketed every visitor on infrastructure, so
+    the literals below are deliberately the real measured values rather than tidy
+    examples — if the topology changes, these should fail.
+
+        direct  api.saqua.io  xff="116.71.134.159, 152.233.68.97"  real=116.71.134.159
+        proxied www.saqua.io  xff="34.229.241.47, 152.233.47.67"   real=34.229.241.47
+                              x-vercel-forwarded-for=116.71.134.159 (browser)
+
+    In both, Railway's edge REWROTE x-forwarded-for to "<peer it saw>, <internal hop>".
+    The rightmost entry is therefore never a client, at any hop count.
+    """
+
+    CLIENT = "116.71.134.159"        # the browser, both paths
+    VERCEL_EGRESS = "34.229.241.47"  # our frontend's egress, proxied path only
+    RAILWAY_HOP = "152.233.68.97"    # Railway internal, rightmost, never a client
+    SECRET = "test-proxy-secret"
+
+    def _direct(self, extra=None):
+        h = {"x-forwarded-for": f"{self.CLIENT}, {self.RAILWAY_HOP}",
+             "x-real-ip": self.CLIENT}
+        h.update(extra or {})
+        return _Req(h, host="100.64.0.4")
+
+    def _proxied(self, extra=None):
+        h = {"x-forwarded-for": f"{self.VERCEL_EGRESS}, 152.233.47.67",
+             "x-real-ip": self.VERCEL_EGRESS}
+        h.update(extra or {})
+        return _Req(h, host="100.64.0.3")
+
+    def test_direct_path_uses_the_real_caller(self):
+        self.assertEqual(W.client_ip(self._direct()), self.CLIENT)
+
+    def test_proxied_path_uses_the_ip_the_proxy_forwarded(self):
+        with mock.patch.dict(os.environ, {"SAQUA_PROXY_SECRET": self.SECRET}):
+            ip = W.client_ip(self._proxied({"x-saqua-client-ip": self.CLIENT,
+                                            "x-saqua-proxy-secret": self.SECRET}))
+        self.assertEqual(ip, self.CLIENT)
+
+    def test_forwarded_ip_is_ignored_without_the_secret(self):
+        """The whole point of the secret. api.saqua.io is publicly reachable, so an
+        unauthenticated x-saqua-client-ip is an attacker choosing their own bucket."""
+        with mock.patch.dict(os.environ, {"SAQUA_PROXY_SECRET": self.SECRET}):
+            ip = W.client_ip(self._direct({"x-saqua-client-ip": "203.0.113.77"}))
+        self.assertEqual(ip, self.CLIENT)
+
+    def test_forwarded_ip_is_ignored_with_a_wrong_secret(self):
+        with mock.patch.dict(os.environ, {"SAQUA_PROXY_SECRET": self.SECRET}):
+            ip = W.client_ip(self._direct({"x-saqua-client-ip": "203.0.113.77",
+                                           "x-saqua-proxy-secret": "wrong"}))
+        self.assertEqual(ip, self.CLIENT)
+
+    def test_no_secret_configured_means_nothing_is_ever_trusted(self):
+        """Unset secret must not become a bypass: fall back to the peer."""
+        with mock.patch.dict(os.environ, {"SAQUA_PROXY_SECRET": ""}):
+            ip = W.client_ip(self._proxied({"x-saqua-client-ip": "203.0.113.77",
+                                            "x-saqua-proxy-secret": ""}))
+        self.assertEqual(ip, self.VERCEL_EGRESS)
+
+    def test_rightmost_entry_is_never_used(self):
+        """Regression guard on the actual bug: hop-counting from the right picked
+        Railway's internal hop on every path, which is how all traffic ended up in
+        infrastructure-keyed buckets."""
+        for req in (self._direct(), self._proxied()):
+            self.assertNotIn(W.client_ip(req), (self.RAILWAY_HOP, "152.233.47.67"))
+
+    def test_forged_xff_cannot_override_x_real_ip(self):
+        """Measured in production: Railway discards a caller's x-forwarded-for. We
+        prefer x-real-ip regardless, so a forged chain changes nothing."""
+        req = self._direct({"x-forwarded-for": f"203.0.113.99, {self.RAILWAY_HOP}"})
+        self.assertEqual(W.client_ip(req), self.CLIENT)
 
     def test_falls_back_to_peer(self):
         self.assertEqual(W.client_ip(_Req({}, host="10.9.9.9")), "10.9.9.9")
-
-    def test_respects_extra_proxy_hops(self):
-        os.environ["TRUSTED_PROXY_HOPS"] = "2"
-        try:
-            ip = W.client_ip(_Req({"x-forwarded-for": "forged, 203.0.113.9, 10.0.0.5"}))
-            self.assertEqual(ip, "203.0.113.9")
-        finally:
-            os.environ.pop("TRUSTED_PROXY_HOPS", None)
 
 
 class RateLimitTests(unittest.TestCase):

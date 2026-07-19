@@ -25,6 +25,7 @@ Abuse controls, in order:
     already on the list.
 """
 
+import hmac
 import html as html_mod
 import logging
 import os
@@ -60,28 +61,65 @@ def require_shared_redis() -> bool:
     return settings.is_production()
 
 
-def trusted_proxy_hops() -> int:
-    """How many proxies sit in front of this app. Default 1 (e.g. Railway)."""
-    try:
-        return max(1, int(os.environ.get("TRUSTED_PROXY_HOPS") or "1"))
-    except ValueError:
-        return 1
+def proxy_secret() -> str:
+    """Shared secret proving a request genuinely came through our own frontend
+    proxy. Empty (the default) means no request is ever treated as proxied."""
+    return (os.environ.get("SAQUA_PROXY_SECRET") or "").strip()
 
 
-def client_ip(request: Request) -> str:
-    """The caller's address, read from the RIGHT of ``X-Forwarded-For``.
+def _peer(request: Request) -> str:
+    """The address that actually opened the connection to our edge.
 
-    A proxy APPENDS the peer it saw, so with one trusted proxy in front the real
-    client is the last entry. Reading the leftmost entry instead — the common
-    mistake — takes a value the client fully controls, letting anyone mint a fresh
-    rate-limit bucket per request by forging the header.
+    Railway's edge OVERWRITES ``X-Forwarded-For`` with the peer it saw and appends
+    one internal hop, rather than appending to whatever arrived. Measured against
+    production on 2026-07-19: a request carrying a forged
+    ``X-Forwarded-For: 203.0.113.99`` produced a bucket keyed on Railway's own edge
+    address and no bucket for the forged value. So the LEFTMOST entry (equivalently
+    ``X-Real-IP``) is set by our infrastructure and cannot be influenced by the
+    caller, and the rightmost is always Railway's internal hop.
     """
+    real = (request.headers.get("x-real-ip") or "").strip()
+    if real:
+        return real
     xff = request.headers.get("x-forwarded-for") or ""
     parts = [p.strip() for p in xff.split(",") if p.strip()]
     if parts:
-        idx = max(0, len(parts) - trusted_proxy_hops())
-        return parts[idx]
+        return parts[0]
     return request.client.host if request.client else "?"
+
+
+def client_ip(request: Request) -> str:
+    """The caller's address, for rate-limit bucketing.
+
+    Two paths reach this app and they need different treatment, because the peer
+    our edge sees is only the real client on one of them:
+
+      direct  api.saqua.io   peer == the caller                 -> use the peer
+      proxied www.saqua.io   peer == our frontend's egress      -> ask the proxy
+
+    On the proxied path the browser's address never survives the hop: Vercel knows
+    it, but Railway's edge rewrites the forwarding headers on ingress, so it cannot
+    be recovered from ``X-Forwarded-For`` at any offset. The proxy therefore passes
+    it explicitly in ``X-Saqua-Client-IP``.
+
+    That header is only honoured when ``X-Saqua-Proxy-Secret`` matches, because
+    api.saqua.io is publicly reachable: without the check, anyone could send a
+    client IP of their choosing straight to the backend and mint an unlimited
+    supply of fresh rate-limit buckets — the exact hole the header exists to close.
+    With no secret configured, nothing is ever treated as proxied and every request
+    buckets on the peer: over-restrictive for proxied traffic, never permissive.
+
+    (This replaces a TRUSTED_PROXY_HOPS scheme that could not work here at any
+    value: hop-counting assumes each proxy appends, and Railway overwrites.)
+    """
+    secret = proxy_secret()
+    if secret:
+        provided = (request.headers.get("x-saqua-proxy-secret") or "").strip()
+        if provided and hmac.compare_digest(provided, secret):
+            forwarded = (request.headers.get("x-saqua-client-ip") or "").strip()
+            if forwarded:
+                return forwarded
+    return _peer(request)
 
 
 def _over_limit(bucket: str, limit: int, window: int) -> bool:

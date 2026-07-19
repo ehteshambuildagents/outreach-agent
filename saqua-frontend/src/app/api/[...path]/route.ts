@@ -77,18 +77,22 @@ function logProxy(level: "info" | "error", event: string, data: Record<string, u
 }
 
 /**
- * The caller's real address as seen by our own edge.
+ * The browser's real address.
  *
- * A proxy APPENDS the peer it saw, so the RIGHTMOST entry of the incoming
- * X-Forwarded-For is the one our platform added — the only entry a client cannot
- * forge. Everything to its left is attacker-supplied. Returns "" when there is no
- * trustworthy value (e.g. local dev with no edge in front).
+ * Vercel sets x-vercel-forwarded-for from the actual connection and overwrites
+ * anything the browser sent under that name — verified against production on
+ * 2026-07-19 by replaying a request with a forged value, which never arrived. It
+ * is therefore the one address here that a caller cannot choose.
+ *
+ * X-Forwarded-For is deliberately NOT consulted: this runs behind Vercel, where
+ * the left of that chain is caller-supplied, and the value is discarded downstream
+ * anyway (see below). x-real-ip is kept only as a local-dev fallback, where there
+ * is no edge in front and nothing to forge past.
  */
 function clientIp(request: NextRequest): string {
-  const xff = request.headers.get("x-forwarded-for") || "";
-  const parts = xff.split(",").map((p) => p.trim()).filter(Boolean);
-  if (parts.length) {
-    return parts[parts.length - 1];
+  const vercel = (request.headers.get("x-vercel-forwarded-for") || "").trim();
+  if (vercel) {
+    return vercel;
   }
   return (request.headers.get("x-real-ip") || "").trim();
 }
@@ -101,18 +105,27 @@ function forwardedHeaders(request: NextRequest, traceId: string): Headers {
       headers.set(key, value);
     }
   });
-  // Collapse X-Forwarded-For to the single trustworthy value before it reaches
-  // the backend. Without this the backend sees THIS proxy as the client (so every
-  // visitor shares one rate-limit bucket) and any header the browser invented
-  // passes straight through (so the limit is trivially bypassed). When no
-  // trustworthy value exists we DELETE the header rather than forward a forged
-  // one — the backend then falls back to the proxy address, which is
-  // over-restrictive but never permissive.
+  // Hand the browser's address to the backend in a header of our own.
+  //
+  // Rewriting X-Forwarded-For here does NOT work and was measured not to: Railway's
+  // edge overwrites that header on ingress with the peer IT saw (this proxy's
+  // egress) and appends one internal hop, so whatever we write is discarded before
+  // any handler sees it. That is why every visitor was landing in a rate-limit
+  // bucket keyed on infrastructure.
+  //
+  // The secret is what makes the new header safe to believe: api.saqua.io is
+  // publicly reachable, so without proof of origin anyone could post a client IP of
+  // their choosing and mint unlimited fresh buckets. We send neither header when
+  // the secret is unset, so the backend falls back to bucketing on this proxy's
+  // address — over-restrictive for our visitors, never permissive.
   const ip = clientIp(request);
-  if (ip) {
-    headers.set("x-forwarded-for", ip);
-  } else {
-    headers.delete("x-forwarded-for");
+  const secret = process.env.SAQUA_PROXY_SECRET || "";
+  // Never let a caller's own copy of these reach the backend alongside ours.
+  headers.delete("x-saqua-client-ip");
+  headers.delete("x-saqua-proxy-secret");
+  if (ip && secret) {
+    headers.set("x-saqua-client-ip", ip);
+    headers.set("x-saqua-proxy-secret", secret);
   }
   headers.set("x-forwarded-host", request.headers.get("host") || "");
   headers.set("x-forwarded-proto", request.nextUrl.protocol.replace(":", ""));

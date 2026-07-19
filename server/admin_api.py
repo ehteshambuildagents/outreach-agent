@@ -99,19 +99,22 @@ def register(app) -> None:
 
         known = ("x-forwarded-for", "x-real-ip", "forwarded", "cf-connecting-ip",
                  "true-client-ip", "x-client-ip", "x-vercel-forwarded-for",
-                 "x-envoy-external-address", "fly-client-ip")
+                 "x-envoy-external-address", "fly-client-ip", "x-saqua-client-ip")
         values = {h: request.headers.get(h) for h in known if request.headers.get(h)}
 
         xff = request.headers.get("x-forwarded-for") or ""
         parts = [p.strip() for p in xff.split(",") if p.strip()]
-        hops = waitlist_api.trusted_proxy_hops()
         return {
             "client_ip_headers": values,
             "xff_parts": parts,
             "xff_len": len(parts),
-            # The peer as the ASGI server sees it — the last hop, always trustworthy.
+            # The peer as the ASGI server sees it — Railway's internal mesh, not a
+            # client. The address that reached our EDGE is `edge_peer` below.
             "peer": request.client.host if request.client else None,
-            "trusted_proxy_hops": hops,
+            "edge_peer": waitlist_api._peer(request),
+            # Whether this request proved it came through our own frontend proxy.
+            "proxy_secret_configured": bool(waitlist_api.proxy_secret()),
+            "proxied": bool(request.headers.get("x-saqua-client-ip")),
             # What the limiter would key on right now. Compare against the address
             # the call was actually made from: if they differ, the bucket is wrong.
             "client_ip_computed": waitlist_api.client_ip(request),

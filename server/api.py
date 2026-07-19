@@ -123,6 +123,27 @@ def _log_redis_configuration() -> None:
         log.info("redis: in-memory fallback (local/dev); set UPSTASH_* for shared Redis")
 
 
+@app.on_event("startup")
+def _log_proxy_secret_configuration() -> None:
+    """The frontend proxy proves its origin with SAQUA_PROXY_SECRET; without it the
+    backend cannot tell our own proxy from any other caller, so it buckets proxied
+    traffic on the proxy's address and every visitor shares one rate limit. That is
+    safe (over-restrictive, never permissive) but it silently disables per-visitor
+    limiting, which is exactly the failure that went unnoticed before — so say so."""
+    from server import waitlist_api
+    from config import settings
+    if waitlist_api.proxy_secret():
+        log.info("proxy: SAQUA_PROXY_SECRET set (per-visitor rate limiting active)")
+    elif settings.is_production():
+        log.warning(
+            "SAQUA_PROXY_SECRET NOT SET IN PRODUCTION — requests arriving through the "
+            "frontend proxy cannot be attributed to a visitor, so they all share one "
+            "rate-limit bucket keyed on the proxy. Set the SAME value on the frontend "
+            "(Vercel) and this service.")
+    else:
+        log.info("proxy: SAQUA_PROXY_SECRET unset (local/dev)")
+
+
 def _store_for(user_id: str) -> ConversationStore:
     safe = re.sub(r"[^A-Za-z0-9_-]", "", user_id or "") or "anonymous"
     return ConversationStore(directory=str(Path(_STORE_BASE) / safe))

@@ -127,21 +127,40 @@ class AdminApiTests(unittest.TestCase):
         the limiter derives from it, so the two can be compared against a known
         caller instead of guessed at."""
         with mock.patch.dict(os.environ, {"SAQUA_ADMIN_TOKEN": "s3cret",
-                                          "TRUSTED_PROXY_HOPS": "1"}, clear=False):
+                                          "SAQUA_PROXY_SECRET": ""}, clear=False):
             r = self.client.get("/api/admin/echo-ip",
                                 headers={"X-Admin-Token": "s3cret",
-                                         "X-Forwarded-For": "9.9.9.9, 10.0.0.5"})
+                                         "X-Forwarded-For": "9.9.9.9, 10.0.0.5",
+                                         "X-Real-IP": "9.9.9.9"})
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertEqual(body["xff_parts"], ["9.9.9.9", "10.0.0.5"])
         self.assertEqual(body["xff_len"], 2)
-        self.assertEqual(body["trusted_proxy_hops"], 1)
-        # With one trusted hop the limiter takes the rightmost entry. This is the
-        # behaviour that produced infrastructure-keyed buckets in production; the
-        # endpoint's job is to make that visible rather than to be correct itself.
-        self.assertEqual(body["client_ip_computed"], "10.0.0.5")
-        self.assertEqual(body["client_ip_headers"]["x-forwarded-for"],
-                         "9.9.9.9, 10.0.0.5")
+        # The edge peer is the LEFT of the chain (== x-real-ip). The rightmost entry
+        # is Railway's internal hop and is never a client — keying on it is the bug
+        # this endpoint was built to find.
+        self.assertEqual(body["edge_peer"], "9.9.9.9")
+        self.assertEqual(body["client_ip_computed"], "9.9.9.9")
+        self.assertNotEqual(body["client_ip_computed"], "10.0.0.5")
+        self.assertFalse(body["proxy_secret_configured"])
+        self.assertFalse(body["proxied"])
+
+    def test_echo_ip_shows_a_proxied_request_resolving_to_the_browser(self):
+        with mock.patch.dict(os.environ, {"SAQUA_ADMIN_TOKEN": "s3cret",
+                                          "SAQUA_PROXY_SECRET": "p-secret"},
+                             clear=False):
+            r = self.client.get("/api/admin/echo-ip",
+                                headers={"X-Admin-Token": "s3cret",
+                                         "X-Real-IP": "34.229.241.47",
+                                         "X-Saqua-Client-IP": "116.71.134.159",
+                                         "X-Saqua-Proxy-Secret": "p-secret"})
+        body = r.json()
+        self.assertEqual(body["edge_peer"], "34.229.241.47")
+        self.assertEqual(body["client_ip_computed"], "116.71.134.159")
+        self.assertTrue(body["proxy_secret_configured"])
+        self.assertTrue(body["proxied"])
+        # The secret itself must never be echoed, by value, anywhere.
+        self.assertNotIn("p-secret", json.dumps(body))
 
     def test_echo_ip_never_echoes_credential_headers(self):
         """It reports unknown headers by NAME so a platform header can be spotted.
