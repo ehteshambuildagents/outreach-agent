@@ -7,8 +7,9 @@ const badgeVariants = cva(
   {
     variants: {
       tone: {
-        neutral: "border-border bg-white/[0.04] text-text-2",
+        neutral: "border-border bg-card-2 text-text-2",
         accent: "border-accent-line bg-accent-soft text-accent-hi",
+        live: "border-[color:var(--live-soft)] bg-live-soft text-live",
         success: "border-[color:var(--success-soft)] bg-success-soft text-success",
         warn: "border-[color:var(--warn-soft)] bg-warn-soft text-warn",
         danger: "border-[color:var(--danger-soft)] bg-danger-soft text-danger",
@@ -34,16 +35,16 @@ export function Badge({ className, tone, dot, children, ...props }: BadgeProps) 
 }
 
 /** Status pill — maps a workflow/campaign state string to a toned pill (reference screens 2-5). */
-const STATE_TONE: Record<string, "neutral" | "accent" | "success" | "warn" | "danger"> = {
-  active: "success",
+const STATE_TONE: Record<string, "neutral" | "accent" | "live" | "success" | "warn" | "danger"> = {
+  active: "live",
   sent: "success",
   replied: "success",
   completed: "neutral",
   paused: "warn",
   waiting: "warn",
   queued: "accent",
-  sending: "accent",
-  running: "accent",
+  sending: "live",
+  running: "live",
   failed: "danger",
   cancelled: "danger",
   stopped: "danger",
@@ -59,7 +60,7 @@ const STATE_TONE: Record<string, "neutral" | "accent" | "success" | "warn" | "da
 
 export function StatusPill({ state, className }: { state: string; className?: string }) {
   const key = (state || "").toLowerCase();
-  const tone = STATE_TONE[key] ?? "neutral";
+  const tone: "neutral" | "accent" | "live" | "success" | "warn" | "danger" = STATE_TONE[key] ?? "neutral";
   const label = state.charAt(0).toUpperCase() + state.slice(1).toLowerCase();
   return (
     <Badge tone={tone} dot className={className}>

@@ -12,7 +12,7 @@ export function Topbar({ collapsed, onExpand }: { collapsed: boolean; onExpand: 
           onClick={onExpand}
           aria-label="Open sidebar"
           title="Open sidebar"
-          className="hidden size-8 place-items-center rounded-md text-muted transition-colors hover:bg-white/[0.06] hover:text-text lg:grid"
+          className="hidden size-8 place-items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-text lg:grid"
         >
           <PanelLeftOpen className="size-[18px]" />
         </button>
@@ -22,12 +22,12 @@ export function Topbar({ collapsed, onExpand }: { collapsed: boolean; onExpand: 
         <input
           id="topbar-search"
           placeholder="Search campaigns, prospects, companies..."
-          className="h-9 w-full rounded-sm border border-border bg-white/[0.02] pl-9 pr-3 text-sm text-text placeholder:text-muted transition-colors focus:border-border-strong focus:bg-white/[0.03] focus:outline-none"
+          className="h-9 w-full rounded-lg border border-border bg-card pl-9 pr-3 text-sm text-text placeholder:text-muted transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent-soft"
         />
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <div className="ml-1 grid size-8 place-items-center rounded-full border border-border bg-white/[0.06] text-[11px] font-semibold text-text">
+        <div className="ml-1 grid size-8 place-items-center rounded-full border border-border bg-card text-[11px] font-semibold text-text">
           <UserButton afterSignOutUrl="/" />
         </div>
       </div>

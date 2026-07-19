@@ -4,10 +4,19 @@
 
 /*
   Saqua — design tokens (single source of truth).
-  Dark, with depth (ambient indigo + teal blooms), not flat black. ONE accent:
-  a pale signal-green used only for interactive + live/verified state. Fonts:
-  Geist (sans), Geist Mono (data), Newsreader (upright serif — reserved for the
-  single case of showing Saqua's own generated email copy).
+
+  Light, spacious and trustworthy: a cool off-white canvas, crisp white surfaces,
+  hairline slate borders and generous whitespace. ONE brand accent — the blue from
+  the Saqua wave logo (#1F7AD4) — reserved for interactive + emphasis. Teal (the
+  crest of the same wave) is the single "live / active" signal. Everything else
+  stays neutral so the brand colour keeps its meaning.
+
+  Fonts: Geist (sans), Geist Mono (data / scores / timestamps), Newsreader (upright
+  serif — reserved for the one case of showing Saqua's own generated email copy).
+
+  Theming is centralised here. `.dark` re-declares the same tokens for a future
+  dark mode (darkMode: "class" in tailwind.config), so components never hardcode
+  raw colours — they consume tokens (bg-card, text-text, hover:bg-hover, …).
 */
 :root {
   /* Type — loaded at runtime via <link> in layout.tsx (no build-time fetch) */
@@ -15,41 +24,90 @@
   --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
   --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
-  /* Surfaces — near-black canvas up a precise neutral ramp */
-  --bg: #0a0a0c;            /* app canvas — near-black, not flat black */
-  --panel: #0c0c10;         /* sidebar / sunken rails */
-  --card: #131318;          /* cards / surfaces */
-  --card-2: #17171e;        /* hover / raised surface */
-  --raised: #1e1e26;        /* overlay controls, inputs */
+  /* Surfaces — cool off-white canvas up a precise neutral ramp */
+  --bg: #f5f7fa;            /* app canvas — soft, cool off-white */
+  --panel: #ffffff;         /* sidebar / structural rails */
+  --card: #ffffff;          /* cards / surfaces */
+  --card-2: #f1f4f8;        /* subtle raised surface / resting fill */
+  --raised: #ffffff;        /* inputs, overlay controls */
 
-  /* Hairline borders (white at fixed opacities) */
-  --border-faint: rgba(255, 255, 255, 0.05);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  /* Hairline borders (slate at fixed opacities) */
+  --border-faint: rgba(15, 23, 42, 0.06);
+  --border: rgba(15, 23, 42, 0.10);
+  --border-strong: rgba(15, 23, 42, 0.16);
+
+  /* Interaction overlays — theme-agnostic hover/press fills (slate-tinted on light) */
+  --hover: rgba(15, 23, 42, 0.04);
+  --hover-strong: rgba(15, 23, 42, 0.07);
 
   /* Ink ramp */
-  --text: #ececef;
-  --text-2: #9a9ba4;
-  --muted: #6e6f79;
-  --faint: #4c4d56;
+  --text: #0f172a;          /* slate-900 */
+  --text-2: #475569;        /* slate-600 */
+  --muted: #64748b;         /* slate-500 */
+  --faint: #94a3b8;         /* slate-400 */
 
-  /* Accent — the single hue (pale signal-green). Interactive + live/verified only. */
-  --accent: #7cffb2;
-  --accent-hi: #99ffc4;                        /* brighter — hover + accent text on dark */
-  --accent-soft: rgba(124, 255, 178, 0.12);
-  --accent-line: rgba(124, 255, 178, 0.30);
-  --accent-ink: #06140c;                        /* near-black ink on the pale-green accent */
+  /* Accent — the single brand hue (Saqua wave blue). Interactive + emphasis only. */
+  --accent: #1f7ad4;
+  --accent-hi: #155cab;                         /* darker — hover fill + accent text on light */
+  --accent-soft: rgba(31, 122, 212, 0.10);
+  --accent-line: rgba(31, 122, 212, 0.28);
+  --accent-ink: #ffffff;                        /* white ink on the blue accent */
 
-  /* Status — success IS the accent green (one "live/verified" signal); warn/danger stay semantic */
-  --success: #7cffb2;
-  --success-soft: rgba(124, 255, 178, 0.12);
-  --warn: #f5a623;
-  --warn-soft: rgba(245, 166, 35, 0.13);
-  --danger: #f2777a;
-  --danger-soft: rgba(242, 119, 122, 0.12);
+  /* Live — teal crest of the wave. The single "active / live / verified" signal. */
+  --live: #0e9ca0;
+  --live-soft: rgba(20, 199, 203, 0.14);
+
+  /* Status — semantic (kept restrained + readable on light) */
+  --success: #15966b;
+  --success-soft: rgba(21, 150, 107, 0.12);
+  --warn: #b7791f;
+  --warn-soft: rgba(183, 121, 31, 0.13);
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.10);
 
   --nav-h: 60px;
-  --rail-w: 232px;
+  --rail-w: 240px;
+
+  color-scheme: light;
+}
+
+/* Future dark mode — same token contract, brand blue/teal preserved. */
+.dark {
+  --bg: #0a0d12;
+  --panel: #0c0f15;
+  --card: #12151c;
+  --card-2: #171b23;
+  --raised: #1d222c;
+
+  --border-faint: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  --hover: rgba(255, 255, 255, 0.05);
+  --hover-strong: rgba(255, 255, 255, 0.08);
+
+  --text: #eceef2;
+  --text-2: #a3a9b5;
+  --muted: #737985;
+  --faint: #4e535e;
+
+  --accent: #3d94ea;
+  --accent-hi: #74b6f5;
+  --accent-soft: rgba(61, 148, 234, 0.14);
+  --accent-line: rgba(61, 148, 234, 0.32);
+  --accent-ink: #06182b;
+
+  --live: #22d3d7;
+  --live-soft: rgba(34, 211, 215, 0.16);
+
+  --success: #34d39e;
+  --success-soft: rgba(52, 211, 158, 0.14);
+  --warn: #f5b544;
+  --warn-soft: rgba(245, 181, 68, 0.14);
+  --danger: #f2777a;
+  --danger-soft: rgba(242, 119, 122, 0.14);
+
+  color-scheme: dark;
 }
 
 * {
@@ -82,75 +140,69 @@ body {
 
 ::selection {
   background: var(--accent-soft);
-  color: var(--text);
+  color: var(--accent-hi);
 }
 
 /* Custom scrollbar — quiet, premium */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.14);
   border-radius: 999px;
-  border: 2px solid transparent;
+  border: 3px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(15, 23, 42, 0.24);
   background-clip: content-box;
 }
 
 @layer components {
   /* Card — the base surface for the whole app */
   .surface {
-    @apply rounded-lg border border-border bg-card;
+    @apply rounded-xl border border-border bg-card;
   }
 
-  /* Green signal glow — behind live/interactive orbs only (the accent, used sparingly) */
+  /* Accent glow — a restrained blue bloom behind live/interactive orbs only. */
   .accent-glow {
     background: radial-gradient(
       60% 60% at 50% 40%,
-      rgba(124, 255, 178, 0.20) 0%,
-      rgba(124, 255, 178, 0.05) 45%,
+      rgba(31, 122, 212, 0.18) 0%,
+      rgba(31, 122, 212, 0.05) 45%,
       transparent 70%
     );
   }
 
-  /* Ambient depth blooms — decorative only (muted indigo + teal), never the accent.
-     Position off-center behind sections; keep opacity low so it reads as depth. */
+  /* Ambient depth blooms — decorative only, very subtle brand tints (blue + teal)
+     washed across the light canvas. Kept low-opacity so they read as calm depth,
+     never as gradients or blobs. */
   .bloom-indigo {
-    background: radial-gradient(50% 50% at 50% 50%, rgba(99, 102, 241, 0.16) 0%, transparent 70%);
+    background: radial-gradient(50% 50% at 50% 50%, rgba(31, 122, 212, 0.10) 0%, transparent 70%);
   }
   .bloom-teal {
-    background: radial-gradient(50% 50% at 50% 50%, rgba(45, 212, 191, 0.12) 0%, transparent 70%);
+    background: radial-gradient(50% 50% at 50% 50%, rgba(21, 199, 203, 0.08) 0%, transparent 70%);
   }
 
-  /* Glassmorphism — frosted translucent surfaces layered over the ambient blooms
-     so the depth shows through. Two weights: cards vs. structural rails/panels.
-     A faint top-edge sheen (light catching the lip of the glass) reads premium and
-     costs no layout — it fades out over the first ~96px so tall rails only glint
-     at the very top while small cards get a gentle wash. */
+  /* Frosted structural surfaces — restrained (the brief avoids heavy glass): mostly
+     opaque white with a light blur so content underneath only softly shows through
+     when scrolling. Two weights: cards vs. rails/panels. */
   .glass {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0) 96px),
-      rgba(19, 19, 24, 0.55);
-    backdrop-filter: blur(16px) saturate(140%);
-    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
   }
   .glass-panel {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 128px),
-      rgba(12, 12, 16, 0.5);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
   }
 
   /* Elevation on intent — the single source of truth for interactive-surface
-     motion. Any surface (card, tile, pricing plan) opts in with `hover-lift` so
-     the whole app rises, strengthens its border, and deepens its shadow on the
-     same curve. Reduced-motion collapses the transition (see media query above);
-     the 2px settle is imperceptible without it. */
+     motion. Any surface opts in with `hover-lift` so the whole app rises,
+     strengthens its border, and deepens its (soft, controlled) shadow on the same
+     curve. Reduced-motion collapses the transition (see media query above). */
   .hover-lift {
     transition:
       transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1),
@@ -161,8 +213,8 @@ body {
     transform: translateY(-2px);
     border-color: var(--border-strong);
     box-shadow:
-      0 1px 0 rgba(255, 255, 255, 0.05) inset,
-      0 18px 44px -14px rgba(0, 0, 0, 0.55);
+      0 1px 0 rgba(255, 255, 255, 0.6) inset,
+      0 18px 40px -18px rgba(15, 23, 42, 0.22);
   }
   /* Graceful fallback where backdrop-filter is unsupported: stay legible (opaque). */
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -175,12 +227,13 @@ body {
   }
   /* Loading skeleton shimmer */
   .skeleton {
-    @apply relative overflow-hidden rounded-md bg-white/[0.04];
+    @apply relative overflow-hidden rounded-md;
+    background: rgba(15, 23, 42, 0.05);
   }
   .skeleton::after {
     content: "";
     @apply absolute inset-0;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
     animation: shimmer 1.4s infinite;
     transform: translateX(-100%);
   }
@@ -188,7 +241,7 @@ body {
   /* Grid backdrop for the workflow canvas */
   .canvas-grid {
     background-color: var(--bg);
-    background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-image: radial-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px);
     background-size: 22px 22px;
   }
 }

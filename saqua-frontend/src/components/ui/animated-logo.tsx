@@ -83,11 +83,11 @@ export function AnimatedLogo({
                   <motion.div
                     animate={{ y: [0, -3, 0] }}
                     transition={{ duration: 2.6, delay: c.delay, repeat: Infinity, ease: "easeInOut" }}
-                    className="glass flex w-11 flex-col gap-1 rounded-[7px] border border-accent-line/50 p-1.5 shadow-pop"
+                    className="flex w-11 flex-col gap-1 rounded-[7px] border border-accent-line/50 bg-card p-1.5 shadow-pop"
                   >
                     <span className="h-1 w-6 rounded-full bg-accent/70" />
-                    <span className="h-1 w-8 rounded-full bg-white/25" />
-                    <span className="h-1 w-4 rounded-full bg-white/15" />
+                    <span className="h-1 w-8 rounded-full bg-border-strong" />
+                    <span className="h-1 w-4 rounded-full bg-border" />
                   </motion.div>
                 </motion.div>
               ))}

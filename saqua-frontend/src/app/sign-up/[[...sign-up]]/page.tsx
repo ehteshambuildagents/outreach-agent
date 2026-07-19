@@ -15,21 +15,21 @@ export default function SignUpPage() {
           forceRedirectUrl="/dashboard"
           appearance={{
             variables: {
-              colorPrimary: "#7c5cff",
-              colorBackground: "#111116",
-              colorInputBackground: "rgba(255,255,255,0.03)",
-              colorInputText: "#f4f2ff",
-              colorText: "#f4f2ff",
-              colorTextSecondary: "#9b96ad",
-              borderRadius: "8px",
+              colorPrimary: "#1f7ad4",
+              colorBackground: "#ffffff",
+              colorInputBackground: "#ffffff",
+              colorInputText: "#0f172a",
+              colorText: "#0f172a",
+              colorTextSecondary: "#64748b",
+              borderRadius: "12px",
             },
             elements: {
-              cardBox: "border border-border bg-panel shadow-card",
+              cardBox: "border border-border bg-card shadow-pop",
               footer: "hidden",
             },
           }}
         />
-        <p className="mx-auto mt-4 max-w-xs text-center text-xs text-text-muted">
+        <p className="mx-auto mt-4 max-w-xs text-center text-xs text-muted">
           By creating an account you agree to our{" "}
           <Link className="underline" href="/terms">
             Terms of Service

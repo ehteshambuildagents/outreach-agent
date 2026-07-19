@@ -14,16 +14,16 @@ export default function SignInPage() {
           forceRedirectUrl="/dashboard"
           appearance={{
             variables: {
-              colorPrimary: "#7c5cff",
-              colorBackground: "#111116",
-              colorInputBackground: "rgba(255,255,255,0.03)",
-              colorInputText: "#f4f2ff",
-              colorText: "#f4f2ff",
-              colorTextSecondary: "#9b96ad",
-              borderRadius: "8px",
+              colorPrimary: "#1f7ad4",
+              colorBackground: "#ffffff",
+              colorInputBackground: "#ffffff",
+              colorInputText: "#0f172a",
+              colorText: "#0f172a",
+              colorTextSecondary: "#64748b",
+              borderRadius: "12px",
             },
             elements: {
-              cardBox: "border border-border bg-panel shadow-card",
+              cardBox: "border border-border bg-card shadow-pop",
               footer: "hidden",
             },
           }}

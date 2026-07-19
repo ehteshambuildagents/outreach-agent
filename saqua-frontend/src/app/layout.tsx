@@ -1,5 +1,5 @@
 import { Analytics } from "@vercel/analytics/next";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { VisibilityRepaint } from "@/components/shell/visibility-repaint";
 import "./globals.css";
@@ -10,6 +10,11 @@ export const metadata: Metadata = {
     "Saqua finds the right founders, writes personalized outreach, and automates follow-ups that actually get replies.",
 };
 
+export const viewport: Viewport = {
+  themeColor: "#f5f7fa",
+  colorScheme: "light",
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider
@@ -18,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       signInFallbackRedirectUrl="/ai"
       signUpFallbackRedirectUrl="/ai"
     >
-      <html lang="en" className="dark">
+      <html lang="en" className="bg-bg">
         <head>
           {/* Fonts load at runtime so production builds never fetch Google Fonts.
               Geist (sans) + Geist Mono (data) + Newsreader (upright serif, no italic
