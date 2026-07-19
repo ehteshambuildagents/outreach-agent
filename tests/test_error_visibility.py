@@ -7,6 +7,7 @@ access.
     python -m unittest tests.test_error_visibility
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -112,6 +113,52 @@ class AdminApiTests(unittest.TestCase):
             r = self.client.get("/api/admin/usage", headers={"X-Admin-Token": "s3cret"})
         self.assertEqual(r.status_code, 200)
         self.assertIn("users", r.json())
+
+    def test_echo_ip_requires_token(self):
+        with mock.patch.dict(os.environ, {"SAQUA_ADMIN_TOKEN": ""}, clear=False):
+            self.assertEqual(self.client.get("/api/admin/echo-ip").status_code, 404)
+        with mock.patch.dict(os.environ, {"SAQUA_ADMIN_TOKEN": "s3cret"}, clear=False):
+            self.assertEqual(
+                self.client.get("/api/admin/echo-ip",
+                                headers={"X-Admin-Token": "wrong"}).status_code, 403)
+
+    def test_echo_ip_reports_chain_and_what_the_limiter_would_key_on(self):
+        """The whole point of the endpoint: show the raw chain next to the address
+        the limiter derives from it, so the two can be compared against a known
+        caller instead of guessed at."""
+        with mock.patch.dict(os.environ, {"SAQUA_ADMIN_TOKEN": "s3cret",
+                                          "TRUSTED_PROXY_HOPS": "1"}, clear=False):
+            r = self.client.get("/api/admin/echo-ip",
+                                headers={"X-Admin-Token": "s3cret",
+                                         "X-Forwarded-For": "9.9.9.9, 10.0.0.5"})
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["xff_parts"], ["9.9.9.9", "10.0.0.5"])
+        self.assertEqual(body["xff_len"], 2)
+        self.assertEqual(body["trusted_proxy_hops"], 1)
+        # With one trusted hop the limiter takes the rightmost entry. This is the
+        # behaviour that produced infrastructure-keyed buckets in production; the
+        # endpoint's job is to make that visible rather than to be correct itself.
+        self.assertEqual(body["client_ip_computed"], "10.0.0.5")
+        self.assertEqual(body["client_ip_headers"]["x-forwarded-for"],
+                         "9.9.9.9, 10.0.0.5")
+
+    def test_echo_ip_never_echoes_credential_headers(self):
+        """It reports unknown headers by NAME so a platform header can be spotted.
+        Names only: whoever holds the admin token must not get an Authorization or
+        Cookie value reflected back at them."""
+        with mock.patch.dict(os.environ, {"SAQUA_ADMIN_TOKEN": "s3cret"}, clear=False):
+            r = self.client.get("/api/admin/echo-ip",
+                                headers={"X-Admin-Token": "s3cret",
+                                         "Authorization": "Bearer super-secret-value",
+                                         "Cookie": "session=super-secret-cookie"})
+        body = r.json()
+        blob = json.dumps(body)
+        self.assertNotIn("super-secret-value", blob)
+        self.assertNotIn("super-secret-cookie", blob)
+        lowered = [h.lower() for h in body["other_header_names"]]
+        self.assertIn("authorization", lowered)
+        self.assertIn("cookie", lowered)
 
 
 if __name__ == "__main__":

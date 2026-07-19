@@ -75,6 +75,51 @@ def register(app) -> None:
         # address, and an admin view has no use for it.
         return {"entries": [{k: v for k, v in r.items() if k != "token"} for r in rows]}
 
+    # ── Proxy / client-IP diagnostic ───────────────────────────────────
+    @router.get("/echo-ip")
+    def echo_ip(request: Request):
+        """Report the raw forwarding chain this request arrived with.
+
+        Exists because the per-IP rate limiter was found bucketing on infrastructure
+        addresses in production rather than on real clients: three requests produced
+        three distinct ``rl:wl:ip:*`` buckets, none of them the caller's address. The
+        code is right in isolation and its unit tests pass on synthetic chains — what
+        was never established is the SHAPE of the chain this deployment actually
+        receives, which decides whether TRUSTED_PROXY_HOPS is the fix at all.
+
+        So this returns the raw header alongside what ``client_ip`` currently makes of
+        it, letting the two be compared against a known caller address instead of
+        guessed at. Values are returned only for headers that are known to carry a
+        client address; every other header is reported by NAME only, so an unexpected
+        platform header can be spotted without this endpoint echoing an Authorization
+        or Cookie value back to whoever holds the admin token.
+        """
+        _require_admin(request)
+        from server import waitlist_api
+
+        known = ("x-forwarded-for", "x-real-ip", "forwarded", "cf-connecting-ip",
+                 "true-client-ip", "x-client-ip", "x-vercel-forwarded-for",
+                 "x-envoy-external-address", "fly-client-ip")
+        values = {h: request.headers.get(h) for h in known if request.headers.get(h)}
+
+        xff = request.headers.get("x-forwarded-for") or ""
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        hops = waitlist_api.trusted_proxy_hops()
+        return {
+            "client_ip_headers": values,
+            "xff_parts": parts,
+            "xff_len": len(parts),
+            # The peer as the ASGI server sees it — the last hop, always trustworthy.
+            "peer": request.client.host if request.client else None,
+            "trusted_proxy_hops": hops,
+            # What the limiter would key on right now. Compare against the address
+            # the call was actually made from: if they differ, the bucket is wrong.
+            "client_ip_computed": waitlist_api.client_ip(request),
+            # Names only — never values. See docstring.
+            "other_header_names": sorted(
+                h for h in request.headers.keys() if h.lower() not in known),
+        }
+
     # ── Task 3: request-access gating ──────────────────────────────────
     @router.get("/access/pending")
     def pending(request: Request):
