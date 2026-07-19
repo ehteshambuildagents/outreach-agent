@@ -66,7 +66,13 @@ def _researched(conv, text, store=None, user_id=None):
 
 class ApiTests(unittest.TestCase):
     def test_health(self):
-        self.assertEqual(_client().get("/api/health").json(), {"ok": True})
+        # Asserts the contract, not an exact dict: /api/health also reports the
+        # coordination mode and whether this process thinks it is production, which
+        # is how a deploy is checked before the public waitlist endpoint is trusted.
+        body = _client().get("/api/health").json()
+        self.assertIs(body["ok"], True)
+        self.assertIn(body["redis"], ("upstash", "in-memory"))
+        self.assertIsInstance(body["production"], bool)
 
     def test_create_get_delete(self):
         c = _client()

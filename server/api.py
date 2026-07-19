@@ -403,7 +403,17 @@ def require_approved_user(request: Request, user: str = Depends(require_user)) -
 # ── Routes ─────────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health():
-    return {"ok": True}
+    """Liveness plus the two facts that decide whether the public waitlist endpoint
+    is safe to serve: whether coordination is shared across instances, and whether
+    this process considers itself production. Exposed unauthenticated on purpose so
+    a deploy can be verified from outside; it reveals no secrets and no counts."""
+    from automation import redis
+    from config import settings
+    return {
+        "ok": True,
+        "redis": "upstash" if redis.configured() else "in-memory",
+        "production": settings.is_production(),
+    }
 
 
 @app.get("/api/public-config")
@@ -536,6 +546,12 @@ admin_api.register(app)                          # internal ops views (X-Admin-T
 automation_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
 oauth_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
 campaign_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
+
+# Public (unauthenticated) waitlist. Deliberately NOT given _rl_read/_rl_write:
+# those count per-process and key on the proxy's IP, which is not good enough for
+# an anonymous write endpoint. It brings its own Redis-backed, fail-closed limiter.
+from server import waitlist_api  # noqa: E402
+waitlist_api.register(app)
 
 
 # ── Background worker (opt-in; a real deployment runs one) ──────────────

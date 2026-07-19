@@ -76,6 +76,23 @@ function logProxy(level: "info" | "error", event: string, data: Record<string, u
   }
 }
 
+/**
+ * The caller's real address as seen by our own edge.
+ *
+ * A proxy APPENDS the peer it saw, so the RIGHTMOST entry of the incoming
+ * X-Forwarded-For is the one our platform added — the only entry a client cannot
+ * forge. Everything to its left is attacker-supplied. Returns "" when there is no
+ * trustworthy value (e.g. local dev with no edge in front).
+ */
+function clientIp(request: NextRequest): string {
+  const xff = request.headers.get("x-forwarded-for") || "";
+  const parts = xff.split(",").map((p) => p.trim()).filter(Boolean);
+  if (parts.length) {
+    return parts[parts.length - 1];
+  }
+  return (request.headers.get("x-real-ip") || "").trim();
+}
+
 function forwardedHeaders(request: NextRequest, traceId: string): Headers {
   const headers = new Headers();
   request.headers.forEach((value, key) => {
@@ -84,6 +101,19 @@ function forwardedHeaders(request: NextRequest, traceId: string): Headers {
       headers.set(key, value);
     }
   });
+  // Collapse X-Forwarded-For to the single trustworthy value before it reaches
+  // the backend. Without this the backend sees THIS proxy as the client (so every
+  // visitor shares one rate-limit bucket) and any header the browser invented
+  // passes straight through (so the limit is trivially bypassed). When no
+  // trustworthy value exists we DELETE the header rather than forward a forged
+  // one — the backend then falls back to the proxy address, which is
+  // over-restrictive but never permissive.
+  const ip = clientIp(request);
+  if (ip) {
+    headers.set("x-forwarded-for", ip);
+  } else {
+    headers.delete("x-forwarded-for");
+  }
   headers.set("x-forwarded-host", request.headers.get("host") || "");
   headers.set("x-forwarded-proto", request.nextUrl.protocol.replace(":", ""));
   headers.set("x-request-id", traceId);

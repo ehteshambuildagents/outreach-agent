@@ -58,6 +58,23 @@ def register(app) -> None:
         limits.resume(body.user_id)
         return {"ok": True, "user": limits.usage_snapshot(body.user_id)}
 
+    # ── Waitlist (pre-launch) ──────────────────────────────────────────
+    @router.get("/waitlist")
+    def waitlist_counts(request: Request):
+        """Counts per opt-in status. Only 'subscribed' are ever broadcast to."""
+        _require_admin(request)
+        import waitlist
+        return {"counts": waitlist.counts()}
+
+    @router.get("/waitlist/list")
+    def waitlist_list(request: Request, status: str | None = None):
+        _require_admin(request)
+        from waitlist import store as wl_store
+        rows = wl_store.list_by_status(status)
+        # Never return the per-row link token: it authorises unsubscribing that
+        # address, and an admin view has no use for it.
+        return {"entries": [{k: v for k, v in r.items() if k != "token"} for r in rows]}
+
     # ── Task 3: request-access gating ──────────────────────────────────
     @router.get("/access/pending")
     def pending(request: Request):
