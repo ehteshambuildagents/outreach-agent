@@ -574,6 +574,12 @@ campaign_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
 from server import waitlist_api  # noqa: E402
 waitlist_api.register(app)
 
+# Public (unauthenticated) contact form. Sends a message to the support inbox
+# rather than opening the visitor's mail client. Reuses the waitlist limiter and
+# shared-Redis guard (see server/contact_api.py).
+from server import contact_api  # noqa: E402
+contact_api.register(app)
+
 
 # ── Background worker (opt-in; a real deployment runs one) ──────────────
 # Off by default so importing the app (tests, one-off scripts) never spawns a
