@@ -18,7 +18,7 @@ export function CampaignsCard({ data }: { data: CampaignsCardData }) {
     <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
       <Card className="overflow-hidden">
         <div className="flex items-center gap-2 border-b border-border-faint px-5 py-3">
-          <Megaphone className="size-4 text-accent-hi" />
+          <Megaphone className="size-4 text-accent" />
           <span className="text-sm font-medium text-text">
             {data.count} campaign{data.count === 1 ? "" : "s"}
           </span>
@@ -32,7 +32,7 @@ export function CampaignsCard({ data }: { data: CampaignsCardData }) {
                 {c.updated_at ? <div className="text-[11px] text-muted">{timeAgo(c.updated_at)}</div> : null}
               </div>
               {c.launched > 0 && (
-                <span className="shrink-0 font-mono text-[11px] text-accent-hi">{c.launched} live</span>
+                <span className="shrink-0 font-mono text-[11px] text-accent">{c.launched} live</span>
               )}
               {c.status && <StatusPill state={c.status} />}
             </div>

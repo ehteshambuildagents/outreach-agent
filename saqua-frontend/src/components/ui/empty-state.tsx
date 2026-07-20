@@ -17,7 +17,7 @@ export function EmptyState({
     <Card className="overflow-hidden border-dashed">
       <div className="relative p-8 text-center">
         <div className="accent-glow absolute inset-0 opacity-40" />
-        <div className="relative mx-auto mb-4 grid size-12 place-items-center rounded-xl border border-accent-line bg-accent-soft text-accent-hi shadow-glow">
+        <div className="relative mx-auto mb-4 grid size-12 place-items-center rounded-xl border border-accent-line bg-accent-soft text-accent shadow-glow">
           <Icon className="size-5" />
         </div>
         <div className="relative text-sm font-semibold text-text">{title}</div>

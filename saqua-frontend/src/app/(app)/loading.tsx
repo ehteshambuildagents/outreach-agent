@@ -27,11 +27,11 @@ export default function AppLoading() {
         <Card>
           <CardHeader>
             <CardTitle>Preparing workspace</CardTitle>
-            <Sparkles className="size-4 animate-pulse-soft text-accent-hi" />
+            <Sparkles className="size-4 animate-pulse-soft text-accent" />
           </CardHeader>
           <CardContent className="space-y-3">
             {["Reading campaign state...", "Loading prospects...", "Preparing AI steps..."].map((line) => (
-              <div key={line} className="flex items-center gap-3 rounded-md border border-border-faint bg-white/[0.02] p-3">
+              <div key={line} className="flex items-center gap-3 rounded-md border border-border-faint bg-black/[0.02] p-3">
                 <Skeleton className="size-6 rounded-full" />
                 <div className="flex-1 text-xs text-muted">{line}</div>
               </div>
@@ -46,7 +46,7 @@ export default function AppLoading() {
           </CardHeader>
           <CardContent className="space-y-3">
             {[0, 1, 2, 3, 4].map((row) => (
-              <div key={row} className="grid gap-3 rounded-md border border-border-faint bg-white/[0.02] p-3 md:grid-cols-[1fr_100px_90px]">
+              <div key={row} className="grid gap-3 rounded-md border border-border-faint bg-black/[0.02] p-3 md:grid-cols-[1fr_100px_90px]">
                 <Skeleton className="h-5" />
                 <Skeleton className="h-5" />
                 <Skeleton className="h-5" />

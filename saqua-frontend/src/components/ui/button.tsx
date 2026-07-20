@@ -6,16 +6,16 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "relative isolate inline-flex items-center justify-center gap-2 overflow-hidden whitespace-nowrap rounded-sm text-sm font-medium transition-all duration-200 ease-smooth before:absolute before:inset-0 before:-z-10 before:scale-0 before:rounded-full before:bg-white/10 before:opacity-0 before:transition-all before:duration-300 hover:before:scale-150 hover:before:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
+  "relative isolate inline-flex items-center justify-center gap-2 overflow-hidden whitespace-nowrap rounded-sm text-sm font-medium transition-all duration-200 ease-smooth before:absolute before:inset-0 before:-z-10 before:scale-0 before:rounded-full before:bg-black/[0.06] before:opacity-0 before:transition-all before:duration-300 hover:before:scale-150 hover:before:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-line disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         primary:
-          "bg-accent text-[color:var(--accent-ink)] font-semibold shadow-[0_1px_0_rgba(255,255,255,.12)_inset] hover:bg-accent-hi hover:-translate-y-px active:translate-y-0",
+          "bg-accent text-[color:var(--accent-ink)] font-semibold shadow-[0_1px_2px_rgba(79,90,247,.35)] hover:bg-accent-hi hover:-translate-y-px hover:shadow-[0_8px_22px_rgba(79,90,247,.32)] active:translate-y-0 before:bg-white/15",
         secondary:
-          "border border-border bg-white/[0.03] text-text hover:-translate-y-px hover:border-border-strong hover:bg-white/[0.06]",
-        ghost: "text-text-2 hover:bg-white/[0.05] hover:text-text",
-        outline: "border border-border text-text hover:-translate-y-px hover:bg-white/[0.04]",
+          "border border-border bg-card text-text shadow-[0_1px_2px_rgba(17,17,17,.04)] hover:-translate-y-px hover:border-border-strong hover:bg-card-2",
+        ghost: "text-text-2 hover:bg-black/[0.05] hover:text-text",
+        outline: "border border-border text-text hover:-translate-y-px hover:bg-black/[0.04]",
         danger: "border border-danger-soft bg-danger-soft text-danger hover:-translate-y-px hover:bg-danger/20",
       },
       size: {

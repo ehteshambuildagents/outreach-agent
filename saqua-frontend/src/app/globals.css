@@ -4,49 +4,59 @@
 
 /*
   Saqua — design tokens (single source of truth).
-  Dark, with depth (ambient indigo + teal blooms), not flat black. ONE accent:
-  a pale signal-green used only for interactive + live/verified state. Fonts:
-  Geist (sans), Geist Mono (data), Newsreader (upright serif — reserved for the
-  single case of showing Saqua's own generated email copy).
+  Warm-light system in the gosollo.com language: bone-cream canvas, near-black
+  ink, and TWO temperature-opposed accents — indigo (interactive / primary) and
+  amber (warmth / energy) — bridged by one signature gradient. Fonts: General Sans
+  (display), Inter (body/UI), Geist Mono (data), Newsreader (Saqua's own generated
+  email copy — the single serif treatment).
 */
 :root {
   /* Type — loaded at runtime via <link> in layout.tsx (no build-time fetch) */
-  --font-sans: "Geist", system-ui;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "General Sans", "Inter", system-ui, sans-serif;
   --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
   --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
-  /* Surfaces — near-black canvas up a precise neutral ramp */
-  --bg: #0a0a0c;            /* app canvas — near-black, not flat black */
-  --panel: #0c0c10;         /* sidebar / sunken rails */
-  --card: #131318;          /* cards / surfaces */
-  --card-2: #17171e;        /* hover / raised surface */
-  --raised: #1e1e26;        /* overlay controls, inputs */
+  /* Surfaces — bone-cream canvas, white cards */
+  --bg: #f6f4f2;            /* page canvas (cream) */
+  --panel: #ffffff;         /* sidebar / rails / topbar */
+  --card: #ffffff;          /* cards / surfaces */
+  --card-2: #fbfaf8;        /* hover / raised surface */
+  --raised: #ffffff;        /* overlay controls, inputs */
 
-  /* Hairline borders (white at fixed opacities) */
-  --border-faint: rgba(255, 255, 255, 0.05);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  /* Hairline borders (ink at fixed opacities on a light ground) */
+  --border-faint: rgba(17, 17, 17, 0.05);
+  --border: rgba(17, 17, 17, 0.08);
+  --border-strong: rgba(17, 17, 17, 0.12);
 
   /* Ink ramp */
-  --text: #ececef;
-  --text-2: #9a9ba4;
-  --muted: #6e6f79;
-  --faint: #4c4d56;
+  --text: #111111;
+  --text-2: #41424a;
+  --muted: #6c6d76;
+  --faint: #9a9ba3;
 
-  /* Accent — the single hue (pale signal-green). Interactive + live/verified only. */
-  --accent: #7cffb2;
-  --accent-hi: #99ffc4;                        /* brighter — hover + accent text on dark */
-  --accent-soft: rgba(124, 255, 178, 0.12);
-  --accent-line: rgba(124, 255, 178, 0.30);
-  --accent-ink: #06140c;                        /* near-black ink on the pale-green accent */
+  /* Accent — indigo (interactive + primary). */
+  --accent: #4f5af7;
+  --accent-hi: #6b74ff;                        /* hover / brighter */
+  --accent-soft: rgba(79, 90, 247, 0.10);
+  --accent-line: rgba(79, 90, 247, 0.30);
+  --accent-ink: #ffffff;                        /* ink on the indigo accent */
 
-  /* Status — success IS the accent green (one "live/verified" signal); warn/danger stay semantic */
-  --success: #7cffb2;
-  --success-soft: rgba(124, 255, 178, 0.12);
-  --warn: #f5a623;
-  --warn-soft: rgba(245, 166, 35, 0.13);
-  --danger: #f2777a;
-  --danger-soft: rgba(242, 119, 122, 0.12);
+  /* Warm accent + the signature gradient device */
+  --amber: #f5a305;
+  --amber-soft: rgba(245, 163, 5, 0.12);
+  --peach: #fcd6bd;
+  --indigo-soft: #eeeffe;
+  --grad-brand: linear-gradient(97deg, #4f5af7 0%, #f5a305 168%);
+  --grad-brand-soft: linear-gradient(97deg, #4f5af7 0%, #f5a305 225%);
+
+  /* Status — real green for success; warn is the brand amber; danger warm red */
+  --success: #1f9254;
+  --success-soft: rgba(31, 146, 84, 0.12);
+  --warn: #f5a305;
+  --warn-soft: rgba(245, 163, 5, 0.14);
+  --danger: #d8564e;
+  --danger-soft: rgba(216, 86, 78, 0.10);
 
   --nav-h: 60px;
   --rail-w: 232px;
@@ -56,8 +66,7 @@
   border-color: var(--border);
 }
 
-/* Respect prefers-reduced-motion everywhere: collapse animations/transitions to
-   the end state instantly (framer-driven reveals handle this in JS separately). */
+/* Respect prefers-reduced-motion everywhere. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -69,15 +78,27 @@
   }
 }
 
+/* The canvas colour lives on <html> ONLY, and <body> must stay transparent.
+   If both carry it, html's propagates to the canvas and body's is left painting as
+   an ordinary element background — which paints AFTER negative z-index children,
+   silently burying every -z-10 glow on the site. */
+html {
+  background: var(--bg);
+}
+
 html,
 body {
   padding: 0;
   margin: 0;
-  background: var(--bg);
   color: var(--text);
-  font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Display font on real headings across the product (General Sans, tight). */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
 }
 
 ::selection {
@@ -85,19 +106,19 @@ body {
   color: var(--text);
 }
 
-/* Custom scrollbar — quiet, premium */
+/* Custom scrollbar — quiet, on light */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(17, 17, 17, 0.14);
   border-radius: 999px;
-  border: 2px solid transparent;
+  border: 3px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(17, 17, 17, 0.24);
   background-clip: content-box;
 }
 
@@ -107,50 +128,122 @@ body {
     @apply rounded-lg border border-border bg-card;
   }
 
-  /* Green signal glow — behind live/interactive orbs only (the accent, used sparingly) */
+  /* Two-tone / gradient emphasis for display headings */
+  .grad-text {
+    background: var(--grad-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Animated variant: the same brand gradient, slowly panning so an emphasised
+     word has a living sheen rather than a flat fill. Falls back to a static fill
+     under prefers-reduced-motion (handled below). */
+  .grad-text-anim {
+    background: var(--grad-brand);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: grad-pan 6s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .grad-text-anim {
+      animation: none;
+    }
+  }
+  @keyframes grad-pan {
+    0%,
+    100% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+  }
+
+  /* Gentle idle float for small decorative marks (hero badges, accents). */
+  .float-soft {
+    animation: float-soft 5.5s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .float-soft {
+      animation: none;
+    }
+  }
+  @keyframes float-soft {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-5px);
+    }
+  }
+
+  /* The signature page light (gosollo parity). An OPAQUE amber → peach → canvas
+     ellipse: because the last stop is exactly --bg it dissolves into the page with
+     no seam, so it can run at full saturation where an alpha fade would go muddy.
+     Meant to be used in an 806px-tall box pushed 461px past the page edge — the hot
+     centre stays just out of frame and only the falloff shows. Mirrored top/bottom. */
+  .page-light {
+    background: radial-gradient(
+      ellipse 50% 50% at 50% 50%,
+      #f5a305 0%,
+      #fcd6bd 52.518%,
+      #f6f4f2 100%
+    );
+  }
+
+  /* Warm hero glow (marketing heroes) + cool variant */
+  .hero-glow {
+    background: radial-gradient(58% 46% at 50% -4%, rgba(245, 163, 5, 0.50) 0%, rgba(252, 214, 189, 0.42) 40%, rgba(246, 244, 242, 0) 74%);
+  }
+  .hero-glow-cool {
+    background: radial-gradient(58% 48% at 50% -4%, rgba(122, 110, 247, 0.42) 0%, rgba(200, 196, 250, 0.40) 42%, rgba(246, 244, 242, 0) 76%);
+  }
+
+  /* Signature gradient surface (CTA cards, gradient chips) */
+  .cta-gradient {
+    background: var(--grad-brand);
+  }
+
+  /* Indigo signal glow — behind live/interactive orbs (the accent, sparingly) */
   .accent-glow {
     background: radial-gradient(
       60% 60% at 50% 40%,
-      rgba(124, 255, 178, 0.20) 0%,
-      rgba(124, 255, 178, 0.05) 45%,
+      rgba(79, 90, 247, 0.18) 0%,
+      rgba(79, 90, 247, 0.05) 45%,
       transparent 70%
     );
   }
 
-  /* Ambient depth blooms — decorative only (muted indigo + teal), never the accent.
-     Position off-center behind sections; keep opacity low so it reads as depth. */
+  /* Ambient depth blooms — warm amber + cool indigo, decorative, low opacity.
+     (.bloom-teal is repurposed to warm amber to carry the gosollo warm/cool blend.) */
   .bloom-indigo {
-    background: radial-gradient(50% 50% at 50% 50%, rgba(99, 102, 241, 0.16) 0%, transparent 70%);
+    background: radial-gradient(50% 50% at 50% 50%, rgba(79, 90, 247, 0.13) 0%, transparent 70%);
   }
   .bloom-teal {
-    background: radial-gradient(50% 50% at 50% 50%, rgba(45, 212, 191, 0.12) 0%, transparent 70%);
+    background: radial-gradient(50% 50% at 50% 50%, rgba(245, 163, 5, 0.16) 0%, transparent 70%);
   }
 
-  /* Glassmorphism — frosted translucent surfaces layered over the ambient blooms
-     so the depth shows through. Two weights: cards vs. structural rails/panels.
-     A faint top-edge sheen (light catching the lip of the glass) reads premium and
-     costs no layout — it fades out over the first ~96px so tall rails only glint
-     at the very top while small cards get a gentle wash. */
+  /* Frosted white surfaces on the cream canvas. Two weights: cards vs rails. */
   .glass {
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0) 96px),
-      rgba(19, 19, 24, 0.55);
-    backdrop-filter: blur(16px) saturate(140%);
-    -webkit-backdrop-filter: blur(16px) saturate(140%);
+      linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.62) 120px),
+      rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(16px) saturate(130%);
+    -webkit-backdrop-filter: blur(16px) saturate(130%);
   }
   .glass-panel {
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 128px),
-      rgba(12, 12, 16, 0.5);
-    backdrop-filter: blur(22px) saturate(140%);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
+      linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.6) 160px),
+      rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(20px) saturate(130%);
+    -webkit-backdrop-filter: blur(20px) saturate(130%);
   }
 
-  /* Elevation on intent — the single source of truth for interactive-surface
-     motion. Any surface (card, tile, pricing plan) opts in with `hover-lift` so
-     the whole app rises, strengthens its border, and deepens its shadow on the
-     same curve. Reduced-motion collapses the transition (see media query above);
-     the 2px settle is imperceptible without it. */
+  /* Elevation on intent — cards rise, strengthen border, deepen shadow on hover. */
   .hover-lift {
     transition:
       transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1),
@@ -158,13 +251,13 @@ body {
       box-shadow 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
   }
   .hover-lift:hover {
-    transform: translateY(-2px);
+    transform: translateY(-3px);
     border-color: var(--border-strong);
     box-shadow:
-      0 1px 0 rgba(255, 255, 255, 0.05) inset,
-      0 18px 44px -14px rgba(0, 0, 0, 0.55);
+      0 1px 0 rgba(255, 255, 255, 0.7) inset,
+      0 22px 60px -20px rgba(17, 17, 17, 0.18);
   }
-  /* Graceful fallback where backdrop-filter is unsupported: stay legible (opaque). */
+  /* Graceful fallback where backdrop-filter is unsupported: stay opaque. */
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
     .glass {
       background: var(--card);
@@ -175,12 +268,12 @@ body {
   }
   /* Loading skeleton shimmer */
   .skeleton {
-    @apply relative overflow-hidden rounded-md bg-white/[0.04];
+    @apply relative overflow-hidden rounded-md bg-black/[0.05];
   }
   .skeleton::after {
     content: "";
     @apply absolute inset-0;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+    background: linear-gradient(90deg, transparent, rgba(17, 17, 17, 0.04), transparent);
     animation: shimmer 1.4s infinite;
     transform: translateX(-100%);
   }
@@ -188,14 +281,13 @@ body {
   /* Grid backdrop for the workflow canvas */
   .canvas-grid {
     background-color: var(--bg);
-    background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-image: radial-gradient(rgba(17, 17, 17, 0.05) 1px, transparent 1px);
     background-size: 22px 22px;
   }
 }
 
 /* One-frame compositor invalidation (see VisibilityRepaint): drop backdrop-filter
-   on restore so Chrome re-composites the glass layers instead of showing a stale
-   frame. Outside @layer so it reliably overrides the utilities above. */
+   on restore so Chrome re-composites the glass layers instead of a stale frame. */
 html.force-repaint .glass,
 html.force-repaint .glass-panel,
 html.force-repaint [style*="backdrop-filter"] {

@@ -26,7 +26,7 @@ export function StatCard({ label, value, delta, deltaLabel = "vs last 7 days", i
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-text-2">{label}</span>
           {Icon && (
-            <span className="grid size-7 place-items-center rounded-md bg-white/[0.04] text-muted transition-colors group-hover:text-accent-hi">
+            <span className="grid size-7 place-items-center rounded-md bg-black/[0.04] text-muted transition-colors group-hover:text-accent">
               <Icon className="size-4" />
             </span>
           )}

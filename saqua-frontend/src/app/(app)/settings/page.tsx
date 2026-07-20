@@ -253,9 +253,9 @@ export default function SettingsPage() {
                   (item) => item.provider.toLowerCase() === provider && item.status === "connected" && !item.expired,
                 );
                 return (
-                  <div key={name} className="rounded-lg border border-border bg-white/[0.02] p-4">
+                  <div key={name} className="rounded-lg border border-border bg-black/[0.02] p-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="grid size-10 place-items-center rounded-md bg-accent-soft text-accent-hi">
+                      <div className="grid size-10 place-items-center rounded-md bg-accent-soft text-accent">
                         <Plug className="size-5" />
                       </div>
                       <Badge tone={connected ? "success" : "neutral"} dot>
@@ -336,7 +336,7 @@ export default function SettingsPage() {
                     <div className="mt-1 text-sm text-text-2">
                       {billing.prospects_used} of {billing.prospect_limit} prospects used
                     </div>
-                    <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.08]">
+                    <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-black/[0.08]">
                       <div
                         className="h-full rounded-full bg-accent transition-all"
                         style={{
@@ -368,15 +368,15 @@ export default function SettingsPage() {
               <Settings2 className="size-4 text-muted" />
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-text-2">
-              <div className="flex justify-between rounded-md border border-border-faint bg-white/[0.02] p-3">
+              <div className="flex justify-between rounded-md border border-border-faint bg-black/[0.02] p-3">
                 <span>Stop sequence on reply</span>
                 <Badge tone="success">On</Badge>
               </div>
-              <div className="flex justify-between rounded-md border border-border-faint bg-white/[0.02] p-3">
+              <div className="flex justify-between rounded-md border border-border-faint bg-black/[0.02] p-3">
                 <span>Guard review required</span>
                 <Badge tone="success">On</Badge>
               </div>
-              <div className="flex justify-between rounded-md border border-border-faint bg-white/[0.02] p-3">
+              <div className="flex justify-between rounded-md border border-border-faint bg-black/[0.02] p-3">
                 <span>Daily send cap</span>
                 <span className="text-text">75</span>
               </div>

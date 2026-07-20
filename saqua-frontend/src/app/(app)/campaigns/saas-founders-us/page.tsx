@@ -182,10 +182,10 @@ export default function CampaignDetailPage() {
                           transition={{ delay: index * 0.035 }}
                           className="relative flex gap-4"
                         >
-                          <div className={`z-10 grid size-10 place-items-center rounded-full border ${event.status === "completed" ? "border-success-soft bg-success-soft text-success shadow-glow" : event.status === "active" ? "border-accent-line bg-accent-soft text-accent-hi shadow-glow" : "border-border bg-card text-muted"}`}>
+                          <div className={`z-10 grid size-10 place-items-center rounded-full border ${event.status === "completed" ? "border-success-soft bg-success-soft text-success shadow-glow" : event.status === "active" ? "border-accent-line bg-accent-soft text-accent shadow-glow" : "border-border bg-card text-muted"}`}>
                             <Icon className="size-4" />
                           </div>
-                          <div className="flex-1 rounded-lg border border-border-faint bg-white/[0.02] p-4 transition-colors hover:border-border-strong">
+                          <div className="flex-1 rounded-lg border border-border-faint bg-black/[0.02] p-4 transition-colors hover:border-border-strong">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div>
                                 <div className="text-sm font-medium text-text">{event.title}</div>
@@ -232,7 +232,7 @@ export default function CampaignDetailPage() {
                       <p className="mt-1 text-xs leading-5 text-text-2">The automation backend stopped this sequence after an inbound reply.</p>
                     </div>
                   ) : (
-                    <div className="rounded-md border border-border-faint bg-white/[0.02] p-3 text-xs text-muted">
+                    <div className="rounded-md border border-border-faint bg-black/[0.02] p-3 text-xs text-muted">
                       No replies detected yet.
                     </div>
                   )}
@@ -314,7 +314,7 @@ function Metric({ label, value, accent, pill }: { label: string; value: string; 
   return (
     <Card className="p-4">
       <div className="text-xs text-muted">{label}</div>
-      <div className={`mt-2 text-2xl font-semibold ${accent ? "text-accent-hi" : "text-text"}`}>
+      <div className={`mt-2 text-2xl font-semibold ${accent ? "text-accent" : "text-text"}`}>
         {pill ? <StatusPill state={value} /> : value}
       </div>
     </Card>

@@ -31,7 +31,7 @@ export function DraftCard({
         active ? "border-accent-line bg-accent-soft/40" : "glass hover-lift border-border",
       )}
     >
-      <span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent-soft text-accent-hi">
+      <span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent-soft text-accent">
         <Mail className="size-4" />
       </span>
       <span className="min-w-0 flex-1">
@@ -46,7 +46,7 @@ export function DraftCard({
       <span
         className={cn(
           "inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium",
-          active ? "text-accent-hi" : "text-text-2 group-hover:text-text",
+          active ? "text-accent" : "text-text-2 group-hover:text-text",
         )}
       >
         {active ? <Check className="size-3.5" /> : <PanelRight className="size-3.5" />}

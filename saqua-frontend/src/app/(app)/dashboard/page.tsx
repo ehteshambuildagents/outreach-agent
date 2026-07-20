@@ -94,7 +94,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader>
             <CardTitle>Recent campaigns</CardTitle>
-            <Button asChild variant="ghost" size="sm" className="text-accent-hi hover:bg-transparent">
+            <Button asChild variant="ghost" size="sm" className="text-accent hover:bg-transparent">
               <Link href="/campaigns/saas-founders-us">
                 Open <ArrowRight className="size-3.5" />
               </Link>
@@ -112,7 +112,7 @@ export default function DashboardPage() {
                 <Link
                   key={campaign.id}
                   href="/campaigns/saas-founders-us"
-                  className="grid gap-3 px-5 py-4 transition-all duration-200 hover:bg-white/[0.02] md:grid-cols-[1fr_110px_90px_90px_90px]"
+                  className="grid gap-3 px-5 py-4 transition-all duration-200 hover:bg-black/[0.02] md:grid-cols-[1fr_110px_90px_90px_90px]"
                 >
                   <div>
                     <div className="text-sm font-medium text-text">{campaign.company || campaign.to || "Untitled campaign"}</div>
@@ -121,7 +121,7 @@ export default function DashboardPage() {
                   <StatusPill state={campaign.state} />
                   <div className="text-sm text-text-2">{campaign.current_step}/{campaign.total_steps} steps</div>
                   <div className="text-sm text-text-2">{campaign.reply_detected ? "reply" : "no reply"}</div>
-                  <div className="text-sm font-medium text-accent-hi">{campaign.retry_count} retries</div>
+                  <div className="text-sm font-medium text-accent">{campaign.retry_count} retries</div>
                 </Link>
               ))}
             </div>
@@ -171,7 +171,7 @@ export default function DashboardPage() {
               <Link
                 key={workflow.id}
                 href="/campaigns/saas-founders-us"
-                className="block rounded-md border border-border-faint bg-white/[0.02] p-3 transition-colors hover:border-border-strong"
+                className="block rounded-md border border-border-faint bg-black/[0.02] p-3 transition-colors hover:border-border-strong"
               >
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-sm font-medium text-text">{workflow.company || workflow.to || "Untitled campaign"}</div>

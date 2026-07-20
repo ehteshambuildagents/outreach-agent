@@ -37,7 +37,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           <button
             onClick={() => document.getElementById("topbar-search")?.focus()}
             aria-label="Search"
-            className="grid size-7 place-items-center rounded-md text-muted transition-colors hover:bg-white/[0.06] hover:text-text"
+            className="grid size-7 place-items-center rounded-md text-muted transition-colors hover:bg-black/[0.05] hover:text-text"
           >
             <Search className="size-[17px]" />
           </button>
@@ -45,7 +45,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
             onClick={onToggle}
             aria-label="Collapse sidebar"
             title="Collapse sidebar"
-            className="grid size-7 place-items-center rounded-md text-muted transition-colors hover:bg-white/[0.06] hover:text-text"
+            className="grid size-7 place-items-center rounded-md text-muted transition-colors hover:bg-black/[0.05] hover:text-text"
           >
             <PanelLeftClose className="size-[17px]" />
           </button>
@@ -63,11 +63,11 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                 data-tour={item.href === "/campaigns" ? "nav-campaigns" : undefined}
                 className={cn(
                   "group relative mb-0.5 flex items-center gap-3 rounded-md px-3 py-[7px] text-sm transition-colors duration-150",
-                  active ? "bg-accent-soft text-text" : "text-text-2 hover:bg-white/[0.04] hover:text-text",
+                  active ? "bg-accent-soft text-text" : "text-text-2 hover:bg-black/[0.04] hover:text-text",
                 )}
               >
                 {active && <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent" />}
-                <Icon className={cn("size-[17px] shrink-0", active ? "text-accent-hi" : "text-muted group-hover:text-text-2")} />
+                <Icon className={cn("size-[17px] shrink-0", active ? "text-accent" : "text-muted group-hover:text-text-2")} />
                 <span className="flex-1 truncate">{item.label}</span>
               </Link>
             );
@@ -81,7 +81,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
             onClick={startNew}
             aria-label="New chat"
             title="New chat"
-            className="grid size-6 place-items-center rounded text-muted transition-colors hover:bg-white/[0.06] hover:text-text"
+            className="grid size-6 place-items-center rounded text-muted transition-colors hover:bg-black/[0.05] hover:text-text"
           >
             <PenSquare className="size-3.5" />
           </button>
@@ -97,19 +97,19 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                 key={t.id}
                 className={cn(
                   "group mb-0.5 flex items-center gap-2.5 rounded-md px-3 py-1.5 text-sm transition-colors",
-                  onChat && t.id === activeId ? "bg-accent-soft text-text" : "text-text-2 hover:bg-white/[0.04] hover:text-text",
+                  onChat && t.id === activeId ? "bg-accent-soft text-text" : "text-text-2 hover:bg-black/[0.04] hover:text-text",
                 )}
               >
                 <button onClick={() => open(t.id)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
                   <MessageSquare
-                    className={cn("size-3.5 shrink-0", onChat && t.id === activeId ? "text-accent-hi" : "text-muted")}
+                    className={cn("size-3.5 shrink-0", onChat && t.id === activeId ? "text-accent" : "text-muted")}
                   />
                   <span className="truncate">{t.title || "New chat"}</span>
                 </button>
                 <button
                   onClick={() => remove(t.id)}
                   aria-label="Delete chat"
-                  className="grid size-6 shrink-0 place-items-center rounded text-muted opacity-0 transition-opacity hover:bg-white/[0.06] hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
+                  className="grid size-6 shrink-0 place-items-center rounded text-muted opacity-0 transition-opacity hover:bg-black/[0.05] hover:text-danger focus-visible:opacity-100 group-hover:opacity-100"
                 >
                   <Trash2 className="size-3.5" />
                 </button>
@@ -120,8 +120,8 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
 
         {/* User footer */}
         <div className="border-t border-border p-3">
-          <div className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-white/[0.04]">
-            <div className="grid size-8 place-items-center rounded-full border border-border bg-white/[0.06]">
+          <div className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-black/[0.04]">
+            <div className="grid size-8 place-items-center rounded-full border border-border bg-black/[0.04]">
               <UserButton afterSignOutUrl="/" />
             </div>
             <div className="min-w-0 flex-1">
@@ -143,7 +143,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
               aria-label={item.label}
               className={cn(
                 "flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1 py-2 text-[10px] transition-colors",
-                active ? "bg-accent-soft text-accent-hi" : "text-muted hover:bg-white/[0.04] hover:text-text-2",
+                active ? "bg-accent-soft text-accent" : "text-muted hover:bg-black/[0.04] hover:text-text-2",
               )}
             >
               <Icon className="size-4" />

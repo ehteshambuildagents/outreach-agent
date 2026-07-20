@@ -164,7 +164,7 @@ export default function CampaignDetailPage() {
           <Card className="overflow-hidden">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <WorkflowIcon className="size-4 text-accent-hi" /> Live workflows
+                <WorkflowIcon className="size-4 text-accent" /> Live workflows
               </CardTitle>
               <span className="text-xs text-muted">{c.workflows.length} running</span>
             </CardHeader>
@@ -221,14 +221,14 @@ function BackLink() {
 function ProviderSelect({ value, onChange }: { value: Provider; onChange: (p: Provider) => void }) {
   const opts: Provider[] = ["dryrun", "gmail", "outlook"];
   return (
-    <div className="flex items-center gap-0.5 rounded-sm border border-border bg-white/[0.02] p-0.5">
+    <div className="flex items-center gap-0.5 rounded-sm border border-border bg-black/[0.02] p-0.5">
       {opts.map((o) => (
         <button
           key={o}
           onClick={() => onChange(o)}
           className={cn(
             "rounded-[6px] px-2.5 py-1.5 text-xs font-medium capitalize transition-colors",
-            value === o ? "bg-accent-soft text-accent-hi" : "text-muted hover:text-text-2",
+            value === o ? "bg-accent-soft text-accent" : "text-muted hover:text-text-2",
           )}
         >
           {o}

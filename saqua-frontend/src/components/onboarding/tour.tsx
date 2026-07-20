@@ -152,7 +152,7 @@ export function OnboardingTour() {
           <button
             onClick={finish}
             aria-label="Skip walkthrough"
-            className="grid size-6 place-items-center rounded text-muted hover:bg-white/[0.06] hover:text-text"
+            className="grid size-6 place-items-center rounded text-muted hover:bg-black/[0.05] hover:text-text"
           >
             <X className="size-3.5" />
           </button>
@@ -167,7 +167,7 @@ export function OnboardingTour() {
             {step > 0 && (
               <button
                 onClick={() => setStep((v) => v - 1)}
-                className="rounded-md px-2.5 py-1.5 text-xs text-text-2 hover:bg-white/[0.06] hover:text-text"
+                className="rounded-md px-2.5 py-1.5 text-xs text-text-2 hover:bg-black/[0.05] hover:text-text"
               >
                 Back
               </button>

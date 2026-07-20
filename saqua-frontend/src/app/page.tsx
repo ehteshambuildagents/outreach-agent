@@ -1,280 +1,336 @@
-import Link from "next/link";
 import {
-  ArrowRight,
-  CalendarClock,
-  Gauge,
-  MailCheck,
-  PenLine,
-  Search,
-  ShieldCheck,
+  Zap,
+  BadgePercent,
+  Rocket,
+  Users,
+  Briefcase,
+  Sparkles,
+  Waves,
+  Layers,
+  Check,
+  X,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { BrowserFrame } from "@/components/ui/browser-frame";
 import { Reveal } from "@/components/ui/reveal";
-import { Logo } from "@/components/ui/logo";
-import { AnimatedLogo } from "@/components/ui/animated-logo";
+import { SiteNav } from "@/components/marketing/site-nav";
+import { SiteFooter } from "@/components/marketing/site-footer";
+import { HeroForm } from "@/components/marketing/hero-form";
+import { Countdown } from "@/components/marketing/countdown";
+import { FeatureTabs } from "@/components/marketing/feature-tabs";
 
-const STAGES = [
+const AUDIENCES = [
   {
-    n: "01",
-    icon: Search,
-    title: "Research",
-    body: "Reads hiring posts, funding news, and public activity to find a real reason to reach out — not a name off a purchased list.",
+    icon: Rocket,
+    title: "Founders",
+    body: "You sell best in your own voice. Saqua does the research and the first draft, so every intro sounds like you wrote it, at far more than one-at-a-time speed.",
   },
   {
-    n: "02",
-    icon: Gauge,
-    title: "Score & qualify",
-    body: "Every prospect gets a fit score and a qualification pass before a word is written. Low-fit companies get filtered out, not spammed.",
+    icon: Users,
+    title: "Lean GTM teams",
+    body: "Replace the sequence tool and the enrichment tab. Research, drafting, follow-ups, and reply detection live in one workspace your whole team works out of.",
   },
   {
-    n: "03",
-    icon: PenLine,
-    title: "Write",
-    body: "The opening email is built around the specific evidence found in research, then tested against the patterns that make outreach read as AI-generated — before you ever see it.",
+    icon: Briefcase,
+    title: "Agencies",
+    body: "Run personal outbound for every client without cloning yourself. Saqua keeps each account's voice, offer, and ICP straight.",
+  },
+];
+
+// The before/after worksheet. Kept to four beats a side so the two columns stay
+// the same height without hand-tuning.
+const PAIN = [
+  "Spend hours hunting for companies actually worth contacting",
+  "Send templates that read automated and get quietly ignored",
+  "Lose deals to follow-ups you meant to send and never did",
+  "Ride the feast or famine revenue roller coaster",
+];
+
+const GAIN = [
+  "Fresh, high fit prospects scored and waiting every morning",
+  "Every opener grounded in a real signal, with the quote behind it",
+  "Follow-ups that run on real days and stop the moment someone replies",
+  "A repeatable research to reply system you can run every week",
+];
+
+const DIFFERENTIATORS = [
+  {
+    icon: Sparkles,
+    title: "Grounded, never guessed",
+    body: "Every claim carries the exact quote it came from. Generic AI invents facts; one wrong detail and the trust is gone. Saqua leaves it out instead.",
   },
   {
-    n: "04",
-    icon: CalendarClock,
-    title: "Send & follow up",
-    body: "Once you approve, it sends and runs a multi-touch cadence — a sequence of spaced follow-ups — over real days, with timing re-anchored to the actual send so it never compresses into something that looks automated.",
+    icon: Waves,
+    title: "Your voice, kept",
+    body: "Short, specific, human. Written to sound like a founder, not a sequence. It refuses to send anything that reads automated.",
   },
   {
-    n: "05",
-    icon: MailCheck,
-    title: "Detect replies",
-    body: "The moment a real reply lands in the thread, every remaining step is cancelled automatically. That's a core guarantee, not an edge case.",
+    icon: Layers,
+    title: "One workspace",
+    body: "Research, discovery, drafting, pipeline, inbox, and follow-ups in one place. Replace the enrichment tab, the template doc, and the sequence tool.",
   },
 ];
 
 export default function LandingPage() {
   return (
-    <main className="relative min-h-screen overflow-hidden bg-bg text-text">
-      {/* Ambient depth — muted indigo + teal blooms, off-center, low opacity,
-          drifting slowly so the glass surfaces always have living depth behind them */}
+    // No bg here on purpose: an opaque background on this (positioned, z-index:auto,
+    // so NOT a stacking context) element would paint over the -z-10 lights below.
+    // html/body already paint the same canvas.
+    <main className="relative min-h-screen overflow-clip text-text">
+      {/* One warm light bleeding in from the top of the page and its mirror at the
+          bottom — both pushed far enough past the edge that only the falloff lands
+          on the canvas. Cool blooms drift between them for depth. */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-        <div className="bloom-indigo animate-drift absolute -left-40 -top-40 size-[680px] rounded-full" />
-        <div className="bloom-teal animate-drift-2 absolute -right-52 top-[38%] size-[620px] rounded-full" />
-        <div className="bloom-indigo animate-drift absolute -bottom-52 left-[30%] size-[560px] rounded-full opacity-70" />
+        <div className="page-light absolute inset-x-0 -top-[461px] h-[806px]" />
+        <div className="page-light absolute inset-x-0 -bottom-[461px] h-[806px]" />
+        <div className="bloom-indigo animate-drift absolute -left-40 top-[52%] size-[560px] rounded-full opacity-70" />
+        <div className="bloom-teal animate-drift-2 absolute -right-52 top-[74%] size-[560px] rounded-full opacity-70" />
       </div>
 
-      <header className="flex h-16 items-center justify-between px-6 lg:px-12">
-        <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
-          <AnimatedLogo markClassName="h-6 w-auto" />
-          Saqua
-        </Link>
-        <nav className="hidden items-center gap-7 text-xs text-muted md:flex">
-          <a href="#pipeline" className="hover:text-text">How it works</a>
-          <Link href="/pricing" className="hover:text-text">Pricing</Link>
-          <Link href="/about" className="hover:text-text">About</Link>
-          <Link href="/privacy" className="hover:text-text">Privacy</Link>
-          <Link href="/terms" className="hover:text-text">Terms</Link>
-        </nav>
-        <div className="flex items-center gap-2">
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/sign-in">Log in</Link>
-          </Button>
-          <Button asChild variant="primary" size="sm">
-            <Link href="/sign-up">Get started</Link>
-          </Button>
-        </div>
-      </header>
+      <SiteNav />
 
       {/* ── Hero ─────────────────────────────────────────────────────── */}
-      <section className="grid items-center gap-14 px-6 pb-24 pt-10 lg:grid-cols-[1fr_540px] lg:px-12 lg:pt-16">
-        <div className="max-w-2xl">
-          <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-border bg-white/[0.03] px-3 py-1.5 text-xs text-text-2">
-            <span className="size-1.5 animate-pulse-soft rounded-full bg-accent" />
-            Research to reply — run by you
-          </div>
-          <h1 className="text-5xl font-semibold leading-[1.04] tracking-tight text-text md:text-6xl">
-            Run your own outbound pipeline, not just the emails.
+      <section className="px-6 pb-20 pt-36 text-center lg:px-12">
+        <Reveal>
+          <span className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-4 text-xs font-medium shadow-[0_1px_2px_rgba(17,17,17,.04)]">
+            <Zap className="size-3.5 text-amber" /> Research to reply, run by you
+          </span>
+        </Reveal>
+        <Reveal delay={0.05}>
+          <h1 className="mx-auto mt-7 max-w-[18ch] font-display text-5xl font-medium leading-[1.03] tracking-[-0.03em] md:text-7xl">
+            The whole outbound pipeline,<br />without the <span className="grad-text">headcount</span>.
           </h1>
-          <p className="mt-6 max-w-xl text-base leading-7 text-text-2">
-            Saqua is the whole outbound machine a founder runs instead of hiring an SDR — the
-            person who does sales prospecting — or paying an agency for generic templates. It
-            researches real signals, scores fit, writes the opener around the evidence, sends and
-            follows up over real days, and stops the instant someone replies.
+        </Reveal>
+        <Reveal delay={0.1}>
+          <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-muted">
+            Saqua is the AI SDR a founder runs instead of hiring one. It finds the right companies,
+            researches real signals, writes the opener around the evidence, follows up over real
+            days, and stops the instant someone replies.
           </p>
-          <div className="mt-8 flex flex-wrap items-center gap-3">
-            <Button asChild variant="primary" size="lg">
-              <Link href="/sign-up">
-                Get started for free <ArrowRight className="size-4" />
-              </Link>
-            </Button>
-            <Button asChild variant="secondary" size="lg">
-              <a href="https://cal.com/saqua/demo-call" target="_blank" rel="noopener noreferrer">
-                Book a demo
-              </a>
-            </Button>
-          </div>
-          <p className="mt-6 text-xs text-muted">
-            No credit card required. Every draft is checked against hundreds of automated tests
-            before it reaches you.
-          </p>
-        </div>
+        </Reveal>
 
-        {/* Live product moment — a researched, scored prospect at saqua.io/research */}
-        <Reveal className="lg:justify-self-end" y={20}>
-          <BrowserFrame url="saqua.io/research" className="w-full">
-            <div className="space-y-4 p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-sm font-medium text-text">Linear</div>
-                  <div className="text-xs text-muted">linear.app · issue tracking for software teams</div>
-                </div>
-                <div className="flex items-center gap-1.5 rounded-md border border-accent-line bg-accent-soft px-2 py-1 text-accent-hi">
-                  <span className="font-mono text-sm font-semibold leading-none">92</span>
-                  <span className="text-[10px] uppercase tracking-wide">fit</span>
-                </div>
-              </div>
-              <div className="space-y-2">
-                {[
-                  ["Hiring", "Posted 2 GTM roles in the last 30 days"],
-                  ["Funding", "Series B, 8 months ago — expanding motion"],
-                  ["Signal", "Founder active on launches; ships weekly"],
-                ].map(([k, v]) => (
-                  <div key={k} className="flex gap-3 rounded-md border border-border-faint bg-white/[0.02] px-3 py-2">
-                    <span className="w-16 shrink-0 font-mono text-[10px] uppercase tracking-wide text-muted">{k}</span>
-                    <span className="text-xs leading-5 text-text-2">{v}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-between border-t border-border-faint pt-3">
-                <span className="inline-flex items-center gap-1.5 text-xs text-accent-hi">
-                  <span className="size-1.5 rounded-full bg-accent" /> Qualified — worth pursuing
-                </span>
-                <span className="font-mono text-[10px] text-muted">3 sources</span>
-              </div>
+        <Reveal delay={0.15}>
+          <HeroForm className="mt-8" />
+          <p className="mt-4 text-xs text-muted">
+            No credit card required.{" "}
+            <a href="https://cal.com/saqua/demo-call" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
+              Or book a demo
+            </a>
+            .
+          </p>
+        </Reveal>
+
+        {/* Founding offer — gradient label + card + live countdown */}
+        <Reveal delay={0.2} className="mx-auto mt-10 max-w-sm">
+          <div className="grad-text font-display text-lg font-semibold">
+            Start free with founding pricing, locked for life
+          </div>
+          <div className="mt-3 rounded-2xl border border-border bg-card p-6 text-center shadow-card">
+            <div className="mx-auto mb-3 grid size-10 place-items-center rounded-full bg-indigo-soft text-accent">
+              <BadgePercent className="size-5" />
             </div>
-          </BrowserFrame>
+            <div>
+              <span className="font-display text-lg font-semibold text-text">30% off</span>{" "}
+              <span className="text-muted">for life</span>
+            </div>
+            <Countdown hours={60} />
+          </div>
+        </Reveal>
+
+        {/* Trust — 30 countries */}
+        <Reveal delay={0.25}>
+          <div className="mt-8 flex items-center justify-center gap-3 text-sm text-muted">
+            <div className="flex -space-x-2">
+              {["from-accent to-[#7a6ef7]", "from-[#f5a305] to-[#fcd6bd]", "from-[#7a6ef7] to-accent", "from-[#4f5af7] to-[#f5a305]"].map((g, i) => (
+                <span key={i} className={`size-7 rounded-full border-2 border-bg bg-gradient-to-br ${g}`} />
+              ))}
+            </div>
+            Trusted by founders in <span className="font-medium text-text">30 countries</span>
+          </div>
         </Reveal>
       </section>
 
-      {/* ── The pipeline: five stages ────────────────────────────────── */}
-      <section id="pipeline" className="px-6 py-20 lg:px-12">
-        <Reveal>
-          <h2 className="max-w-2xl text-3xl font-semibold tracking-tight">
-            One pipeline. Five stages. All of it yours.
+      {/* ── Before / after ───────────────────────────────────────────── */}
+      <section className="relative px-6 py-16 lg:px-12">
+        {/* The mark sunk into the canvas. Filled a hair darker than the page and
+            faded out down its length, so it reads as embossed rather than drawn.
+            -z-10 puts it in the same layer as the page lights; it sits later in
+            the DOM, so it paints just above them. */}
+        <svg
+          aria-hidden
+          viewBox="0 0 96 56"
+          className="pointer-events-none absolute -left-40 -top-48 -z-10 w-[1200px] max-w-none"
+        >
+          <defs>
+            <linearGradient id="saqua-emboss" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#efecea" stopOpacity="1" />
+              <stop offset="1" stopColor="#efecea" stopOpacity="0.3" />
+            </linearGradient>
+          </defs>
+          <path fill="url(#saqua-emboss)" d="M9 40C24 31 38 30 52 20C62 13 75 13 86 21C76 17 64 19 53 26C40 35 26 38 12 44Z" />
+          <path fill="url(#saqua-emboss)" d="M56 22C71 12 89 20 85 37C82 50 66 53 57 45C67 49 78 44 78 34C78 25 66 26 58 31Z" />
+        </svg>
+
+        <Reveal className="mx-auto mb-10 max-w-3xl text-center">
+          <h2 className="font-display text-3xl font-semibold tracking-tight md:text-5xl">
+            Tabs, templates, and &ldquo;I&apos;ll follow up later&rdquo;<br />
+            is not a <span className="grad-text">sales system</span>.
           </h2>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-text-2">
-            This is the part most tools skip. Saqua doesn&apos;t just write — it runs every step an
-            SDR would, and shows its work at each one.
+          <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-muted">
+            Fragmented tools push you between a lead list, an enrichment tab, a template
+            doc, and your inbox, so follow-ups get missed and revenue stays lumpy.
           </p>
         </Reveal>
-        <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {STAGES.map((s, i) => (
-            <Reveal key={s.n} delay={i * 0.07}>
-              <div className="group glass hover-lift h-full rounded-xl border border-border p-5 shadow-card">
-                <div className="mb-5 flex items-center justify-between">
-                  <span className="grid size-10 place-items-center rounded-md bg-accent-soft text-accent-hi transition-transform duration-300 ease-smooth group-hover:scale-110">
-                    <s.icon className="size-5" />
-                  </span>
-                  <span className="font-mono text-xs text-faint transition-colors group-hover:text-muted">{s.n}</span>
-                </div>
-                <div className="font-medium text-text">{s.title}</div>
-                <p className="mt-2 text-sm leading-6 text-text-2">{s.body}</p>
+
+        <div className="mx-auto grid max-w-5xl gap-5 md:grid-cols-2">
+          <Reveal>
+            <div className="h-full rounded-2xl border border-border bg-card/60 p-8 shadow-card">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">
+                Right now
+              </h3>
+              <ul className="mt-6 space-y-4">
+                {PAIN.map((item) => (
+                  <li key={item} className="flex gap-3 text-sm leading-6 text-text-2">
+                    <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-black/[0.06] text-muted">
+                      <X className="size-3" />
+                    </span>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </Reveal>
+
+          {/* The payoff column, lifted off the page by a warm bloom behind it. */}
+          <Reveal delay={0.07}>
+            <div className="relative h-full">
+              <div
+                aria-hidden
+                className="bloom-teal pointer-events-none absolute -inset-16 -z-10 rounded-full"
+              />
+              <div className="glass h-full rounded-2xl border border-border p-8 shadow-card">
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-accent">
+                  With Saqua
+                </h3>
+                <ul className="mt-6 space-y-4">
+                  {GAIN.map((item) => (
+                    <li key={item} className="flex gap-3 text-sm leading-6 text-text-2">
+                      <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-accent-soft text-accent">
+                        <Check className="size-3" />
+                      </span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ── Feature dashboard (tab switcher) ─────────────────────────── */}
+      <section className="px-6 py-16 lg:px-12">
+        <Reveal className="mx-auto mb-10 max-w-2xl text-center">
+          <span className="text-sm font-semibold text-accent">One workspace</span>
+          <h2 className="mt-3 font-display text-3xl font-semibold tracking-tight md:text-5xl">
+            Everything the reply needs.
+          </h2>
+          <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-muted">
+            The whole outbound machine: discovery, research, deal help, pipeline, inbox, and
+            follow-ups in one place, each showing its work.
+          </p>
+        </Reveal>
+        <div className="mx-auto max-w-6xl">
+          <FeatureTabs />
+        </div>
+      </section>
+
+      {/* ── Audiences ────────────────────────────────────────────────── */}
+      <section className="px-6 py-16 lg:px-12">
+        <Reveal className="mx-auto mb-10 max-w-2xl text-center">
+          <h2 className="font-display text-3xl font-semibold tracking-tight md:text-5xl">
+            Replaces the whole SDR,<br />not just the <span className="grad-text">writing</span>.
+          </h2>
+        </Reveal>
+        <div className="mx-auto grid max-w-6xl gap-5 md:grid-cols-3">
+          {AUDIENCES.map((a, i) => (
+            <Reveal key={a.title} delay={i * 0.07}>
+              <div className="glass hover-lift h-full rounded-2xl border border-border p-7 shadow-card">
+                <span className="grid size-12 place-items-center rounded-full bg-accent-soft text-accent">
+                  <a.icon className="size-5" />
+                </span>
+                <h3 className="mt-6 text-xl font-semibold text-text">{a.title}</h3>
+                <p className="mt-3 text-sm leading-6 text-text-2">{a.body}</p>
               </div>
             </Reveal>
           ))}
         </div>
       </section>
 
-      {/* ── Compose: the one place serif appears (generated email copy) ── */}
-      <section className="px-6 py-20 lg:px-12">
-        <div className="grid items-center gap-12 lg:grid-cols-[1fr_1.1fr]">
-          <Reveal>
-            <h2 className="max-w-md text-3xl font-semibold tracking-tight">
-              The opener is written around the evidence — and tested before you see it.
-            </h2>
-            <p className="mt-4 max-w-md text-sm leading-6 text-text-2">
-              No mail-merge templates. Each first email is built from what research actually found,
-              then run against hundreds of checks for the tells that give AI outreach away. You
-              approve what sends.
-            </p>
-            <ul className="mt-6 space-y-2.5">
-              {[
-                "Grounded in the specific signal, not a variable swap",
-                "Checked for AI-sounding patterns before it's shown",
-                "You approve every send — nothing goes out on its own",
-              ].map((t) => (
-                <li key={t} className="flex items-start gap-2.5 text-sm text-text-2">
-                  <MailCheck className="mt-0.5 size-4 shrink-0 text-accent-hi" /> {t}
-                </li>
-              ))}
-            </ul>
-          </Reveal>
-
-          <Reveal delay={0.1} y={20}>
-            <BrowserFrame url="saqua.io/compose">
-              <div className="p-5">
-                <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-                  <span className="inline-flex items-center gap-1.5 rounded-md border border-accent-line bg-accent-soft px-2 py-1 text-accent-hi">
-                    <ShieldCheck className="size-3" /> Passed 214 checks
-                  </span>
-                  <span className="font-mono text-muted">to: karri@linear.app</span>
-                  <span className="ml-auto font-mono text-muted">fit 92</span>
-                </div>
-                <div className="rounded-lg border border-border-faint bg-white/[0.02] p-4">
-                  <div className="mb-2 text-sm font-medium text-text">
-                    Quick one on your GTM hiring
-                  </div>
-                  {/* The single serif treatment across the whole product: generated email copy */}
-                  <p className="font-serif text-[15px] leading-7 text-text">
-                    Saw you opened two GTM roles this month, right after the Series B. Usually that
-                    means the founder is still the one running outbound and feeling it. I built Saqua
-                    for exactly that stretch — it researches, writes, and follows up so you can stay
-                    on the product. Worth fifteen minutes?
-                  </p>
-                </div>
+      {/* ── Differentiators ──────────────────────────────────────────── */}
+      <section className="px-6 py-16 lg:px-12">
+        <Reveal className="mx-auto mb-10 max-w-3xl text-center">
+          <h2 className="font-display text-3xl font-semibold tracking-tight md:text-5xl">
+            Most tools were built for volume.<br />
+            <span className="grad-text">Saqua was built for the reply.</span>
+          </h2>
+        </Reveal>
+        <div className="mx-auto grid max-w-6xl gap-5 md:grid-cols-3">
+          {DIFFERENTIATORS.map((d, i) => (
+            <Reveal key={d.title} delay={i * 0.07}>
+              <div className="glass hover-lift h-full rounded-2xl border border-border p-7 shadow-card">
+                <span className="grid size-12 place-items-center rounded-full bg-accent-soft text-accent">
+                  <d.icon className="size-5" />
+                </span>
+                <h3 className="mt-6 text-xl font-semibold text-text">{d.title}</h3>
+                <p className="mt-3 text-sm leading-6 text-text-2">{d.body}</p>
               </div>
-            </BrowserFrame>
-          </Reveal>
+            </Reveal>
+          ))}
         </div>
       </section>
 
-      {/* ── The reply guarantee — the single strongest live signal ─────── */}
-      <section className="px-6 py-16 lg:px-12">
-        <Reveal>
-          <div className="glass relative overflow-hidden rounded-2xl border border-accent-line p-8 shadow-glow md:p-12">
-            <div className="accent-glow absolute -right-20 -top-20 size-80 opacity-60" />
-            <div className="relative flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
-              <div className="max-w-xl">
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-accent-line bg-accent-soft px-3 py-1 text-xs text-accent-hi">
-                  <span className="size-1.5 animate-pulse-soft rounded-full bg-accent" /> Live guarantee
-                </div>
-                <h2 className="text-2xl font-semibold tracking-tight md:text-3xl">
-                  When they reply, the sequence stops. Automatically.
-                </h2>
-                <p className="mt-3 text-sm leading-6 text-text-2">
-                  No one gets a &ldquo;just following up&rdquo; after they&apos;ve already answered.
-                  Reply detection is verified with real tests, not assumed to work.
-                </p>
-              </div>
-              <Button asChild variant="primary" size="lg">
-                <Link href="/sign-up">
-                  Start your pipeline <ArrowRight className="size-4" />
-                </Link>
-              </Button>
+      {/* ── Principle quote ──────────────────────────────────────────── */}
+      <section className="px-6 py-16 text-center lg:px-12">
+        <Reveal className="mx-auto max-w-3xl">
+          <h2 className="font-display text-3xl font-medium leading-tight tracking-tight md:text-5xl">
+            &ldquo;If a detail isn&apos;t on the page,<br />it never shows up in the{" "}
+            <span className="grad-text">email</span>.&rdquo;
+          </h2>
+          <p className="mt-5 text-muted">The one rule Saqua won&apos;t break.</p>
+        </Reveal>
+      </section>
+
+      {/* ── Gradient CTA finale ──────────────────────────────────────── */}
+      {/* id="waitlist" is the single destination every pre-launch CTA scrolls to
+          (nav, pricing cards, /sign-up redirect). */}
+      <section id="waitlist" className="scroll-mt-24 px-6 py-16 lg:px-12">
+        <Reveal className="mx-auto max-w-6xl">
+          <div className="cta-gradient relative overflow-hidden rounded-[28px] px-6 py-16 text-center text-white shadow-pop md:py-20">
+            {/* The mark, blown up past the card's own bounds and barely there —
+                canvas-on-gradient so it reads as a watermark, not a logo drop. The
+                card clips it, which is what gives the cropped-swell look. */}
+            <svg
+              aria-hidden
+              viewBox="0 0 96 56"
+              fill="rgba(246,244,242,0.11)"
+              className="pointer-events-none absolute -left-24 top-1/2 w-[1100px] max-w-none -translate-y-1/2"
+            >
+              <path d="M9 40C24 31 38 30 52 20C62 13 75 13 86 21C76 17 64 19 53 26C40 35 26 38 12 44Z" />
+              <path d="M56 22C71 12 89 20 85 37C82 50 66 53 57 45C67 49 78 44 78 34C78 25 66 26 58 31Z" />
+            </svg>
+            <div className="relative">
+              <h2 className="mx-auto max-w-2xl font-display text-3xl font-semibold tracking-tight text-white md:text-5xl">
+                Your next customer is out there. Go find them.
+              </h2>
+              <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-white/85">
+                Join founders in 30 countries building predictable revenue with Saqua.
+              </p>
+              <HeroForm className="mt-8" tone="onGradient" label="Join the waitlist" source="cta" />
             </div>
           </div>
         </Reveal>
       </section>
 
-      <footer className="px-6 py-10 lg:px-12">
-        <div className="flex flex-col items-center justify-between gap-4 border-t border-border-faint pt-8 text-xs text-muted sm:flex-row">
-          <div className="flex items-center gap-2 text-text-2">
-            <Logo className="h-5 w-auto" />
-            Saqua
-          </div>
-          <div className="flex items-center gap-6">
-            <Link href="/pricing" className="hover:text-text">Pricing</Link>
-            <Link href="/about" className="hover:text-text">About</Link>
-            <Link href="/privacy" className="hover:text-text">Privacy</Link>
-            <Link href="/terms" className="hover:text-text">Terms</Link>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </main>
   );
 }

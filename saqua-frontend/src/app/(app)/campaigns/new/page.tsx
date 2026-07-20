@@ -406,7 +406,7 @@ function ManualRecipientModal({
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold text-text">
-              <UserPlus className="size-4 text-accent-hi" />
+              <UserPlus className="size-4 text-accent" />
               Add recipient
             </div>
             <p className="mt-1 text-xs leading-5 text-muted">
@@ -417,14 +417,14 @@ function ManualRecipientModal({
             type="button"
             onClick={onClose}
             disabled={saving}
-            className="rounded-sm p-1.5 text-muted transition-colors hover:bg-white/[0.05] hover:text-text"
+            className="rounded-sm p-1.5 text-muted transition-colors hover:bg-black/[0.05] hover:text-text"
             aria-label="Close recipient editor"
           >
             <X className="size-4" />
           </button>
         </div>
 
-        <div className="mb-4 rounded-md border border-border-faint bg-white/[0.02] p-3 text-xs text-text-2">
+        <div className="mb-4 rounded-md border border-border-faint bg-black/[0.02] p-3 text-xs text-text-2">
           <div className="font-medium text-text">{company}</div>
           <div className="mt-1 text-muted">Found person: {recipient.name || prospect.research?.named_person || "Not found"}</div>
           <div className="mt-1 break-all text-muted">Route/source: {source || "No route found"}</div>
@@ -465,7 +465,7 @@ function RunningState() {
     <Card className="overflow-hidden">
       <div className="relative p-10 text-center">
         <div className="accent-glow absolute inset-0 opacity-40" />
-        <Loader2 className="relative mx-auto mb-4 size-7 animate-spin text-accent-hi" />
+        <Loader2 className="relative mx-auto mb-4 size-7 animate-spin text-accent" />
         <div className="relative text-sm font-semibold text-text">Saqua is working through your prospects…</div>
         <p className="relative mx-auto mt-1.5 max-w-md text-xs leading-5 text-muted">
           Discovery → Research → Qualification → Strategy → Writer → Guard. This runs live on real websites, so it can take a
@@ -478,9 +478,9 @@ function RunningState() {
               initial={{ opacity: 0.35 }}
               animate={{ opacity: [0.35, 1, 0.35] }}
               transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.22 }}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-white/[0.03] px-3 py-1 text-[11px] text-text-2"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-black/[0.03] px-3 py-1 text-[11px] text-text-2"
             >
-              <s.icon className="size-3.5 text-accent-hi" />
+              <s.icon className="size-3.5 text-accent" />
               {s.label}
             </motion.div>
           ))}
@@ -493,14 +493,14 @@ function RunningState() {
 function ProviderSelect({ value, onChange }: { value: Provider; onChange: (p: Provider) => void }) {
   const opts: Provider[] = ["dryrun", "gmail", "outlook"];
   return (
-    <div className="flex items-center gap-0.5 rounded-sm border border-border bg-white/[0.02] p-0.5">
+    <div className="flex items-center gap-0.5 rounded-sm border border-border bg-black/[0.02] p-0.5">
       {opts.map((o) => (
         <button
           key={o}
           onClick={() => onChange(o)}
           className={cn(
             "rounded-[6px] px-2.5 py-1.5 text-xs font-medium capitalize transition-colors",
-            value === o ? "bg-accent-soft text-accent-hi" : "text-muted hover:text-text-2",
+            value === o ? "bg-accent-soft text-accent" : "text-muted hover:text-text-2",
           )}
         >
           {o}

@@ -28,12 +28,12 @@ export function StatsCard({ data }: { data: StatsCardData }) {
         <div className="border-b border-border-faint px-5 py-3 text-sm font-medium text-text">Your outreach</div>
         <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3">
           {tiles.map((t) => (
-            <div key={t.label} className="rounded-md border border-border-faint bg-white/[0.02] px-3 py-2.5">
+            <div key={t.label} className="rounded-md border border-border-faint bg-black/[0.02] px-3 py-2.5">
               <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted">
-                <t.icon className={cn("size-3.5", t.accent ? "text-accent-hi" : "text-muted")} />
+                <t.icon className={cn("size-3.5", t.accent ? "text-accent" : "text-muted")} />
                 {t.label}
               </div>
-              <div className={cn("mt-1 font-mono text-lg font-semibold tracking-tight", t.accent ? "text-accent-hi" : "text-text")}>
+              <div className={cn("mt-1 font-mono text-lg font-semibold tracking-tight", t.accent ? "text-accent" : "text-text")}>
                 {t.value}
               </div>
             </div>

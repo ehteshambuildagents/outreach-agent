@@ -18,7 +18,7 @@ export function RepliesCard({ data }: { data: RepliesCardData }) {
     <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
       <Card className="overflow-hidden">
         <div className="flex items-center gap-2 border-b border-border-faint px-5 py-3">
-          <MailCheck className="size-4 text-accent-hi" />
+          <MailCheck className="size-4 text-accent" />
           <span className="text-sm font-medium text-text">
             {data.count} {data.count === 1 ? "reply" : "replies"}
           </span>
@@ -33,7 +33,7 @@ export function RepliesCard({ data }: { data: RepliesCardData }) {
                 {r.to && <div className="truncate font-mono text-[11px] text-muted">{r.to}</div>}
               </div>
               <div className="shrink-0 text-right">
-                <div className="text-xs text-accent-hi">
+                <div className="text-xs text-accent">
                   replied{r.replied_at ? ` ${timeAgo(r.replied_at)}` : ""}
                 </div>
                 {typeof r.emails_before_reply === "number" && r.emails_before_reply > 0 && (

@@ -454,7 +454,17 @@ export interface CampaignsCardData {
 
 export const api = {
   publicConfig: () => req<PublicConfig>("/api/public-config"),
-  health: () => req<{ ok: boolean }>("/api/health"),
+  health: () => req<{ ok: boolean; redis?: string; production?: boolean }>("/api/health"),
+
+  /** Public pre-launch waitlist (no auth). `company` is the honeypot: it is
+   *  rendered hidden, so a real person never fills it and a bot always does. */
+  joinWaitlist: (body: { email: string; source?: string; company?: string }) =>
+    req<{ ok: boolean }>("/api/waitlist", { method: "POST", body: JSON.stringify(body) }),
+
+  /** Public contact form (no auth). Emails the support inbox with the sender as
+   *  Reply-To. `company` is the honeypot, same convention as the waitlist. */
+  sendContact: (body: { email: string; message: string; subject?: string; company?: string }) =>
+    req<{ ok: boolean }>("/api/contact", { method: "POST", body: JSON.stringify(body) }),
 
   company: () => req<{ company: Partial<CompanyProfile> }>("/api/company"),
   saveCompany: (body: CompanyProfile) =>

@@ -26,7 +26,7 @@ export function SummaryGrid({ summary }: { summary?: CampaignSummary }) {
               "mt-1 text-lg font-semibold tracking-tight",
               it.tone === "success" && "text-success",
               it.tone === "danger" && "text-danger",
-              it.tone === "accent" && "text-accent-hi",
+              it.tone === "accent" && "text-accent",
               !it.tone && "text-text",
             )}
           >

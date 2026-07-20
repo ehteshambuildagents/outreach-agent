@@ -27,12 +27,12 @@ export function ArtifactPanel({ draft, onClose }: { draft: EmailCardData; onClos
   return (
     <div className="glass-panel flex h-full flex-col border-l border-border">
       <div className="flex items-center gap-2 border-b border-border-faint px-4 py-3">
-        <Mail className="size-4 text-accent-hi" />
+        <Mail className="size-4 text-accent" />
         <span className="text-sm font-medium text-text">{draft.label || "Draft"}</span>
         <button
           onClick={onClose}
           aria-label="Close draft"
-          className="ml-auto grid size-7 place-items-center rounded-md text-muted hover:bg-white/[0.05] hover:text-text"
+          className="ml-auto grid size-7 place-items-center rounded-md text-muted hover:bg-black/[0.05] hover:text-text"
         >
           <X className="size-4" />
         </button>
@@ -42,13 +42,13 @@ export function ArtifactPanel({ draft, onClose }: { draft: EmailCardData; onClos
         {/* Metadata strip — mono for the data-like values, shown only when present */}
         <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
           {typeof draft.fit_score === "number" && (
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-accent-line bg-accent-soft px-2 py-1 text-accent-hi">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-accent-line bg-accent-soft px-2 py-1 text-accent">
               <span className="font-mono font-semibold leading-none">{draft.fit_score}</span>
               <span className="text-[10px] uppercase tracking-wide">fit</span>
             </span>
           )}
           {typeof draft.checks_passed === "number" && (
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-accent-line bg-accent-soft px-2 py-1 text-accent-hi">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-accent-line bg-accent-soft px-2 py-1 text-accent">
               <ShieldCheck className="size-3" />
               <span className="font-mono">{draft.checks_passed}</span> checks
             </span>

@@ -43,7 +43,7 @@ export function ProspectCard({
       transition={{ duration: 0.3, delay: Math.min(index * 0.04, 0.3) }}
     >
       <Card className="overflow-hidden">
-        <div className="flex w-full items-center gap-3 px-5 py-4 transition-colors hover:bg-white/[0.02]">
+        <div className="flex w-full items-center gap-3 px-5 py-4 transition-colors hover:bg-black/[0.02]">
           <button onClick={() => setOpen((v) => !v)} className="flex min-w-0 flex-1 items-center gap-4 text-left">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -142,7 +142,7 @@ export function ProspectCard({
                   </AgentRow>
                 </div>
 
-                <div className="rounded-md border border-border-faint bg-white/[0.02] p-4">
+                <div className="rounded-md border border-border-faint bg-black/[0.02] p-4">
                   {hasEmail ? (
                     <>
                       <div className="mb-1 text-[11px] uppercase tracking-wide text-muted">
@@ -170,7 +170,7 @@ export function ProspectCard({
 function AgentRow({ icon: Icon, label, children }: { icon: typeof Search; label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-2.5 text-xs">
-      <Icon className="mt-0.5 size-3.5 shrink-0 text-accent-hi" />
+      <Icon className="mt-0.5 size-3.5 shrink-0 text-accent" />
       <div>
         <span className="text-muted">{label}: </span>
         <span className="text-text-2">{children}</span>
@@ -181,7 +181,7 @@ function AgentRow({ icon: Icon, label, children }: { icon: typeof Search; label:
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-sm border border-border-faint bg-white/[0.02] px-2 py-1 text-center">
+    <div className="rounded-sm border border-border-faint bg-black/[0.02] px-2 py-1 text-center">
       <div className="text-[9px] uppercase text-muted">{label}</div>
       <div className="text-xs font-semibold text-text">{value}</div>
     </div>

@@ -202,7 +202,7 @@ function Stat({
 }) {
   return (
     <Card className="flex items-center gap-3 px-4 py-3.5">
-      <span className={cn("grid size-9 shrink-0 place-items-center rounded-md", accent ? "bg-accent-soft text-accent-hi" : "bg-white/[0.04] text-text-2")}>
+      <span className={cn("grid size-9 shrink-0 place-items-center rounded-md", accent ? "bg-accent-soft text-accent" : "bg-black/[0.04] text-text-2")}>
         <Icon className="size-4" />
       </span>
       <div className="min-w-0">
@@ -210,7 +210,7 @@ function Stat({
         {value === null ? (
           <Skeleton className="mt-1 h-5 w-10" />
         ) : (
-          <div className={cn("font-mono text-lg font-semibold", accent ? "text-accent-hi" : "text-text")}>{value}</div>
+          <div className={cn("font-mono text-lg font-semibold", accent ? "text-accent" : "text-text")}>{value}</div>
         )}
       </div>
     </Card>
@@ -235,7 +235,7 @@ function CampaignRow({ campaign: c, detail }: { campaign: CampaignDetail; detail
             <span className="truncate text-sm font-medium text-text">{c.name}</span>
             <StatusPill state={c.status} />
             {replies > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-accent-line bg-accent-soft px-2 py-0.5 text-[11px] text-accent-hi">
+              <span className="inline-flex items-center gap-1 rounded-full border border-accent-line bg-accent-soft px-2 py-0.5 text-[11px] text-accent">
                 <MailCheck className="size-3" /> {replies} {replies === 1 ? "reply" : "replies"}
               </span>
             )}
@@ -311,7 +311,7 @@ function CampaignRow({ campaign: c, detail }: { campaign: CampaignDetail; detail
 
               <Link
                 href={`/campaigns/${c.id}`}
-                className="inline-flex items-center gap-1.5 text-xs text-accent-hi hover:underline"
+                className="inline-flex items-center gap-1.5 text-xs text-accent hover:underline"
               >
                 Open full campaign <ArrowRight className="size-3.5" />
               </Link>
@@ -345,7 +345,7 @@ function ReasonBreakdown({ prospects }: { prospects: CampaignDetail["result"]["p
 function WorkflowRow({ w }: { w: WorkflowStatus }) {
   const waiting = !w.reply_detected && w.next_run_at ? new Date(w.next_run_at * 1000) : null;
   return (
-    <div className="flex items-center gap-3 rounded-md border border-border-faint bg-white/[0.02] px-3 py-2">
+    <div className="flex items-center gap-3 rounded-md border border-border-faint bg-black/[0.02] px-3 py-2">
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs text-text">{w.company || w.to || "Workflow"}</div>
         <div className="truncate font-mono text-[11px] text-muted">{w.to}</div>
@@ -372,7 +372,7 @@ function Metric({ label, value, accent }: { label: string; value: string | numbe
   return (
     <div className="text-right">
       <div className="text-[10px] uppercase tracking-wide text-muted">{label}</div>
-      <div className={cn("font-mono text-sm", accent ? "font-semibold text-accent-hi" : "text-text-2")}>{value}</div>
+      <div className={cn("font-mono text-sm", accent ? "font-semibold text-accent" : "text-text-2")}>{value}</div>
     </div>
   );
 }

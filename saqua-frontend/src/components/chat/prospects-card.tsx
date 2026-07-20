@@ -64,7 +64,7 @@ export function ProspectsCard({
     <div className="space-y-2.5">
       {summary && (
         <div className="flex items-center gap-2 px-1 text-xs text-muted">
-          <Target className="size-3.5 text-accent-hi" />
+          <Target className="size-3.5 text-accent" />
           <span>
             Researched {summary.researched ?? prospects.filter((p) => p.status === "ok").length} of{" "}
             {summary.total ?? prospects.length}
@@ -182,7 +182,7 @@ function ProspectRow({
                   <Section label={`Findings (${findings.length})`}>
                     <ul className="space-y-2">
                       {findings.map((f, k) => (
-                        <li key={k} className="rounded-md border border-border-faint bg-white/[0.02] p-2.5">
+                        <li key={k} className="rounded-md border border-border-faint bg-black/[0.02] p-2.5">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <span className="text-[11px] uppercase tracking-wide text-muted">{f.label}</span>
@@ -205,7 +205,7 @@ function ProspectRow({
                               href={f.source}
                               target="_blank"
                               rel="noreferrer"
-                              className="mt-1 inline-flex items-center gap-1 text-[11px] text-accent-hi hover:underline"
+                              className="mt-1 inline-flex items-center gap-1 text-[11px] text-accent hover:underline"
                             >
                               <Link2 className="size-3" />
                               {sourceHost(f.source)}
@@ -236,7 +236,7 @@ function ProspectRow({
                           href={s.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 rounded-sm border border-border-faint bg-white/[0.02] px-2 py-1 text-[11px] text-text-2 hover:border-border-strong hover:text-text"
+                          className="inline-flex items-center gap-1 rounded-sm border border-border-faint bg-black/[0.02] px-2 py-1 text-[11px] text-text-2 hover:border-border-strong hover:text-text"
                         >
                           <Link2 className="size-3 text-muted" />
                           {s.domain}

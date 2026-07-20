@@ -137,7 +137,7 @@ export default function ProspectsPage() {
                   <TD className="text-text-2">{p.location || "—"}</TD>
                   <TD className="text-right">
                     {pct(p.confidence) ? (
-                      <span className="font-mono font-medium text-accent-hi">{pct(p.confidence)}</span>
+                      <span className="font-mono font-medium text-accent">{pct(p.confidence)}</span>
                     ) : (
                       <span className="text-muted">—</span>
                     )}
@@ -184,7 +184,7 @@ function ProspectDrawer({ prospect: p, onClose }: { prospect: DiscoveryProspect;
                   href={p.website.startsWith("http") ? p.website : `https://${p.website}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 font-mono text-xs text-accent-hi hover:underline"
+                  className="inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline"
                 >
                   <Globe className="size-3" /> {host(p.website)}
                 </a>
@@ -223,9 +223,9 @@ function ProspectDrawer({ prospect: p, onClose }: { prospect: DiscoveryProspect;
                 {signals.map((sig, k) => (
                   <div
                     key={k}
-                    className="flex items-start gap-2.5 rounded-md border border-border-faint bg-white/[0.02] p-3 text-sm text-text-2"
+                    className="flex items-start gap-2.5 rounded-md border border-border-faint bg-black/[0.02] p-3 text-sm text-text-2"
                   >
-                    <Sparkles className="mt-0.5 size-3.5 shrink-0 text-accent-hi" />
+                    <Sparkles className="mt-0.5 size-3.5 shrink-0 text-accent" />
                     {sig}
                   </div>
                 ))}
@@ -246,7 +246,7 @@ function ProspectDrawer({ prospect: p, onClose }: { prospect: DiscoveryProspect;
 
 function Info({ label, value }: { label: string; value?: string | null }) {
   return (
-    <div className="rounded-md border border-border-faint bg-white/[0.02] p-3">
+    <div className="rounded-md border border-border-faint bg-black/[0.02] p-3">
       <div className="text-muted">{label}</div>
       <div className="mt-1 truncate font-medium text-text">{value || "—"}</div>
     </div>

@@ -36,6 +36,14 @@ const config: Config = {
         "warn-soft": "var(--warn-soft)",
         danger: "var(--danger)",
         "danger-soft": "var(--danger-soft)",
+        amber: "var(--amber)",
+        "amber-soft": "var(--amber-soft)",
+        peach: "var(--peach)",
+        "indigo-soft": "var(--indigo-soft)",
+      },
+      backgroundImage: {
+        "grad-brand": "var(--grad-brand)",
+        "grad-brand-soft": "var(--grad-brand-soft)",
       },
       borderRadius: {
         xs: "6px",
@@ -56,18 +64,23 @@ const config: Config = {
         "3xl": ["33px", { lineHeight: "1.15" }],
         "4xl": ["42px", { lineHeight: "1.08" }],
         "5xl": ["52px", { lineHeight: "1.05" }],
+        "6xl": ["64px", { lineHeight: "1.03" }],
+        "7xl": ["84px", { lineHeight: "1.0" }],
       },
       fontFamily: {
         sans: ["var(--font-sans)", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
+        // Display — General Sans, for marketing headlines and big type.
+        display: ["var(--font-display)", "Inter", "system-ui", "sans-serif"],
         // Reserved for exactly one thing: Saqua's own generated email copy (upright serif).
         serif: ["var(--font-serif)", "Georgia", "Cambria", "serif"],
         // Data-like elements: fit scores, timestamps, status tags, technical labels.
         mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       boxShadow: {
-        pop: "0 16px 50px rgba(0,0,0,.55)",
-        card: "0 1px 0 rgba(255,255,255,.02) inset, 0 1px 2px rgba(0,0,0,.4)",
-        glow: "0 0 0 1px var(--accent-line), 0 8px 40px -12px var(--accent-soft)",
+        pop: "0 24px 70px rgba(17,17,17,.16)",
+        card: "0 6px 24px rgba(17,17,17,.06), 0 1px 3px rgba(17,17,17,.04)",
+        nav: "0 10px 34px rgba(17,17,17,.09), 0 2px 8px rgba(17,17,17,.05)",
+        glow: "0 0 0 1px var(--accent-line), 0 14px 46px -14px var(--accent-soft)",
       },
       transitionTimingFunction: {
         smooth: "cubic-bezier(.22,.61,.36,1)",

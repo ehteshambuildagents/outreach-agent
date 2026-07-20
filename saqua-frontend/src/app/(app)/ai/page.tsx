@@ -310,20 +310,20 @@ function Bubble({
       className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}
     >
       {!isUser && (
-        <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-white/[0.03]">
+        <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-black/[0.03]">
           <Logo className="w-4" />
         </div>
       )}
       <div
         className={cn(
           "max-w-[76ch] whitespace-pre-wrap rounded-lg px-4 py-2.5 text-sm leading-6",
-          isUser ? "bg-accent-soft text-text" : "border border-border-faint bg-white/[0.02] text-text-2",
+          isUser ? "bg-accent-soft text-text" : "border border-border-faint bg-black/[0.02] text-text-2",
         )}
       >
         {text ? shown : children}
       </div>
       {isUser && (
-        <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-white/[0.03] text-muted">
+        <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-black/[0.03] text-muted">
           <User className="size-3.5" />
         </div>
       )}
@@ -359,11 +359,11 @@ function Thinking() {
   }, []);
   return (
     <div className="flex items-center gap-3">
-      <div className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-white/[0.03]">
+      <div className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-black/[0.03]">
         <Logo className="w-4 animate-pulse-soft" />
       </div>
-      <div className="inline-flex items-center gap-2.5 rounded-lg border border-border-faint bg-white/[0.02] px-4 py-2.5 text-sm text-text-2">
-        <Search className="size-3.5 animate-pulse-soft text-accent-hi" />
+      <div className="inline-flex items-center gap-2.5 rounded-lg border border-border-faint bg-black/[0.02] px-4 py-2.5 text-sm text-text-2">
+        <Search className="size-3.5 animate-pulse-soft text-accent" />
         <span>{STAGES[i]}…</span>
         <span className="text-xs text-muted">research runs live, so this can take a minute</span>
       </div>
@@ -381,7 +381,7 @@ function EmptyState({ onPick }: { onPick: (text: string) => void }) {
     >
       <div className="relative mb-5">
         <div className="accent-glow absolute inset-0 scale-[2.4] opacity-50" />
-        <div className="relative grid size-14 place-items-center rounded-2xl border border-border bg-white/[0.03]">
+        <div className="relative grid size-14 place-items-center rounded-2xl border border-border bg-black/[0.03]">
           <Logo className="w-8" />
         </div>
       </div>
@@ -396,7 +396,7 @@ function EmptyState({ onPick }: { onPick: (text: string) => void }) {
           <button
             key={ex}
             onClick={() => onPick(ex)}
-            className="rounded-full border border-border-faint bg-white/[0.02] px-3 py-1.5 text-xs text-muted transition-colors hover:border-border hover:bg-white/[0.05] hover:text-text-2"
+            className="rounded-full border border-border-faint bg-black/[0.02] px-3 py-1.5 text-xs text-muted transition-colors hover:border-border hover:bg-black/[0.05] hover:text-text-2"
           >
             {ex}
           </button>
