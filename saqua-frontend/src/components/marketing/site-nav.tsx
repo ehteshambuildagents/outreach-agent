@@ -54,9 +54,7 @@ export function SiteNav() {
           ))}
         </nav>
         <div className="flex items-center gap-2">
-          <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
-            <Link href="/sign-in">Log in</Link>
-          </Button>
+          {/* Pre-launch: no login path. The only action is joining the waitlist. */}
           <Button asChild variant="primary" size="sm" className="rounded-full">
             <Link href={PRELAUNCH ? WAITLIST_ANCHOR : "/sign-up"}>
               {PRELAUNCH ? "Join the waitlist" : "Get started"} <ArrowUpRight className="size-4" />

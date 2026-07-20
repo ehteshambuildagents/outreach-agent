@@ -9,7 +9,6 @@ const COLS: { title: string; links: { href: string; label: string }[] }[] = [
     links: [
       { href: "/#pipeline", label: "How it works" },
       { href: "/pricing", label: "Pricing" },
-      { href: "/ai", label: "Workspace" },
       { href: "https://cal.com/saqua/demo-call", label: "Book a demo" },
     ],
   },
@@ -30,8 +29,7 @@ const COLS: { title: string; links: { href: string; label: string }[] }[] = [
   {
     title: "Get started",
     links: [
-      // Log in stays: closing signup must not lock out existing accounts.
-      { href: "/sign-in", label: "Log in" },
+      // Pre-launch: no login path — the waitlist is the only entry point.
       PRELAUNCH
         ? { href: WAITLIST_ANCHOR, label: "Join the waitlist" }
         : { href: "/sign-up", label: "Get started" },
