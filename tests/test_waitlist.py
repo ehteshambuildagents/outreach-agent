@@ -206,6 +206,32 @@ class OptInTests(unittest.TestCase):
         self.assertIsNone(waitlist.confirm("nope", db=self.db))
         self.assertIsNone(waitlist.unsubscribe("nope", db=self.db))
 
+    def test_failed_write_raises_instead_of_reporting_success(self):
+        """Regression: a confirm whose UPDATE did not land used to return the row
+        anyway, so the visitor saw "You are on the list" while the row stayed
+        unconfirmed. The failure must be impossible to mistake for a missing row."""
+        waitlist.join("a@test.com", db=self.db)
+        token = store.get("a@test.com", db=self.db)["token"]
+        with mock.patch.object(store, "confirm", return_value=False):
+            with self.assertRaises(waitlist.ConfirmWriteError):
+                waitlist.confirm(token, db=self.db)
+        # And the row is honestly still unconfirmed.
+        self.assertEqual(store.get("a@test.com", db=self.db)["status"],
+                         store.UNCONFIRMED)
+
+    def test_store_confirm_reports_false_when_no_row_matches(self):
+        """A zero-row UPDATE is a failure, not a success. Previously indistinguishable
+        from a successful write because only truthiness of rowcount was returned."""
+        self.assertFalse(store.confirm("never-joined@test.com", db=self.db))
+
+    def test_store_confirm_reports_false_on_a_storage_error(self):
+        waitlist.join("a@test.com", db=self.db)
+        with mock.patch.object(type(self.db), "execute",
+                               side_effect=RuntimeError("db down")):
+            self.assertFalse(store.confirm("a@test.com", db=self.db))
+        self.assertEqual(store.get("a@test.com", db=self.db)["status"],
+                         store.UNCONFIRMED)
+
     def test_invalid_addresses_rejected(self):
         for bad in ("", "nope", "a@b", "a b@c.com", "x@" + "y" * 300 + ".com"):
             self.assertEqual(waitlist.join(bad, db=self.db), waitlist.INVALID)
@@ -230,6 +256,28 @@ class EndpointTests(unittest.TestCase):
         os.environ.pop("WAITLIST_REQUIRE_SHARED_REDIS", None)
         os.environ.pop("AUTOMATION_DB_PATH", None)
         store.reset_ensured()
+
+    def test_confirm_endpoint_does_not_claim_success_when_the_write_fails(self):
+        """The bug as the visitor experienced it: valid link, success page, row
+        never updated. A failed write must return an error page they can act on."""
+        self.c.post("/api/waitlist", json={"email": "ok@x.com"},
+                    headers={"x-forwarded-for": "203.0.113.61"})
+        token = store.get("ok@x.com")["token"]
+        with mock.patch.object(store, "confirm", return_value=False):
+            r = self.c.get("/api/waitlist/confirm", params={"t": token})
+        self.assertEqual(r.status_code, 503)
+        self.assertNotIn("You are on the list", r.text)
+        self.assertIn("could not", r.text.lower())
+        self.assertEqual(store.get("ok@x.com")["status"], store.UNCONFIRMED)
+
+    def test_confirm_endpoint_still_succeeds_normally(self):
+        self.c.post("/api/waitlist", json={"email": "ok2@x.com"},
+                    headers={"x-forwarded-for": "203.0.113.62"})
+        token = store.get("ok2@x.com")["token"]
+        r = self.c.get("/api/waitlist/confirm", params={"t": token})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("You are on the list", r.text)
+        self.assertEqual(store.get("ok2@x.com")["status"], store.SUBSCRIBED)
 
     def test_honeypot_looks_successful_but_stores_nothing(self):
         r = self.c.post("/api/waitlist",

@@ -97,18 +97,35 @@ def join(email: str, source: str = None, *, db=None) -> str:
         return ERROR
 
 
+class ConfirmWriteError(Exception):
+    """The token was valid but the status could not be written.
+
+    Deliberately an exception rather than a falsy return: the caller previously did
+    ``if not row`` and could not distinguish "unknown token" from "write failed", so
+    a failed write rendered the success page and the visitor believed they were
+    subscribed while the row stayed ``unconfirmed``. A type that cannot be silently
+    treated as "no row" is what stops that recurring.
+    """
+
+
 def confirm(token: str, *, db=None) -> dict:
     """Confirm via link token. Returns the row, or None if the token is unknown.
 
     Idempotent: clicking twice is a success both times (the second is already
     ``subscribed``), because bouncing a user to an error page for double-clicking
     their own confirm link is worse than useless.
+
+    Raises :class:`ConfirmWriteError` if the row exists but the write did not take.
     """
     row = store.get_by_token(token, db=db)
     if not row:
         return None
     if row["status"] == store.UNCONFIRMED:
-        store.confirm(row["email"], db=db)
+        if not store.confirm(row["email"], db=db):
+            # store.confirm has already logged the specific cause.
+            log.error("waitlist: confirm did not persist for %s — refusing to "
+                      "report success", row["email"])
+            raise ConfirmWriteError(row["email"])
         _record("confirmed", row["email"], row.get("source"))
         return store.get(row["email"], db=db)
     return row

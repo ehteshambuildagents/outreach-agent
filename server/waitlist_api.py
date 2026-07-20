@@ -228,7 +228,17 @@ def register(app) -> None:
 
     @app.get("/api/waitlist/confirm", response_class=HTMLResponse)
     def confirm(t: str = ""):
-        row = waitlist.confirm(t)
+        try:
+            row = waitlist.confirm(t)
+        except waitlist.ConfirmWriteError:
+            # The token was good but the status did not persist. Saying "you are on
+            # the list" here is the one answer we must not give: it is false, and it
+            # stops the visitor from retrying the only action that could fix it.
+            return HTMLResponse(_page(
+                "We could not confirm you just now",
+                "Your link is valid, but we could not save the change. Please open "
+                "the link again in a moment — nothing is lost."),
+                status_code=503)
         if not row:
             return HTMLResponse(_page(
                 "Link not recognised",
