@@ -15,7 +15,7 @@
   <div class="container page-head">
     <span class="eyebrow reveal"><span class="dot"></span> Legal</span>
     <h1 class="reveal" style="margin-top:16px">Privacy Policy</h1>
-    <p class="muted reveal" style="margin-top:10px">How Saqua collects, uses, and protects your data. Last updated: 13 July 2026.</p>
+    <p class="muted reveal" style="margin-top:10px">How Saqua collects, uses, and protects your data. Last updated: 21 July 2026.</p>
   </div>
   <div class="container section" style="padding-top:32px">
     <div class="prose reveal">
@@ -45,8 +45,9 @@
         (website content, news, public social posts, and business contact details).</li>
         <li><strong>Mailbox access tokens</strong> — if you connect Gmail or Outlook,
         we store the OAuth access and refresh tokens needed to send email and detect
-        replies on your behalf. These are <strong>encrypted at rest</strong> and are
-        never shown in the interface or sent to your browser.</li>
+        replies on your behalf. For Gmail we read only message metadata (identifiers
+        and labels), never message content. These tokens are <strong>encrypted at
+        rest</strong> and are never shown in the interface or sent to your browser.</li>
         <li><strong>Conversations and workspace state</strong> — your chat threads with
         the assistant and the research/drafts attached to them, so you can return to
         your work.</li>
@@ -56,16 +57,28 @@
       </ul>
 
       <h2>Google user data (Gmail)</h2>
-      <p>If you connect a Google account, Saqua requests only the Gmail scopes needed to
-      send the messages you approve and to detect replies to your sequences. Saqua's use
-      of information received from Google APIs adheres to the
+      <p>If you connect a Google account, Saqua requests only two Gmail permissions:
+      <strong>Send</strong> (<code>gmail.send</code>), to send the emails you draft and
+      approve plus their follow-ups; and <strong>Metadata</strong>
+      (<code>gmail.metadata</code>), to detect replies. The metadata scope grants access
+      only to message and thread <strong>identifiers and labels</strong> (such as INBOX and
+      SENT) — never the subject or body of any message. Saqua cannot and does not read your
+      email content; when a reply is detected it stores only the message's opaque ID and a
+      timestamp, used solely to stop the follow-up sequence.</p>
+      <p>Saqua's use of information received from Google APIs adheres to the
       <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener" target="_blank">Google API Services User Data Policy</a>,
-      including its Limited Use requirements. We do not use Gmail data for advertising,
-      we do not sell it, and we do not allow humans to read it except where you explicitly
-      ask us to, where required for security or to comply with the law, or where the data
-      is aggregated/anonymized. You can revoke Saqua's access at any time from your
+      including its Limited Use requirements. Specifically:</p>
+      <ul>
+        <li>We do <strong>not</strong> use Google user data to develop, improve, or train
+        generalized or non-personalized AI or ML models.</li>
+        <li>We do not sell or transfer Google user data, and we do not use it for advertising.</li>
+        <li>We do not allow humans to read your Google user data, except with your explicit
+        consent, where required for security or to comply with the law, or where the data has
+        been aggregated and anonymized.</li>
+      </ul>
+      <p>You can revoke Saqua's access at any time from your
       <a href="https://myaccount.google.com/permissions" rel="noopener" target="_blank">Google account permissions</a>
-      or by disconnecting the mailbox on the Connections page.</p>
+      or by disconnecting the mailbox on the Connections page, which deletes the stored tokens.</p>
 
       <h2>How we use your data</h2>
       <ul>
