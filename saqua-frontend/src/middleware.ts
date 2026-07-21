@@ -21,6 +21,12 @@ const isPublicRoute = createRouteMatcher([
   "/contact(.*)",
   "/privacy(.*)",
   "/terms(.*)",
+  // TEMPORARY re-auth allowance: lets an existing user (the founder) sign back in
+  // during the locked-down phase. Only /sign-in is opened — /sign-up stays closed
+  // — and reaching any app page still requires the FOUNDER_USER_IDS gate below, so
+  // signing in grants a session but NOT app access to anyone else. Remove this
+  // line once the founder's session is re-established.
+  "/sign-in(.*)",
 ]);
 
 // Founder bypass allowlist: comma-separated Clerk user IDs. Empty when the env
