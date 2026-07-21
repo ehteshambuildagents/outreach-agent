@@ -192,6 +192,16 @@ class OAuthFlowTests(unittest.TestCase):
         self.assertIn("state=STATE", url)
         self.assertIn("gmail.send", url)
 
+    def test_gmail_requests_metadata_not_full_read(self):
+        """Reply detection reads only message/thread IDs + labels (history.list), so
+        we request the narrow gmail.metadata scope. gmail.readonly (full body access,
+        a Google RESTRICTED scope) must NOT be requested — keep this locked so a
+        future edit can't silently re-broaden it and re-trigger a security review."""
+        with mock.patch.dict(os.environ, {"GOOGLE_CLIENT_ID": "gid"}):
+            url = oauth.build_authorize_url("gmail", "S", "https://app/cb")
+        self.assertIn("gmail.metadata", url)
+        self.assertNotIn("gmail.readonly", url)
+
     def test_authorize_url_microsoft(self):
         with mock.patch.dict(os.environ, {"MICROSOFT_CLIENT_ID": "mid"}):
             url = oauth.build_authorize_url("outlook", "S", "https://app/cb")

@@ -118,67 +118,6 @@ class GmailProvider(EmailProvider):
                                  "labels": mm.get("labelIds", [])})
         return {"history_id": d.get("historyId"), "messages": messages}
 
-    def history_raw(self, start_history_id, history_types=None, max_pages=10):
-        """DIAGNOSTIC: the RAW history.list response(s) since ``start_history_id``,
-        following ``nextPageToken``. ``history_types=None`` requests ALL change
-        types, so label/read/delete changes that a ``messageAdded``-only query
-        hides become visible — this is how you tell 'no new message' apart from
-        'a message we dropped'. Read-only. Returns the concatenated raw records
-        plus a per-type tally; ``truncated`` flags if we hit ``max_pages``."""
-        params = {"startHistoryId": start_history_id}
-        if history_types:                     # omit -> Gmail returns every type
-            params["historyTypes"] = history_types
-        records, latest, token, pages = [], None, None, 0
-        while True:
-            p = dict(params)
-            if token:
-                p["pageToken"] = token
-            r = requests.get(f"{_API}/history", headers=self._headers(),
-                             params=p, timeout=_TIMEOUT)
-            if r.status_code != 200:
-                raise ProviderError(f"gmail history HTTP {r.status_code}: {r.text[:200]}")
-            d = r.json()
-            records.extend(d.get("history", []))
-            latest = d.get("historyId") or latest
-            pages += 1
-            token = d.get("nextPageToken")
-            if not token or pages >= max_pages:
-                break
-        tally = {}
-        for h in records:
-            for k in ("messagesAdded", "messagesDeleted", "labelsAdded", "labelsRemoved"):
-                if h.get(k):
-                    tally[k] = tally.get(k, 0) + len(h[k])
-        return {"history_id": latest, "pages_fetched": pages,
-                "truncated": bool(token), "record_count": len(records),
-                "type_counts": tally, "records": records}
-
-    def get_thread(self, thread_id, metadata_headers=("From", "To", "Subject", "Date")):
-        """DIAGNOSTIC: every message in a thread with its labelIds — checkpoint- and
-        history-window-independent ground truth for 'does this thread contain an
-        inbound reply'. Uses format=metadata (headers only, no bodies), so it's
-        cheap and exposes SENT vs received via labelIds. Read-only."""
-        params = [("format", "metadata")]
-        params += [("metadataHeaders", h) for h in metadata_headers]
-        r = requests.get(f"{_API}/threads/{thread_id}", headers=self._headers(),
-                         params=params, timeout=_TIMEOUT)
-        if r.status_code != 200:
-            raise ProviderError(f"gmail threads.get HTTP {r.status_code}: {r.text[:200]}")
-        d = r.json()
-        messages = []
-        for m in d.get("messages", []):
-            hdrs = {h.get("name"): h.get("value")
-                    for h in (m.get("payload", {}).get("headers") or [])}
-            labels = m.get("labelIds", [])
-            messages.append({"message_id": m.get("id"), "thread_id": m.get("threadId"),
-                             "labelIds": labels, "is_sent": "SENT" in labels,
-                             "internal_date": m.get("internalDate"),
-                             "snippet": m.get("snippet"),
-                             "from": hdrs.get("From"), "to": hdrs.get("To"),
-                             "subject": hdrs.get("Subject"), "date": hdrs.get("Date")})
-        return {"thread_id": d.get("id"), "message_count": len(messages),
-                "messages": messages}
-
     def health(self):
         if not (os.environ.get("GOOGLE_CLIENT_ID")
                 and os.environ.get("GOOGLE_CLIENT_SECRET")):

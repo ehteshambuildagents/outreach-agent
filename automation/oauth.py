@@ -43,8 +43,12 @@ PROVIDERS = {
         "token": "https://oauth2.googleapis.com/token",
         "revoke": "https://oauth2.googleapis.com/revoke",
         "userinfo": "https://openidconnect.googleapis.com/v1/userinfo",
+        # gmail.metadata (not gmail.readonly): reply detection only reads message
+        # and thread IDs + labels from history.list — never message bodies. The
+        # narrower metadata scope grants exactly that and keeps us out of the
+        # Restricted-scope tier that full-read (gmail.readonly) would require.
         "scopes": ("openid email https://www.googleapis.com/auth/gmail.send "
-                   "https://www.googleapis.com/auth/gmail.readonly"),
+                   "https://www.googleapis.com/auth/gmail.metadata"),
         "client_id_env": "GOOGLE_CLIENT_ID",
         "client_secret_env": "GOOGLE_CLIENT_SECRET",
         "redirect_env": "GOOGLE_REDIRECT_URI",
