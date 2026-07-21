@@ -15,7 +15,8 @@ import { NextResponse } from "next/server";
 // /sign-in is reopened so the reviewer can log in; /sign-up stays closed.
 //
 // To re-seal after verification: remove "/sign-in(.*)" and the appAccess check
-// below, and clear the flag from the reviewer's Clerk user.
+// below, and clear the flag from the reviewer's Clerk user. Full step-by-step
+// checklist (code + Clerk + DB): see REVIEWER_ACCESS_RESEAL.md at the repo root.
 const isPublicRoute = createRouteMatcher([
   "/",
   "/about(.*)",
