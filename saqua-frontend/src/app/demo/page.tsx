@@ -18,18 +18,18 @@ export default function DemoPage() {
 
       <SiteNav />
 
-      <section className="px-6 pb-24 pt-36 lg:px-12">
+      <section className="px-6 pb-24 pt-32 lg:px-12">
         <div className="mx-auto max-w-2xl text-center">
           <span className="float-soft inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-4 text-xs font-medium shadow-[0_1px_2px_rgba(17,17,17,.04)]">
             <Sparkles className="size-3.5 text-accent" /> Live, on real data — no account
           </span>
           <h1 className="mx-auto mt-7 max-w-[16ch] font-display text-4xl font-medium leading-[1.05] tracking-[-0.03em] md:text-6xl">
-            See Saqua <span className="grad-text-anim">qualify</span> real prospects.
+            Talk to your <span className="grad-text-anim">AI&nbsp;sales assistant</span>.
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-base leading-7 text-muted">
-            Tell it who you sell to. It finds companies that match, researches and scores each one
-            for fit, then drafts the opener around the real signal it found — live, the same pipeline
-            the product runs.
+            Ask it who you sell to. It finds companies that match, researches and scores each one
+            for fit, then writes the opener around the real signal it found — live, the same
+            assistant experience the product runs.
           </p>
         </div>
 
