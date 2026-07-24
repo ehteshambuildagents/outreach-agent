@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 
 const LINKS = [
   { href: "/#pipeline", label: "How it works" },
+  { href: "/demo", label: "Live demo" },
   { href: "/pricing", label: "Pricing" },
   { href: "/about", label: "About" },
 ];
@@ -56,8 +57,9 @@ export function SiteNav() {
         <div className="flex items-center gap-2">
           {/* Pre-launch: no login path. The only action is joining the waitlist. */}
           <Button asChild variant="primary" size="sm" className="rounded-full">
-            <Link href={PRELAUNCH ? WAITLIST_ANCHOR : "/sign-up"}>
-              {PRELAUNCH ? "Join the waitlist" : "Get started"} <ArrowUpRight className="size-4" />
+            <Link href={PRELAUNCH ? WAITLIST_ANCHOR : "/sign-up"} className="group/cta">
+              {PRELAUNCH ? "Join the waitlist" : "Get started"}{" "}
+              <ArrowUpRight className="size-4 transition-transform duration-200 ease-smooth group-hover/cta:translate-x-0.5 group-hover/cta:-translate-y-0.5" />
             </Link>
           </Button>
         </div>

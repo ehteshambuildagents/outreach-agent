@@ -175,8 +175,6 @@ async function proxy(request: NextRequest, { params }: { params: { path: string[
       signal: controller.signal,
     });
 
-    const responseBytes = await upstream.arrayBuffer();
-    const durationMs = Date.now() - started;
     const contentType = upstream.headers.get("content-type") || "application/octet-stream";
     const responseHeaders = new Headers();
     upstream.headers.forEach((value, key) => {
@@ -186,6 +184,33 @@ async function proxy(request: NextRequest, { params }: { params: { path: string[
     });
     responseHeaders.set("content-type", contentType);
     responseHeaders.set("x-saqua-trace-id", traceId);
+
+    // Server-Sent Events (the live demo streams the pipeline as it runs): pass the
+    // body straight through as a stream. Buffering it with arrayBuffer() — as we do
+    // for normal JSON below — would withhold every event until the run finished,
+    // defeating the point. content-encoding is hop-by-hop and already stripped, so
+    // there is no half-buffered gzip layer to worry about.
+    if (contentType.includes("text/event-stream")) {
+      responseHeaders.set("cache-control", "no-cache, no-transform");
+      responseHeaders.set("x-accel-buffering", "no");
+      logProxy("info", "api_proxy_stream", {
+        trace_id: traceId,
+        method: request.method,
+        path,
+        target_url: logSafeUrl(url),
+        backend_status: upstream.status,
+        backend_content_type: contentType,
+        duration_ms: Date.now() - started,
+      });
+      return new NextResponse(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: responseHeaders,
+      });
+    }
+
+    const responseBytes = await upstream.arrayBuffer();
+    const durationMs = Date.now() - started;
 
     logProxy("info", "api_proxy_complete", {
       trace_id: traceId,
