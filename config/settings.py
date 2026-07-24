@@ -127,8 +127,11 @@ RESEARCH_SCORE_THRESHOLD = 25          # below this 0-100 score -> honest SKIP
 REQUEST_MAX_TOKENS = 2500              # larger output (team list + many fields)
 
 # ── Email writer agent ────────────────────────────────────────────────
-# Cold emails are short, so the output budget is tight (also bounds cost).
-WRITER_MAX_TOKENS = 600
+# Cold emails are short, so the output budget is tight (also bounds cost). But it
+# is a TRUNCATION ceiling, not a length target — max_tokens only caps billing when
+# actually used, and a draft cut off mid-JSON parses as "empty response" (observed
+# live at 600: the model occasionally runs long and the whole draft is lost).
+WRITER_MAX_TOKENS = 900
 # A human cold email is short with VARIED sentence length (a sub-8-word line next
 # to a 20+-word one), which runs ~3-7 short sentences. Length is gated by words,
 # not sentence count, so the punchy rhythm isn't flattened into 5 medium ones.
@@ -367,6 +370,27 @@ DISCOVERY_MAX_LIMIT = 50               # hard cap per request
 RESEARCH_LIST_MAX = 10                 # max companies researched+qualified per run
 DISCOVERY_PROVIDER_POOL = 30           # results pulled from EACH provider per query
 DISCOVERY_MIN_CONFIDENCE = 0.15        # drop candidates below this match confidence
+
+# ── Public live demo (no-login; runs the REAL discovery→research→qualify→write
+# pipeline for a visitor). Because it spends real API money on an anonymous public
+# endpoint, it carries LAYERED caps: per-IP + per-email (abuse), plus a GLOBAL daily
+# spend/run ceiling (the true cost stop, since per-IP caps don't bound total spend).
+# See server/demo_api.py + demo/runner.py. Every knob is env-overridable.
+DEMO_ENABLED = os.getenv("DEMO_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+DEMO_CANDIDATES = int(os.getenv("DEMO_CANDIDATES", "4"))          # companies scored per run
+DEMO_RESEARCH_CONCURRENCY = int(os.getenv("DEMO_RESEARCH_CONCURRENCY", "4"))  # all DEMO_CANDIDATES research in parallel, so a real run finishes well under the deadline
+DEMO_RUN_TIMEOUT_SECONDS = int(os.getenv("DEMO_RUN_TIMEOUT_SECONDS", "90"))
+DEMO_IP_DAILY = int(os.getenv("DEMO_IP_DAILY", "5"))             # runs / IP / 24h (hard)
+DEMO_IP_BURST = int(os.getenv("DEMO_IP_BURST", "1"))            # runs / IP / burst window
+DEMO_IP_BURST_WINDOW = int(os.getenv("DEMO_IP_BURST_WINDOW", "90"))  # seconds
+DEMO_EMAIL_DAILY = int(os.getenv("DEMO_EMAIL_DAILY", "5"))       # runs / email / 24h (hard)
+# Budget ceiling chosen for launch: measured real cost is $0.15–0.29/run (2026-07-24,
+# 13–20 Haiku research calls + 1–2 Sonnet writer calls), so $50 ≈ 200 typical runs —
+# which is exactly the fail-closed run backstop, keeping both ceilings coherent.
+DEMO_DAILY_BUDGET_USD = float(os.getenv("DEMO_DAILY_BUDGET_USD", "50.0"))  # global $/day
+DEMO_GLOBAL_DAILY_RUNS = int(os.getenv("DEMO_GLOBAL_DAILY_RUNS", "200"))   # fail-closed backstop
+DEMO_EST_COST_PER_RUN_USD = float(os.getenv("DEMO_EST_COST_PER_RUN_USD", "0.25"))  # ledgered per run
+DEMO_LEDGER_USER = "__demo__"          # synthetic user_id the demo meters its spend under
 
 # A realistic desktop-browser User-Agent so public pages serve normal HTML.
 USER_AGENT = (

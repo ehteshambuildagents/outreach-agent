@@ -580,6 +580,13 @@ waitlist_api.register(app)
 from server import contact_api  # noqa: E402
 contact_api.register(app)
 
+# Public (unauthenticated) LIVE DEMO. Runs the real pipeline for a visitor and
+# streams it (SSE). It is the only public endpoint that spends real API money, so
+# it carries layered caps + an email gate + a global daily ceiling on top of the
+# shared waitlist limiter (see server/demo_api.py).
+from server import demo_api  # noqa: E402
+demo_api.register(app)
+
 
 # ── Background worker (opt-in; a real deployment runs one) ──────────────
 # Off by default so importing the app (tests, one-off scripts) never spawns a
