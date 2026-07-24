@@ -316,25 +316,40 @@ export default function SettingsPage() {
               <CardTitle>Profile</CardTitle>
               <Users className="size-4 text-muted" />
             </CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2">
-              <Field label="Name">
-                <Input defaultValue="Ehtesham Munir" />
-              </Field>
-              <Field label="Email">
-                <Input defaultValue="ehtesham@saqua.ai" />
-              </Field>
-              <Field label="Workspace">
-                <Input defaultValue="Saqua" />
-              </Field>
-              <Field label="Timezone">
-                <Input defaultValue="UTC+05 Islamabad, Karachi" />
-              </Field>
-              <div className="md:col-span-2 flex justify-end border-t border-border-faint pt-4">
-                <Button variant="primary" disabled title="Backend endpoint missing for profile updates">
-                  <Save className="size-4" /> Save changes
+            {isDemo ? (
+              // A demo visitor has no account, so the place a real profile would
+              // sit says exactly that — honest and simple — and points to the
+              // waitlist rather than showing a fake identity.
+              <CardContent>
+                <p className="text-sm leading-6 text-text-2">
+                  You&apos;re in a live demo — no account is created and nothing here is saved.
+                  This sandbox resets when your session ends.
+                </p>
+                <Button asChild variant="primary" className="mt-4">
+                  <Link href="/#waitlist">Join the waitlist to set up your own workspace</Link>
                 </Button>
-              </div>
-            </CardContent>
+              </CardContent>
+            ) : (
+              <CardContent className="grid gap-4 md:grid-cols-2">
+                <Field label="Name">
+                  <Input defaultValue="Ehtesham Munir" />
+                </Field>
+                <Field label="Email">
+                  <Input defaultValue="ehtesham@saqua.ai" />
+                </Field>
+                <Field label="Workspace">
+                  <Input defaultValue="Saqua" />
+                </Field>
+                <Field label="Timezone">
+                  <Input defaultValue="UTC+05 Islamabad, Karachi" />
+                </Field>
+                <div className="md:col-span-2 flex justify-end border-t border-border-faint pt-4">
+                  <Button variant="primary" disabled title="Backend endpoint missing for profile updates">
+                    <Save className="size-4" /> Save changes
+                  </Button>
+                </div>
+              </CardContent>
+            )}
           </Card>
         </div>
 
