@@ -84,7 +84,7 @@ export default function PricingPage() {
 
       <section className="mx-auto max-w-6xl px-6 pb-24 pt-36 text-center">
         <span className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-4 text-xs font-medium shadow-[0_1px_2px_rgba(17,17,17,.04)]">
-          <Sparkles className="size-3.5 text-amber" /> Transparent pricing, no surprises
+          <Sparkles className="size-3.5 text-accent" /> Transparent pricing, no surprises
         </span>
         <h1 className="mx-auto mt-7 max-w-[18ch] font-display text-4xl font-medium tracking-[-0.03em] md:text-6xl">
           Priced per prospect you <span className="grad-text">actually research</span>.

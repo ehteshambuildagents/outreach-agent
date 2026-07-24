@@ -48,7 +48,7 @@ export default function AboutPage() {
       <section className="mx-auto max-w-3xl px-6 pb-16 pt-36 text-center">
         <Reveal>
           <span className="float-soft inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-4 text-xs font-medium shadow-[0_1px_2px_rgba(17,17,17,.04)]">
-            <Sparkles className="size-3.5 text-amber" /> Why we built it
+            <Sparkles className="size-3.5 text-accent" /> Why we built it
           </span>
           <h1 className="mx-auto mt-7 max-w-[20ch] font-display text-4xl font-medium leading-[1.05] tracking-[-0.03em] md:text-6xl">
             Outbound is a pipeline. Founders were sold a <span className="grad-text-anim">template</span>.

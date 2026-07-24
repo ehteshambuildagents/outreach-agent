@@ -91,12 +91,12 @@ export default function LandingPage() {
       <section className="px-6 pb-20 pt-36 text-center lg:px-12">
         <Reveal>
           <span className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-4 text-xs font-medium shadow-[0_1px_2px_rgba(17,17,17,.04)]">
-            <Zap className="size-3.5 text-amber" /> Research to reply, run by you
+            <Zap className="size-3.5 text-accent" /> Research to reply, run by you
           </span>
         </Reveal>
         <Reveal delay={0.05}>
           <h1 className="mx-auto mt-7 max-w-[18ch] font-display text-5xl font-medium leading-[1.03] tracking-[-0.03em] md:text-7xl">
-            The whole outbound pipeline,<br />without the <span className="grad-text">headcount</span>.
+            The whole outbound pipeline,<br />without the <span className="grad-text-anim">headcount</span>.
           </h1>
         </Reveal>
         <Reveal delay={0.1}>
@@ -108,11 +108,26 @@ export default function LandingPage() {
         </Reveal>
 
         <Reveal delay={0.15}>
-          <HeroForm className="mt-8" />
+          {/* Two CTAs, equal weight: the waitlist (conversion) and the live demo
+              (proof). The full waitlist form lives in the #waitlist section. */}
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <a
+              href="#waitlist"
+              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-accent px-7 text-sm font-semibold text-white shadow-[0_1px_2px_rgba(79,90,247,.35)] transition-all hover:-translate-y-px hover:bg-accent-hi hover:shadow-[0_8px_22px_rgba(79,90,247,.32)] sm:w-auto"
+            >
+              Join the waitlist
+            </a>
+            <a
+              href="/demo"
+              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-border-strong bg-white px-7 text-sm font-semibold text-text shadow-[0_1px_2px_rgba(17,17,17,.06)] transition-all hover:-translate-y-px hover:border-accent-line hover:text-accent hover:shadow-[0_8px_22px_rgba(79,90,247,.16)] sm:w-auto"
+            >
+              Try the live demo <Sparkles className="size-4 text-accent" />
+            </a>
+          </div>
           <p className="mt-4 text-xs text-muted">
-            No credit card required.{" "}
+            The demo runs the real pipeline on live data — no account needed.{" "}
             <a href="https://cal.com/saqua/demo-call" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
-              Or book a demo
+              Or book a call
             </a>
             .
           </p>
@@ -139,7 +154,7 @@ export default function LandingPage() {
         <Reveal delay={0.25}>
           <div className="mt-8 flex items-center justify-center gap-3 text-sm text-muted">
             <div className="flex -space-x-2">
-              {["from-accent to-[#7a6ef7]", "from-[#f5a305] to-[#fcd6bd]", "from-[#7a6ef7] to-accent", "from-[#4f5af7] to-[#f5a305]"].map((g, i) => (
+              {["from-accent to-[#8b93ff]", "from-[#6b74ff] to-[#c3c8ff]", "from-[#8b93ff] to-accent", "from-[#4453e8] to-[#6b74ff]"].map((g, i) => (
                 <span key={i} className={`size-7 rounded-full border-2 border-bg bg-gradient-to-br ${g}`} />
               ))}
             </div>
@@ -253,8 +268,8 @@ export default function LandingPage() {
         <div className="mx-auto grid max-w-6xl gap-5 md:grid-cols-3">
           {AUDIENCES.map((a, i) => (
             <Reveal key={a.title} delay={i * 0.07}>
-              <div className="glass hover-lift h-full rounded-2xl border border-border p-7 shadow-card">
-                <span className="grid size-12 place-items-center rounded-full bg-accent-soft text-accent">
+              <div className="group glass hover-lift h-full rounded-2xl border border-border p-7 shadow-card">
+                <span className="grid size-12 place-items-center rounded-full bg-accent-soft text-accent transition-all duration-300 ease-smooth group-hover:scale-110 group-hover:bg-accent group-hover:text-accent-ink">
                   <a.icon className="size-5" />
                 </span>
                 <h3 className="mt-6 text-xl font-semibold text-text">{a.title}</h3>
@@ -276,8 +291,8 @@ export default function LandingPage() {
         <div className="mx-auto grid max-w-6xl gap-5 md:grid-cols-3">
           {DIFFERENTIATORS.map((d, i) => (
             <Reveal key={d.title} delay={i * 0.07}>
-              <div className="glass hover-lift h-full rounded-2xl border border-border p-7 shadow-card">
-                <span className="grid size-12 place-items-center rounded-full bg-accent-soft text-accent">
+              <div className="group glass hover-lift h-full rounded-2xl border border-border p-7 shadow-card">
+                <span className="grid size-12 place-items-center rounded-full bg-accent-soft text-accent transition-all duration-300 ease-smooth group-hover:scale-110 group-hover:bg-accent group-hover:text-accent-ink">
                   <d.icon className="size-5" />
                 </span>
                 <h3 className="mt-6 text-xl font-semibold text-text">{d.title}</h3>
@@ -304,7 +319,8 @@ export default function LandingPage() {
           (nav, pricing cards, /sign-up redirect). */}
       <section id="waitlist" className="scroll-mt-24 px-6 py-16 lg:px-12">
         <Reveal className="mx-auto max-w-6xl">
-          <div className="cta-gradient relative overflow-hidden rounded-[28px] px-6 py-16 text-center text-white shadow-pop md:py-20">
+          <div className="group cta-gradient relative overflow-hidden rounded-[28px] px-6 py-16 text-center text-white shadow-pop transition-shadow duration-300 hover:shadow-[0_36px_90px_-24px_rgba(79,90,247,0.55)] md:py-20">
+            <span className="shine" aria-hidden />
             {/* The mark, blown up past the card's own bounds and barely there —
                 canvas-on-gradient so it reads as a watermark, not a logo drop. The
                 card clips it, which is what gives the cropped-swell look. */}

@@ -37,11 +37,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <ChatNavProvider>
       <div className="min-h-screen">
-        {/* Ambient depth behind the glass surfaces — muted indigo + teal blooms. */}
+        {/* Ambient accent depth behind the glass — a wide, faint indigo wash across
+            the top and a soft bloom anchored in the bottom-right corner, with a quiet
+            left-side weight for balance. Decorative only: low opacity, soft-edged,
+            never competes with content. */}
         <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-          <div className="bloom-indigo absolute -left-48 top-[-12%] size-[620px] rounded-full" />
-          <div className="bloom-teal absolute right-[-16%] top-[28%] size-[560px] rounded-full" />
-          <div className="bloom-indigo absolute bottom-[-18%] left-[38%] size-[520px] rounded-full opacity-70" />
+          <div className="bloom-indigo absolute left-1/2 top-[-18%] size-[760px] -translate-x-1/2 rounded-full" />
+          <div className="bloom-teal absolute -bottom-40 right-[-14%] size-[620px] rounded-full" />
+          <div className="bloom-indigo absolute left-[-11%] top-[34%] size-[460px] rounded-full opacity-60" />
         </div>
         <ApiAuthBridge />
         <Sidebar collapsed={collapsed} onToggle={toggle} />

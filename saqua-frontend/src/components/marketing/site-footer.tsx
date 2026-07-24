@@ -46,7 +46,7 @@ export function SiteFooter() {
         className="pointer-events-none absolute inset-x-0 bottom-[-20%] -z-10 h-[70%]"
         style={{
           background:
-            "radial-gradient(60% 100% at 50% 120%, rgba(245,163,5,.36), rgba(252,214,189,.26) 45%, transparent 72%)",
+            "radial-gradient(60% 100% at 50% 120%, rgba(79,90,247,.30), rgba(139,147,255,.20) 45%, transparent 72%)",
         }}
       />
       <div className="mx-auto max-w-6xl">
@@ -69,7 +69,7 @@ export function SiteFooter() {
                 <Link
                   key={l.label}
                   href={l.href}
-                  className="block py-1 text-sm text-text-2 transition-colors hover:text-accent"
+                  className="block py-1 text-sm text-text-2 transition-all duration-200 ease-smooth hover:translate-x-0.5 hover:text-accent"
                 >
                   {l.label}
                 </Link>

@@ -46,7 +46,7 @@ export default function ContactPage() {
 
       <section className="mx-auto max-w-2xl px-6 pb-16 pt-36 text-center">
         <span className="float-soft inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-4 text-xs font-medium shadow-[0_1px_2px_rgba(17,17,17,.04)]">
-          <Sparkles className="size-3.5 text-amber" /> We usually reply within a day
+          <Sparkles className="size-3.5 text-accent" /> We usually reply within a day
         </span>
         <h1 className="mt-7 font-display text-4xl font-medium tracking-[-0.03em] md:text-6xl">
           Contact <span className="grad-text-anim">us</span>

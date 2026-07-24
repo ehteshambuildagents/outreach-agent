@@ -42,13 +42,19 @@
   --accent-line: rgba(79, 90, 247, 0.30);
   --accent-ink: #ffffff;                        /* ink on the indigo accent */
 
-  /* Warm accent + the signature gradient device */
+  /* Amber is now a FUNCTIONAL status colour only (warn), never brand decoration.
+     Kept defined so status components resolve; --peach/--indigo-soft remain as
+     neutral tints. The one brand accent is indigo — see --accent above. */
   --amber: #f5a305;
   --amber-soft: rgba(245, 163, 5, 0.12);
   --peach: #fcd6bd;
   --indigo-soft: #eeeffe;
-  --grad-brand: linear-gradient(97deg, #4f5af7 0%, #f5a305 168%);
-  --grad-brand-soft: linear-gradient(97deg, #4f5af7 0%, #f5a305 225%);
+
+  /* The signature gradient device — now a single-hue indigo sweep (deep indigo →
+     periwinkle) so emphasised type and CTA surfaces read as ONE accent, with a
+     living depth rather than a flat fill. */
+  --grad-brand: linear-gradient(100deg, #4453e8 0%, #4f5af7 42%, #8b93ff 100%);
+  --grad-brand-soft: linear-gradient(100deg, #4f5af7 0%, #a5abff 150%);
 
   /* Status — real green for success; warn is the brand amber; danger warm red */
   --success: #1f9254;
@@ -181,23 +187,23 @@ h1, h2, h3, h4 {
     }
   }
 
-  /* The signature page light (gosollo parity). An OPAQUE amber → peach → canvas
-     ellipse: because the last stop is exactly --bg it dissolves into the page with
-     no seam, so it can run at full saturation where an alpha fade would go muddy.
-     Meant to be used in an 806px-tall box pushed 461px past the page edge — the hot
-     centre stays just out of frame and only the falloff shows. Mirrored top/bottom. */
+  /* The signature page light. An OPAQUE indigo-tint → canvas ellipse: because the
+     last stop is exactly --bg it dissolves into the page with no seam, so it can run
+     at full saturation where an alpha fade would go muddy. Meant to be used in an
+     806px-tall box pushed 461px past the page edge — the tinted centre stays just out
+     of frame and only the cool falloff lands on the cream. Mirrored top/bottom. */
   .page-light {
     background: radial-gradient(
       ellipse 50% 50% at 50% 50%,
-      #f5a305 0%,
-      #fcd6bd 52.518%,
+      #dcddfb 0%,
+      #ececf7 52.518%,
       #f6f4f2 100%
     );
   }
 
-  /* Warm hero glow (marketing heroes) + cool variant */
+  /* Indigo hero glow (marketing heroes) + cool variant */
   .hero-glow {
-    background: radial-gradient(58% 46% at 50% -4%, rgba(245, 163, 5, 0.50) 0%, rgba(252, 214, 189, 0.42) 40%, rgba(246, 244, 242, 0) 74%);
+    background: radial-gradient(58% 46% at 50% -4%, rgba(79, 90, 247, 0.34) 0%, rgba(139, 147, 255, 0.26) 40%, rgba(246, 244, 242, 0) 74%);
   }
   .hero-glow-cool {
     background: radial-gradient(58% 48% at 50% -4%, rgba(122, 110, 247, 0.42) 0%, rgba(200, 196, 250, 0.40) 42%, rgba(246, 244, 242, 0) 76%);
@@ -206,6 +212,48 @@ h1, h2, h3, h4 {
   /* Signature gradient surface (CTA cards, gradient chips) */
   .cta-gradient {
     background: var(--grad-brand);
+  }
+
+  /* A single diagonal light bar that sweeps across a surface once when its .group
+     ancestor is hovered — earned polish on the CTA finale, not an idle loop. Sits in
+     an inset overlay that clips to the parent's radius. No-ops under reduced motion. */
+  .shine {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    border-radius: inherit;
+    pointer-events: none;
+  }
+  .shine::before {
+    content: "";
+    position: absolute;
+    top: -60%;
+    left: -75%;
+    width: 45%;
+    height: 220%;
+    background: linear-gradient(
+      100deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.28) 50%,
+      transparent 100%
+    );
+    transform: translateX(0) skewX(-18deg);
+  }
+  .group:hover .shine::before {
+    animation: shine-sweep 0.9s cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  @keyframes shine-sweep {
+    from {
+      transform: translateX(0) skewX(-18deg);
+    }
+    to {
+      transform: translateX(360%) skewX(-18deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .group:hover .shine::before {
+      animation: none;
+    }
   }
 
   /* Indigo signal glow — behind live/interactive orbs (the accent, sparingly) */
@@ -218,13 +266,14 @@ h1, h2, h3, h4 {
     );
   }
 
-  /* Ambient depth blooms — warm amber + cool indigo, decorative, low opacity.
-     (.bloom-teal is repurposed to warm amber to carry the gosollo warm/cool blend.) */
+  /* Ambient depth blooms — both indigo now (single accent), decorative, low opacity.
+     Two weights drift in opposite directions for organic parallax. (.bloom-teal keeps
+     its legacy name so existing call sites resolve; it is no longer teal/amber.) */
   .bloom-indigo {
     background: radial-gradient(50% 50% at 50% 50%, rgba(79, 90, 247, 0.13) 0%, transparent 70%);
   }
   .bloom-teal {
-    background: radial-gradient(50% 50% at 50% 50%, rgba(245, 163, 5, 0.16) 0%, transparent 70%);
+    background: radial-gradient(50% 50% at 50% 50%, rgba(107, 116, 255, 0.12) 0%, transparent 70%);
   }
 
   /* Frosted white surfaces on the cream canvas. Two weights: cards vs rails. */
@@ -251,11 +300,12 @@ h1, h2, h3, h4 {
       box-shadow 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
   }
   .hover-lift:hover {
-    transform: translateY(-3px);
-    border-color: var(--border-strong);
+    transform: translateY(-4px);
+    border-color: var(--accent-line);
     box-shadow:
       0 1px 0 rgba(255, 255, 255, 0.7) inset,
-      0 22px 60px -20px rgba(17, 17, 17, 0.18);
+      0 0 0 1px var(--accent-line),
+      0 26px 64px -22px rgba(79, 90, 247, 0.28);
   }
   /* Graceful fallback where backdrop-filter is unsupported: stay opaque. */
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
