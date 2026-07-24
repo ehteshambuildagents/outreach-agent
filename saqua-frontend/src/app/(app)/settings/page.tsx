@@ -11,6 +11,7 @@ import { Field, Input } from "@/components/ui/field";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, type Billing, type CompanyProfile, type OAuthAccount } from "@/lib/api";
+import { useDemo } from "@/components/demo/demo-provider";
 
 const emptyCompany: CompanyProfile = {
   name: "",
@@ -36,6 +37,7 @@ const mailboxProviders = [
 ] as const;
 
 export default function SettingsPage() {
+  const { isDemo } = useDemo();
   const [accounts, setAccounts] = useState<OAuthAccount[]>([]);
   const [connectionState, setConnectionState] = useState<"loading" | "loaded" | "error">("loading");
   const [connectionError, setConnectionError] = useState("");
@@ -237,12 +239,18 @@ export default function SettingsPage() {
                 <div className="md:col-span-2">
                   <EmptyState
                     icon={Mail}
-                    title="No mailbox connected."
-                    body="Connect Gmail or Outlook before launching campaigns so Saqua can send and stop on replies."
+                    title={isDemo ? "Mailbox connections — coming soon" : "No mailbox connected."}
+                    body={
+                      isDemo
+                        ? "Connecting Gmail and sending is in final review with Google. Everything up to the send is live in this demo; real sending opens the moment it clears."
+                        : "Connect Gmail or Outlook before launching campaigns so Saqua can send and stop on replies."
+                    }
                     action={
-                      <Button variant="primary" onClick={() => startOAuth("gmail")} disabled={busyProvider === "gmail"}>
-                        Connect Gmail
-                      </Button>
+                      isDemo ? undefined : (
+                        <Button variant="primary" onClick={() => startOAuth("gmail")} disabled={busyProvider === "gmail"}>
+                          Connect Gmail
+                        </Button>
+                      )
                     }
                   />
                 </div>
@@ -258,32 +266,43 @@ export default function SettingsPage() {
                       <div className="grid size-10 place-items-center rounded-md bg-accent-soft text-accent">
                         <Plug className="size-5" />
                       </div>
-                      <Badge tone={connected ? "success" : "neutral"} dot>
-                        {connected ? "Connected" : "Available"}
+                      <Badge tone={isDemo ? "neutral" : connected ? "success" : "neutral"} dot>
+                        {isDemo ? "Coming soon" : connected ? "Connected" : "Available"}
                       </Badge>
                     </div>
                     <div className="mt-4 font-medium text-text">{name}</div>
                     <div className="mt-1 text-xs text-muted">{desc}</div>
-                    {account && <div className="mt-3 truncate text-xs text-text-2">{account.account_email}</div>}
+                    {account && !isDemo && (
+                      <div className="mt-3 truncate text-xs text-text-2">{account.account_email}</div>
+                    )}
                     <div className="mt-4 flex gap-2">
-                      <Button
-                        variant={connected ? "ghost" : "secondary"}
-                        size="sm"
-                        className="flex-1"
-                        onClick={() => startOAuth(provider, connected)}
-                        disabled={busyProvider === provider}
-                      >
-                        {connected ? "Reconnect" : "Connect"}
-                      </Button>
-                      {account && (
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => disconnect(provider, account.account_email)}
-                          disabled={busyProvider === provider}
-                        >
-                          Disconnect
+                      {isDemo ? (
+                        <Button variant="secondary" size="sm" className="flex-1" disabled
+                                title="In final review with Google — coming soon">
+                          Coming soon
                         </Button>
+                      ) : (
+                        <>
+                          <Button
+                            variant={connected ? "ghost" : "secondary"}
+                            size="sm"
+                            className="flex-1"
+                            onClick={() => startOAuth(provider, connected)}
+                            disabled={busyProvider === provider}
+                          >
+                            {connected ? "Reconnect" : "Connect"}
+                          </Button>
+                          {account && (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => disconnect(provider, account.account_email)}
+                              disabled={busyProvider === provider}
+                            >
+                              Disconnect
+                            </Button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>

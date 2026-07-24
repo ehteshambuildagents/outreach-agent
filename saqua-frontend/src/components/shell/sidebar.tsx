@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { usePathname } from "next/navigation";
-import { PanelLeftClose, Search, PenSquare, MessageSquare, Trash2 } from "lucide-react";
+import { PanelLeftClose, Search, PenSquare, MessageSquare, Trash2, Sparkles } from "lucide-react";
 import { NAV } from "@/lib/nav";
 import { Logo } from "@/components/ui/logo";
 import { useChatNav } from "@/components/chat/chat-nav";
+import { useDemo } from "@/components/demo/demo-provider";
 import { cn } from "@/lib/utils";
 
 function isActive(pathname: string, href: string) {
@@ -17,6 +18,7 @@ function isActive(pathname: string, href: string) {
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const pathname = usePathname();
   const { user } = useUser();
+  const { isDemo, endSession } = useDemo();
   const { conversations, activeId, open, startNew, remove } = useChatNav();
   const onChat = pathname === "/ai";
   const displayName = user?.fullName || user?.primaryEmailAddress?.emailAddress || "Saqua user";
@@ -118,17 +120,34 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           )}
         </div>
 
-        {/* User footer */}
+        {/* User footer — a demo visitor has no Clerk account, so show a demo
+            identity + an exit instead of the (empty) account button. */}
         <div className="border-t border-border p-3">
-          <div className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-black/[0.04]">
-            <div className="grid size-8 place-items-center rounded-full border border-border bg-black/[0.04]">
-              <UserButton afterSignOutUrl="/" />
+          {isDemo ? (
+            <button
+              type="button"
+              onClick={() => void endSession()}
+              className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left hover:bg-black/[0.04]"
+            >
+              <div className="grid size-8 place-items-center rounded-full border border-accent-line bg-accent-soft text-accent">
+                <Sparkles className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium text-text">Demo visitor</div>
+                <div className="truncate text-[11px] text-muted">Exit demo</div>
+              </div>
+            </button>
+          ) : (
+            <div className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-black/[0.04]">
+              <div className="grid size-8 place-items-center rounded-full border border-border bg-black/[0.04]">
+                <UserButton afterSignOutUrl="/" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium text-text">{displayName}</div>
+                <div className="truncate text-[11px] text-muted">{displayEmail}</div>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium text-text">{displayName}</div>
-              <div className="truncate text-[11px] text-muted">{displayEmail}</div>
-            </div>
-          </div>
+          )}
         </div>
       </aside>
 

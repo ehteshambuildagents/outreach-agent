@@ -127,6 +127,13 @@ function forwardedHeaders(request: NextRequest, traceId: string): Headers {
     headers.set("x-saqua-client-ip", ip);
     headers.set("x-saqua-proxy-secret", secret);
   }
+  // Forward the sandboxed-demo session token to the backend as an explicit header
+  // (mirrors the X-Saqua-Client-IP pattern). The backend also accepts the
+  // forwarded Cookie, but this is robust to any intermediary that strips cookies.
+  // Never let a caller's own copy through alongside ours.
+  headers.delete("x-saqua-demo-session");
+  const demoToken = request.cookies.get("saqua_demo")?.value;
+  if (demoToken) headers.set("x-saqua-demo-session", demoToken);
   headers.set("x-forwarded-host", request.headers.get("host") || "");
   headers.set("x-forwarded-proto", request.nextUrl.protocol.replace(":", ""));
   headers.set("x-request-id", traceId);
@@ -184,6 +191,15 @@ async function proxy(request: NextRequest, { params }: { params: { path: string[
     });
     responseHeaders.set("content-type", contentType);
     responseHeaders.set("x-saqua-trace-id", traceId);
+
+    // Set-Cookie must be re-emitted per cookie: Headers.forEach above coalesces
+    // multiple Set-Cookie values into one comma-joined string, which corrupts
+    // them. The demo-session mint sets the token + expiry cookies this way.
+    const setCookies = upstream.headers.getSetCookie?.() ?? [];
+    if (setCookies.length) {
+      responseHeaders.delete("set-cookie");
+      for (const c of setCookies) responseHeaders.append("set-cookie", c);
+    }
 
     // Server-Sent Events (the live demo streams the pipeline as it runs): pass the
     // body straight through as a stream. Buffering it with arrayBuffer() — as we do

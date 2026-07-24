@@ -5,6 +5,8 @@ import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import { ApiAuthBridge } from "@/components/auth/api-auth-bridge";
 import { ChatNavProvider } from "@/components/chat/chat-nav";
+import { DemoProvider } from "@/components/demo/demo-provider";
+import { DemoBanner } from "@/components/demo/demo-banner";
 import { cn } from "@/lib/utils";
 
 const KEY = "saqua_rail_collapsed";
@@ -35,6 +37,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
+    <DemoProvider>
     <ChatNavProvider>
       <div className="min-h-screen">
         {/* Ambient accent depth behind the glass — a wide, faint indigo wash across
@@ -55,9 +58,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
         >
           <Topbar collapsed={collapsed} onExpand={toggle} />
+          <DemoBanner />
           <main className="mx-auto max-w-[1240px] px-5 pb-28 pt-6 md:px-8 md:py-8">{children}</main>
         </div>
       </div>
     </ChatNavProvider>
+    </DemoProvider>
   );
 }

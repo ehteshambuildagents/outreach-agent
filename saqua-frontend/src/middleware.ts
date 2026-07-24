@@ -1,5 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 // Pre-launch lockdown. The only thing a visitor can reach is the marketing site
 // and the waitlist; every authenticated app page redirects to the landing page.
@@ -50,6 +50,17 @@ function hasAppAccess(claims: unknown): boolean {
   return v === true || v === "true";
 }
 
+// A live demo session grants PAGE reachability (not data): the readable expiry
+// cookie carries the token's expiry epoch, so the edge allows app routes only
+// while it is in the future. The HttpOnly token cookie is the one the backend
+// actually trusts; this is purely for routing.
+function hasLiveDemoCookie(request: NextRequest): boolean {
+  const exp = request.cookies.get("saqua_demo_exp")?.value;
+  if (!exp) return false;
+  const epoch = Number.parseInt(exp, 10);
+  return Number.isFinite(epoch) && epoch * 1000 > Date.now();
+}
+
 export default clerkMiddleware(
   async (auth, request) => {
     // Auth must be reachable before anything else can gate the visitor.
@@ -59,12 +70,20 @@ export default clerkMiddleware(
     if (isPublicRoute(request)) {
       return;
     }
+    // Sandboxed demo visitor: a present, unexpired demo cookie lets the real app
+    // pages RENDER (reachability only). This is deliberately a cheap structural
+    // check — the edge can't verify the HMAC and doesn't need to: every /api call
+    // the pages make is authorised at the backend, which alone can mint or read
+    // demo data. A forged cookie loads an empty shell and nothing more.
+    if (hasLiveDemoCookie(request)) {
+      return;
+    }
     const { userId, sessionClaims } = await auth();
     if (userId && hasAppAccess(sessionClaims)) {
       return;
     }
-    // Not public and not review-flagged → the landing page. Covers direct-URL
-    // navigation to any app page and to /sign-in or /sign-up.
+    // Not public, not demo, not review-flagged → the landing page. Covers direct-
+    // URL navigation to any app page and to /sign-in or /sign-up.
     return NextResponse.redirect(new URL("/", request.url));
   },
   {

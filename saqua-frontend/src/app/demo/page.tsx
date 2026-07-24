@@ -2,12 +2,12 @@ import type { Metadata } from "next";
 import { Sparkles } from "lucide-react";
 import { SiteNav } from "@/components/marketing/site-nav";
 import { SiteFooter } from "@/components/marketing/site-footer";
-import { DemoConsole } from "@/components/marketing/demo-console";
+import { DemoGate } from "@/components/demo/demo-gate";
 
 export const metadata: Metadata = {
   title: "Live demo — Saqua",
   description:
-    "Watch Saqua's real pipeline run: it finds companies that match your ICP, researches and scores each for fit, and drafts an evidence-anchored opener for the best match. No account needed.",
+    "Step into the real Saqua workspace on live data: chat, prospects, and settings, running the real research + scoring + guard-checked drafting pipeline. No account needed.",
 };
 
 export default function DemoPage() {
@@ -24,17 +24,17 @@ export default function DemoPage() {
             <Sparkles className="size-3.5 text-accent" /> Live, on real data — no account
           </span>
           <h1 className="mx-auto mt-7 max-w-[16ch] font-display text-4xl font-medium leading-[1.05] tracking-[-0.03em] md:text-6xl">
-            Talk to your <span className="grad-text-anim">AI&nbsp;sales assistant</span>.
+            Step inside the <span className="grad-text-anim">real product</span>.
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-base leading-7 text-muted">
-            Ask it who you sell to. It finds companies that match, researches and scores each one
-            for fit, then writes the opener around the real signal it found — live, the same
-            assistant experience the product runs.
+            Not a mockup — the actual Saqua workspace, on a sandbox. Move between chat, prospects,
+            and settings the way a customer does, with the real research, scoring, and guard-checked
+            drafting running live underneath.
           </p>
         </div>
 
         <div className="mt-10">
-          <DemoConsole />
+          <DemoGate />
         </div>
       </section>
 
