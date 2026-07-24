@@ -27,6 +27,7 @@ Design principles (same spine as the Strategy Agent)
   stable ``to_dict`` shape so a future automation layer can gate on it.
 """
 
+import re
 from dataclasses import asdict, dataclass, field
 
 # ── Recommendations (what to do with this lead) ────────────────────────
@@ -48,6 +49,12 @@ WEAK_RESEARCH_SCORE = 35 # research_score below this is "too thin to judge"
 
 # Score component caps (sum to 100).
 _FIT_MAX, _INTENT_MAX, _QUALITY_MAX, _REACH_MAX = 40, 30, 20, 10
+# Meeting this many distinct ICP criteria already earns full fit credit. Without a
+# cap, a broad ICP (say 8 terms) would dilute a real match — a company that hits 3
+# of the 8 core criteria is a genuine fit, not a 3/8 "weak" one. Fit is therefore
+# (criteria matched / min(criteria present, this)), so the ICP's breadth never
+# penalises, while a company that matches nothing still scores zero.
+_FIT_SATURATION = 3
 
 # Recent, concrete triggers that indicate a company may be in-market to buy.
 INTENT_KEYWORDS = (
@@ -101,19 +108,63 @@ def _blob(data: dict, intel=None) -> str:
     return " ".join(str(p or "") for p in parts).lower()
 
 
+# Fit matching compares ICP terms to the research prose on lightly-stemmed word
+# tokens, not raw substrings. Exact-substring matching missed obvious fits — the ICP
+# term "monitoring" would not match prose saying "monitor", "APIs" would not match
+# "api" — so genuinely on-ICP companies scored as weak fits. Stemming is deliberately
+# light and deterministic (no third-party stemmer): strip a few common suffixes so
+# morphological variants collapse to one token.
+_WORD_RE = re.compile(r"[a-z0-9]+")
+_STEM_SUFFIXES = ("ability", "ibility", "ization", "isation", "ations", "ation",
+                  "ings", "ing", "ers", "er", "ed", "es", "s")
+# Grammatical filler that carries no ICP meaning on its own. Kept intentionally small:
+# domain words like "tools"/"platform" are left in, since they can be distinguishing.
+_FILLER_TOKENS = frozenset(("the", "and", "for", "with", "that", "this", "of", "to",
+                            "a", "an", "or", "in", "on", "at", "by", "as"))
+
+
+def _stem(tok: str) -> str:
+    for suf in _STEM_SUFFIXES:
+        if tok.endswith(suf) and len(tok) - len(suf) >= 3:
+            return tok[: -len(suf)]
+    return tok
+
+
+def _stem_set(text: str) -> set:
+    return {_stem(t) for t in _WORD_RE.findall((text or "").lower())}
+
+
+def _term_stems(term: str) -> set:
+    """The meaningful, stemmed tokens of one ICP term ("developer tools" ->
+    {develop, tool}); grammatical filler is dropped so it can't spuriously match."""
+    return {_stem(t) for t in _WORD_RE.findall((term or "").lower())
+            if t not in _FILLER_TOKENS and len(t) > 1}
+
+
 def _icp_match(blob: str, role: str, icp: dict):
     """Match the research against a supplied ICP. Returns (matched_terms, ratio,
-    role_match, has_criteria). ratio is None when the ICP defines no keyword/industry
-    criteria (so we fall back to a generic fit heuristic)."""
+    role_match, has_criteria). A term counts as matched when ALL of its meaningful
+    tokens appear (stemmed) in the research — so multi-word terms stay precise while
+    tolerating morphology. ``ratio`` saturates at ``_FIT_SATURATION`` criteria so a
+    broad ICP never dilutes a real match, and is None when the ICP defines no
+    keyword/industry criteria (so we fall back to a generic fit heuristic)."""
     icp = icp or {}
-    terms = [str(t).lower().strip() for t in
-             (list(icp.get("industries") or []) + list(icp.get("keywords") or []))
-             if str(t).strip()]
+    raw_terms = [t for t in
+                 (list(icp.get("industries") or []) + list(icp.get("keywords") or []))
+                 if str(t).strip()]
+    blob_stems = _stem_set(blob)
+    # Keep only terms carrying at least one meaningful token; an all-filler term must
+    # not sit in the denominator dragging the ratio down.
+    criteria = [(str(t).lower().strip(), stems)
+                for t, stems in ((t, _term_stems(t)) for t in raw_terms) if stems]
+    matched = sorted({term for term, stems in criteria if stems <= blob_stems})
     roles = [str(r).lower().strip() for r in (icp.get("roles") or []) if str(r).strip()]
-    matched = sorted({t for t in terms if t in blob})
-    ratio = (len(matched) / len(terms)) if terms else None
+    if criteria:
+        ratio = min(1.0, len(matched) / min(len(criteria), _FIT_SATURATION))
+    else:
+        ratio = None
     role_match = bool(roles and role and any(r in role.lower() for r in roles))
-    return matched, ratio, role_match, bool(terms or roles)
+    return matched, ratio, role_match, bool(criteria or roles)
 
 
 def _buying_intent(blob: str) -> list:

@@ -145,5 +145,44 @@ class ShapeTests(unittest.TestCase):
         self.assertIn("Qualification", r.reasoning_summary)
 
 
+class FitMatchingTests(unittest.TestCase):
+    """The ICP fit matcher: token/stem tolerant, and not diluted by a broad ICP,
+    while still scoring an off-ICP company at zero (see agents/qualification.py)."""
+
+    def test_stemming_matches_morphological_variants(self):
+        # ICP says "monitoring"/"APIs"; the prose says "monitor"/"api" -> still matched.
+        r = q.qualify(
+            research=research(score=75,
+                              what_they_do="we monitor production APIs for backend teams",
+                              industries_served="", target_customer="", recent_focus="",
+                              metrics_or_traction="", notable_customers=""),
+            icp={"keywords": ["monitoring", "APIs"]})
+        self.assertEqual(r.signals["icp_match_ratio"], 1.0)
+        self.assertTrue(any("ICP match" in s for s in r.strongest_signals))
+
+    def test_broad_icp_is_not_diluted(self):
+        # A 6-term ICP the company clearly hits on 3+ concepts must not read as a weak
+        # 3/6 fit — the saturation cap keeps it a genuine match worth pursuing.
+        r = q.qualify(
+            research=research(score=78,
+                              what_they_do="open-source observability with tracing and monitoring",
+                              industries_served="developer tools", target_customer="engineers",
+                              recent_focus="", metrics_or_traction="", notable_customers=""),
+            icp={"keywords": ["observability", "monitoring", "tracing",
+                              "developer", "tools", "kubernetes"]})
+        self.assertEqual(r.signals["icp_match_ratio"], 1.0)   # >=3 concepts -> saturated
+        self.assertIn(r.recommendation, (q.CONTINUE, q.HIGH_PRIORITY))
+
+    def test_unrelated_company_still_zero_fit(self):
+        # The generalisation must NOT turn an off-ICP company into a match.
+        r = q.qualify(
+            research=research(score=75, what_they_do="a neighbourhood bakery",
+                              target_customer="local shoppers", industries_served="food retail",
+                              recent_focus="", metrics_or_traction="", notable_customers=""),
+            icp={"keywords": ["observability", "monitoring", "kubernetes"]})
+        self.assertEqual(r.signals["icp_match_ratio"], 0.0)
+        self.assertEqual(r.recommendation, q.REJECT)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
