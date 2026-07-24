@@ -62,7 +62,8 @@ def _events(gen):
 class RunnerContractTests(unittest.TestCase):
     """demo.runner.run_demo event stream, with the agents faked."""
 
-    def _run(self, qualify_results, write_effects=None, founder="Dana Reyes"):
+    def _run(self, qualify_results, write_effects=None, founder="Dana Reyes",
+             guard=None):
         prospects = [_prospect(f"c{i}.example.com") for i in range(len(qualify_results))]
         discovery = SimpleNamespace(status="ok", prospects=prospects)
         research = _research(founder=founder, role="Co-founder")
@@ -72,7 +73,9 @@ class RunnerContractTests(unittest.TestCase):
         with mock.patch.object(runner, "discover", return_value=discovery), \
              mock.patch.object(runner, "research_company", return_value=research), \
              mock.patch.object(runner, "qualify", side_effect=lambda **_: next(seq)), \
-             mock.patch.object(runner, "write_email", write):
+             mock.patch.object(runner, "write_email", write), \
+             mock.patch.object(runner, "guard_assess",
+                               return_value=guard or {"decision": "ALLOW", "overallRisk": 0}):
             return _events(runner.run_demo(icp_text="devtools startups")), write
 
     def test_pursue_run_yields_top_and_draft(self):
@@ -102,6 +105,37 @@ class RunnerContractTests(unittest.TestCase):
         payload = dict(events)["no_pursue"]
         self.assertEqual(payload["best_score"], 36)
         self.assertIn("pursue bar", payload["reason"])
+
+    def test_draft_carries_the_guard_verdict(self):
+        events, _ = self._run([_q(80, HIGH_PRIORITY)])
+        draft = dict(events)["draft"]
+        self.assertEqual(draft["guard"], {"decision": "ALLOW", "risk": 0})
+
+    def test_guard_block_hides_the_draft_honestly(self):
+        events, _ = self._run([_q(80, HIGH_PRIORITY)],
+                              guard={"decision": "BLOCK", "overallRisk": 90})
+        names = [e for e, _ in events]
+        self.assertNotIn("draft", names)
+        self.assertIn("guard blocked", dict(events)["draft_skip"]["reason"])
+
+    def test_real_guard_allows_a_grounded_draft(self):
+        # No guard patch here: the REAL deterministic guard runs over a realistic
+        # draft (subject + grounded 40+ word body) and must pass it.
+        body = ("Dana, shipping a new API while the team is still four people is a "
+                "real constraint. My guess is docs and onboarding get squeezed "
+                "first. I'm building a tool for exactly that stage, curious how "
+                "you're handling developer onboarding right now, manual or not at all?")
+        prospects = [_prospect("acme.dev")]
+        discovery = SimpleNamespace(status="ok", prospects=prospects)
+        with mock.patch.object(runner, "discover", return_value=discovery), \
+             mock.patch.object(runner, "research_company",
+                               return_value=_research(founder="Dana Reyes")), \
+             mock.patch.object(runner, "qualify", return_value=_q(80, HIGH_PRIORITY)), \
+             mock.patch.object(runner, "write_email",
+                               return_value={"status": "ok", "subject": "your new API",
+                                             "body": body}):
+            events = _events(runner.run_demo(icp_text="devtools startups"))
+        self.assertEqual(dict(events)["draft"]["guard"]["decision"], "ALLOW")
 
     def test_described_non_name_is_not_shown_as_a_person(self):
         # Extraction sometimes returns a DESCRIPTION in founder_name; the card

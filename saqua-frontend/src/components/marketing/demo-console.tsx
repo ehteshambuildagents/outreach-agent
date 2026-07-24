@@ -8,6 +8,8 @@ import {
   Lock,
   Quote,
   Search,
+  ShieldAlert,
+  ShieldCheck,
   Sparkles,
   Target,
   UserRound,
@@ -49,7 +51,14 @@ type Candidate = {
   researching?: boolean;
   timed_out?: boolean;
 };
-type Draft = { company?: string; subject?: string; body?: string; to?: string | null };
+type GuardVerdict = { decision?: string; risk?: number };
+type Draft = {
+  company?: string;
+  subject?: string;
+  body?: string;
+  to?: string | null;
+  guard?: GuardVerdict;
+};
 type Blocked = { state: string; message: string };
 
 type Phase = "form" | "running" | "done" | "blocked";
@@ -526,7 +535,10 @@ export function DemoConsole() {
 
                   {draft ? (
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-wide text-muted">The opener it wrote</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-muted">The opener it wrote</div>
+                        <GuardChip guard={draft.guard} />
+                      </div>
                       <div className="mt-2 rounded-xl border border-border-faint bg-card-2 p-5">
                         {draft.subject && (
                           <div className="border-b border-border-faint pb-2 font-[family-name:var(--font-serif)] text-base font-medium text-text">
@@ -569,6 +581,24 @@ export function DemoConsole() {
         )}
       </div>
     </div>
+  );
+}
+
+/** Verdict of the production Deliverability & Cost Guard, run on the finished
+ * draft — shown only when the backend actually ran it (never assumed). */
+function GuardChip({ guard }: { guard?: GuardVerdict }) {
+  if (!guard?.decision) return null;
+  if (guard.decision === "ALLOW") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-0.5 text-[11px] font-medium text-accent">
+        <ShieldCheck className="size-3" /> Guard: passed
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-warn-soft px-2.5 py-0.5 text-[11px] font-medium text-[color:var(--warn)]">
+      <ShieldAlert className="size-3" /> Guard: flagged notes
+    </span>
   );
 }
 

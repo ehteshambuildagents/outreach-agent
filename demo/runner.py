@@ -27,6 +27,7 @@ from agents.writer import write_email
 from config import settings
 from discovery.engine import discover
 from discovery.models import DiscoveryQuery, registrable_domain
+from guard import assess as guard_assess
 from research.pipeline import research_company
 
 log = logging.getLogger("saqua.demo")
@@ -139,6 +140,34 @@ def _signal_from_research(research: dict) -> dict:
         pages = (research or {}).get("pages_crawled") or []
         source = pages[0] if pages else None
     return {"text": text or None, "quote": quote, "source_url": source}
+
+
+def _guard_check(research: dict, draft: dict) -> dict:
+    """Run the production Deliverability & Cost Guard over the finished draft —
+    the same deterministic checks a real send passes through (AI-voice patterns,
+    banned phrases, spam heuristics, length). The demo never sends, so the
+    recipient is the ROUTE form production itself uses for a prospect whose
+    email isn't resolved yet — never a fabricated address."""
+    data = (research or {}).get("data") or {}
+    try:
+        res = guard_assess({
+            "company": data.get("company_name"),
+            "research": data,
+            "writer": {"status": "ok"},
+            "personalization": {
+                "based_on_research": True,
+                "specific": bool(data.get("unique_hook") or data.get("additional_hooks")),
+                "generic": False, "fabricated": False},
+            "campaign": {"recipients": 1, "ai_calls": 1},
+            "email": {"subject": draft.get("subject") or "",
+                      "body": draft.get("body") or "",
+                      "to": draft.get("to") or "route: not connected (demo stops before send)",
+                      "company": data.get("company_name")},
+        })
+        return {"decision": res.get("decision"), "risk": res.get("overallRisk")}
+    except Exception:  # noqa: BLE001 - the guard must never sink a finished run
+        log.info("demo: guard assess failed", exc_info=True)
+        return {}
 
 
 def _why_fits(q) -> str:
@@ -344,10 +373,22 @@ def run_demo(*, icp_text: str = "", website: str = "",
             break
         log.info("demo: writer attempt %d not ok: %s", attempt, draft.get("reason"))
     if draft.get("status") == "ok":
-        yield "draft", {"company": _display_name(top_prospect, top_research),
-                        "subject": draft.get("subject"),
-                        "body": draft.get("body"),
-                        "to": draft.get("to")}
+        # Same pre-send guard a production send passes through. A BLOCK is shown
+        # as an honest skip — the demo never displays what Saqua wouldn't send.
+        guard = _guard_check(top_research, draft)
+        if guard.get("decision") == "BLOCK":
+            log.info("demo: guard blocked the draft (risk=%s)", guard.get("risk"))
+            yield "draft_skip", {"reason":
+                                 "The deliverability guard blocked this draft — it "
+                                 "didn't meet the bar Saqua holds real sends to, so "
+                                 "we won't show it. Run it again, or try another "
+                                 "description."}
+        else:
+            yield "draft", {"company": _display_name(top_prospect, top_research),
+                            "subject": draft.get("subject"),
+                            "body": draft.get("body"),
+                            "to": draft.get("to"),
+                            "guard": guard}
     else:
         yield "draft_skip", {"reason":
                              "Couldn't finish a grounded opener for this one just now — "
