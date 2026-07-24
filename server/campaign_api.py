@@ -26,6 +26,7 @@ from guard import assess as guard_assess
 from guard.models import BLOCK
 from research.pipeline import research_company
 from server.auth import require_user
+from server.demo_auth import require_identity_or_demo
 from server.campaign_store import CampaignStore
 
 _campaigns = None
@@ -164,7 +165,9 @@ def register(app, rl_read=None, rl_write=None):
 
     @app.get("/api/prospects")
     def list_prospects(request: Request, _=Depends(_read),
-                       user: str = Depends(require_user)):
+                       user: str = Depends(require_identity_or_demo)):
+        # Demo principals resolve to their own (empty) prospect store, so a demo
+        # visitor sees the real page with the real empty state — never a member's.
         return {"prospects": [p.public() for p in _prospect_store().list_for_owner(user)]}
 
     @app.post("/api/campaigns/{campaign_id}/prospects/{domain}/recipient")

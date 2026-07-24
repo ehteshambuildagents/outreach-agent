@@ -1932,12 +1932,36 @@ for _name, _desc in (
                   handler=_coming_soon(_name)))
 
 
-def tool_specs() -> list:
-    return [t.spec() for t in REGISTRY.values()]
+# Tools a sandboxed demo principal must never invoke: they SEND on a real mailbox
+# or MUTATE real automation. Everything else (research, qualify, draft, guard) is
+# read/draft-only and safe. Both filtered from the model's toolset AND hard-denied
+# in execute() — defence in depth, so a filtering bug can't become a real send.
+_DEMO_BLOCKED_TOOLS = frozenset({"send_email", "launch_campaign", "pause_campaign"})
+_DEMO_DENY_MESSAGE = (
+    "That would send or launch on a real mailbox, which the live demo can't do — "
+    "connecting Gmail is in final review with Google. Everything up to the send is "
+    "real here: research, scoring, and the guard-checked draft.")
+
+
+def _is_demo(user_id) -> bool:
+    return bool(user_id) and str(user_id).startswith("demo_")
+
+
+def tool_specs(user_id=None) -> list:
+    """Tool specs offered to the model. A demo principal is offered every draft/
+    research tool but NOT the send/launch tools, so the model won't even attempt
+    an action the demo can't take."""
+    demo = _is_demo(user_id)
+    return [t.spec() for name, t in REGISTRY.items()
+            if not (demo and name in _DEMO_BLOCKED_TOOLS)]
 
 
 def execute(name: str, tool_input: dict, conversation) -> ToolResult:
     tool = REGISTRY.get(name)
     if tool is None:
         return ToolResult(summary=f"Unknown tool '{name}'.")
+    # Defence in depth: even if a blocked tool were somehow selected, a demo
+    # principal can never reach a send/launch handler.
+    if name in _DEMO_BLOCKED_TOOLS and _is_demo(getattr(conversation, "_user_id", None)):
+        return ToolResult(summary=_DEMO_DENY_MESSAGE)
     return tool.handler(tool_input or {}, conversation)

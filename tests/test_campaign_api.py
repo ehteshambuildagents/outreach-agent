@@ -27,6 +27,9 @@ import server.campaign_api as campaign_api  # noqa: E402
 def _client(user="u_test"):
     api.app.dependency_overrides.clear()
     api.app.dependency_overrides[api.require_user] = lambda: user
+    # /api/prospects authorizes via the demo-aware identity dependency; simulate
+    # an authenticated member (demo isolation is covered in test_demo_session).
+    api.app.dependency_overrides[api.demo_auth.require_identity_or_demo] = lambda: user
     return TestClient(api.app)
 
 

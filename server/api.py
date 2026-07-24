@@ -43,6 +43,8 @@ from chat.agent import respond  # noqa: E402
 from chat.models import Conversation, new_id  # noqa: E402
 from chat.store import ConversationStore  # noqa: E402
 from server.auth import auth_enabled, publishable_key, require_user  # noqa: E402
+from server import demo_session  # noqa: E402  - sandboxed anonymous demo principals
+from server import demo_auth  # noqa: E402  - demo-aware auth dependencies (shared)
 import access  # noqa: E402  - soft-launch request-access gating
 import limits  # noqa: E402  - per-user account pause (kill switch)
 from server import error_log  # noqa: E402  - durable capture of unhandled errors
@@ -421,6 +423,26 @@ def require_approved_user(request: Request, user: str = Depends(require_user)) -
     return user
 
 
+def require_member_or_demo(request: Request) -> str:
+    """Authorize an APPROVED member OR a sandboxed demo visitor on a SHARED route.
+
+    A Bearer token means a real member: the full member gate runs unchanged
+    (identity + access approval + pause), so real users are entirely unaffected.
+    With no bearer, a valid demo session yields its ``demo_*`` principal — which
+    every per-user store scopes on automatically, so the real pages render over
+    demo-only data that can never address another principal's. The demo path is
+    still subject to the pause kill switch, but never the access store.
+
+    Plain function (not ``Depends``-based) so the member branch can delegate to
+    ``require_approved_user`` with a directly-resolved ``require_user`` — the
+    dependency-override tests still work via ``require_user``. The demo branch is
+    shared with the identity-only routes through ``demo_auth``.
+    """
+    if demo_auth.has_bearer(request):
+        return require_approved_user(request, require_user(request))
+    return demo_auth.demo_or_401(request)
+
+
 # ── Routes ─────────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health():
@@ -449,7 +471,7 @@ def public_config():
 # operates ONLY on the caller's own per-user store (_store_for(user)).
 @app.get("/api/conversations")
 def list_conversations(request: Request, _=Depends(_rl_read),
-                       user: str = Depends(require_approved_user)):
+                       user: str = Depends(require_member_or_demo)):
     out = []
     for s in _store_for(user).list_summaries():
         out.append({"id": s.get("id"), "title": s.get("title") or "New chat",
@@ -459,7 +481,7 @@ def list_conversations(request: Request, _=Depends(_rl_read),
 
 @app.post("/api/conversations")
 def create_conversation(request: Request, _=Depends(_rl_write),
-                        user: str = Depends(require_approved_user)):
+                        user: str = Depends(require_member_or_demo)):
     conv = Conversation()
     _store_for(user).save(conv)
     return _conversation_public(conv)
@@ -467,7 +489,7 @@ def create_conversation(request: Request, _=Depends(_rl_write),
 
 @app.get("/api/conversations/{cid}")
 def get_conversation(cid: str, request: Request, _=Depends(_rl_read),
-                     user: str = Depends(require_approved_user)):
+                     user: str = Depends(require_member_or_demo)):
     conv = _store_for(user).load(_valid_id(cid))
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found.")
@@ -476,7 +498,7 @@ def get_conversation(cid: str, request: Request, _=Depends(_rl_read),
 
 @app.patch("/api/conversations/{cid}")
 def rename_conversation(cid: str, body: RenameConversation, request: Request,
-                        _=Depends(_rl_write), user: str = Depends(require_approved_user)):
+                        _=Depends(_rl_write), user: str = Depends(require_member_or_demo)):
     store = _store_for(user)
     conv = store.load(_valid_id(cid))
     if conv is None:
@@ -488,7 +510,7 @@ def rename_conversation(cid: str, body: RenameConversation, request: Request,
 
 @app.post("/api/conversations/{cid}/duplicate")
 def duplicate_conversation(cid: str, request: Request, _=Depends(_rl_write),
-                           user: str = Depends(require_approved_user)):
+                           user: str = Depends(require_member_or_demo)):
     store = _store_for(user)
     conv = store.load(_valid_id(cid))
     if conv is None:
@@ -503,16 +525,22 @@ def duplicate_conversation(cid: str, request: Request, _=Depends(_rl_write),
 
 @app.delete("/api/conversations/{cid}")
 def delete_conversation(cid: str, request: Request, _=Depends(_rl_write),
-                        user: str = Depends(require_approved_user)):
+                        user: str = Depends(require_member_or_demo)):
     _store_for(user).delete(_valid_id(cid))
     return {"ok": True}
 
 
 @app.post("/api/conversations/{cid}/messages")
 def send_message(cid: str, body: SendMessage, request: Request,
-                 _=Depends(_rl_agent), user: str = Depends(require_approved_user)):
+                 _=Depends(_rl_agent), user: str = Depends(require_member_or_demo)):
     """Run one agent turn. Defined as `def` so the (possibly slow) blocking call
     executes in FastAPI's threadpool and never blocks the event loop."""
+    # Demo principals spend real API money per turn, so each turn passes the same
+    # global budget ceiling as a pipeline run plus a per-session turn cap.
+    if demo_session.is_demo_id(user):
+        allowed, message = demo_api.reserve_demo_turn(user)
+        if not allowed:
+            raise HTTPException(status_code=429, detail=message)
     store = _store_for(user)
     conv = store.load(_valid_id(cid))
     if conv is None:
@@ -533,13 +561,13 @@ def send_message(cid: str, body: SendMessage, request: Request,
 # ── Company profile (the sender's own details, remembered in every chat) ─
 @app.get("/api/company")
 def get_company(request: Request, _=Depends(_rl_read),
-                user: str = Depends(require_approved_user)):
+                user: str = Depends(require_member_or_demo)):
     return {"company": _store_for(user).load_company()}
 
 
 @app.put("/api/company")
 def put_company(body: CompanyProfile, request: Request, _=Depends(_rl_write),
-                user: str = Depends(require_approved_user)):
+                user: str = Depends(require_member_or_demo)):
     data = body.model_dump()
     _store_for(user).save_company(data)
     return {"company": data}
@@ -548,7 +576,7 @@ def put_company(body: CompanyProfile, request: Request, _=Depends(_rl_write),
 # ── Billing / plan (the user's real plan + free-tier usage) ────────────
 @app.get("/api/billing")
 def get_billing(request: Request, _=Depends(_rl_read),
-                user: str = Depends(require_approved_user)):
+                user: str = Depends(require_member_or_demo)):
     from config.settings import FREE_PROSPECT_LIMIT
     usage = _store_for(user).load_usage()
     used = len(usage.get("prospects") or [])

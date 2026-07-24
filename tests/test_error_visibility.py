@@ -59,6 +59,7 @@ class AdminApiTests(unittest.TestCase):
         api.app.dependency_overrides.clear()
         api.app.dependency_overrides[api.require_user] = lambda: "user_test"
         api.app.dependency_overrides[api.require_approved_user] = lambda: "user_test"
+        api.app.dependency_overrides[api.require_member_or_demo] = lambda: "user_test"
         self.client = TestClient(api.app, raise_server_exceptions=False)
 
     def tearDown(self):

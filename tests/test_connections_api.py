@@ -35,6 +35,9 @@ class _Base(unittest.TestCase):
 
     def _client(self, user):
         self.api.app.dependency_overrides[self.api.require_user] = lambda: user
+        # /api/oauth/accounts reads via the demo-aware identity dependency now.
+        self.api.app.dependency_overrides[
+            self.api.demo_auth.require_identity_or_demo] = lambda: user
         return self.TestClient(self.api.app)
 
     def _uid(self):

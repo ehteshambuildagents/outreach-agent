@@ -78,7 +78,7 @@ def respond(conversation, user_text: str, store=None, user_id=None):
     # Tool-selection visibility: log the tools offered to the model for this turn
     # ONCE up front, so a later "was the tool available but not chosen?" question is
     # a log read, not a guess. The per-hop lines below then record what was chosen.
-    specs = tools.tool_specs()
+    specs = tools.tool_specs(user_id=user_id)
     log.info("tools offered (%d) for %r: %s", len(specs),
              (user_text or "")[:80], ", ".join(s["name"] for s in specs))
 

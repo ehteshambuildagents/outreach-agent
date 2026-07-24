@@ -37,6 +37,9 @@ def _client(auth=True, user="user_test"):
         # exercise the endpoints as an approved, active user (gating is covered by
         # its own tests). auth=False leaves it un-overridden to test real rejection.
         api.app.dependency_overrides[api.require_approved_user] = lambda: user
+        # The conversation/company/billing endpoints authorize through the demo-
+        # aware dependency (member OR sandboxed demo); simulate an approved member.
+        api.app.dependency_overrides[api.require_member_or_demo] = lambda: user
     return TestClient(api.app)
 
 
@@ -234,6 +237,7 @@ class ApiTests(unittest.TestCase):
             api.app.dependency_overrides.clear()
             api.app.dependency_overrides[api.require_user] = lambda: user
             api.app.dependency_overrides[api.require_approved_user] = lambda: user
+            api.app.dependency_overrides[api.require_member_or_demo] = lambda: user
             return TestClient(api.app)
         alice = client("user_alice"); a_cid = alice.post("/api/conversations").json()["id"]
         bob = client("user_bob")

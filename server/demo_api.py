@@ -39,6 +39,7 @@ from automation import redis
 from config import settings
 from demo import run_demo
 from limits import store as limits_store
+from server import demo_session
 from server.waitlist_api import _over_limit, client_ip, require_shared_redis
 
 log = logging.getLogger("saqua.demo.api")
@@ -67,6 +68,12 @@ NEED_INPUT_MESSAGE = "Tell me who you sell to, or paste your website, to run the
 UNAVAILABLE_MESSAGE = (
     "The live demo is briefly unavailable. Please try again shortly — or join the "
     "waitlist below.")
+TURNS_MESSAGE = (
+    "You've reached this demo session's message limit. Join the waitlist for full, "
+    "unlimited access — real sends open the moment Gmail clears Google's review.")
+SESSION_ENDED_MESSAGE = (
+    "Your demo session has ended. Start a new one from the demo page, or join the "
+    "waitlist for full access.")
 
 _SSE_HEADERS = {
     "Cache-Control": "no-cache, no-transform",
@@ -141,53 +148,121 @@ def _event_stream(icp: str, website: str, ip: str, token: str):
             pass
 
 
+# ── Demo-session helpers (cookies + per-session turn budget) ──────────────────
+def _is_https(request: Request) -> bool:
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "").lower()
+    return proto == "https"
+
+
+def _set_session_cookies(resp: JSONResponse, request: Request, token: str, exp: int) -> None:
+    """Set the HttpOnly token cookie plus a readable expiry cookie (no secret in it —
+    just the epoch, so the client can show a countdown without reading the token)."""
+    secure = _is_https(request)
+    ttl = settings.DEMO_SESSION_TTL_SECONDS
+    resp.set_cookie(demo_session.COOKIE_NAME, token, max_age=ttl, httponly=True,
+                    secure=secure, samesite="lax", path="/")
+    resp.set_cookie(demo_session.EXP_COOKIE, str(exp), max_age=ttl, httponly=False,
+                    secure=secure, samesite="lax", path="/")
+
+
+def _clear_session_cookies(resp: JSONResponse) -> None:
+    resp.delete_cookie(demo_session.COOKIE_NAME, path="/")
+    resp.delete_cookie(demo_session.EXP_COOKIE, path="/")
+
+
+def _turn_key(demo_id: str) -> str:
+    return f"demo:turns:{demo_id}"
+
+
+def demo_turns_used(demo_id: str) -> int:
+    try:
+        v = redis.get(_turn_key(demo_id))
+        return int(v) if v else 0
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def reserve_demo_turn(demo_id: str) -> tuple[bool, str]:
+    """Admit ONE demo chat turn or return (False, message). Reserves the turn
+    up front (increment-then-check) so concurrent turns can't both slip under the
+    per-session cap, enforces the SAME global $ ceiling as pipeline runs, and
+    meters the turn's estimated cost into the shared demo budget."""
+    if _global_budget_reached():
+        return False, CAPACITY_MESSAGE
+    try:
+        used = redis.incr_expiring(_turn_key(demo_id), settings.DEMO_SESSION_TTL_SECONDS)
+    except Exception:  # noqa: BLE001 - fail closed on a public paid path
+        return False, UNAVAILABLE_MESSAGE
+    if used > settings.DEMO_SESSION_TURNS:
+        return False, TURNS_MESSAGE
+    try:
+        limits_store.add_usage(settings.DEMO_LEDGER_USER, "demo_chat",
+                               settings.DEMO_EST_COST_PER_RUN_USD, 1)
+    except Exception:  # noqa: BLE001
+        pass
+    return True, ""
+
+
+def _gate(body: DemoRequest, request: Request):
+    """The shared admission gate for anything demo (a pipeline run OR a session
+    mint): kill switch, shared-Redis posture, honeypot, email validity, global
+    budget, per-IP burst/daily + per-email daily (fail-closed), soft waitlist
+    add. Returns a friendly block response, or the (email, ip) of an admitted
+    visitor."""
+    if not settings.DEMO_ENABLED:
+        return _blocked("unavailable", UNAVAILABLE_MESSAGE, 503)
+
+    # Public paid endpoint: refuse rather than run on per-process limiter state.
+    if require_shared_redis() and not redis.configured():
+        log.error("DEMO DISABLED — shared Redis not configured; refusing to serve "
+                  "a public, money-spending endpoint on per-process limits.")
+        return _blocked("unavailable", UNAVAILABLE_MESSAGE, 503)
+
+    # Honeypot: answer benignly, start nothing.
+    if (body.company or "").strip():
+        log.info("demo: honeypot tripped from %s", client_ip(request))
+        return _blocked("capacity", CAPACITY_MESSAGE, 200)
+
+    email = waitlist.normalize(body.email)
+    if not waitlist.valid(email):
+        return _blocked("need_email", NEED_EMAIL_MESSAGE, 400)
+
+    ip = client_ip(request)
+
+    # Global ceiling FIRST, so a capacity-blocked visitor doesn't lose a per-IP
+    # run to a limit that isn't theirs.
+    if _global_budget_reached():
+        return _blocked("capacity", CAPACITY_MESSAGE, 503)
+
+    # Per-IP burst, then per-IP daily, then per-email daily (all fail-closed).
+    if _over_limit(f"demo:burst:{ip}", settings.DEMO_IP_BURST, settings.DEMO_IP_BURST_WINDOW):
+        return _blocked("rate_limited", BURST_MESSAGE, 429, scope="burst")
+    if _over_limit(f"demo:ip:{ip}", settings.DEMO_IP_DAILY, _DAY):
+        return _blocked("rate_limited", IP_DAILY_MESSAGE, 429, scope="ip")
+    if _over_limit(f"demo:em:{email}", settings.DEMO_EMAIL_DAILY, _DAY):
+        return _blocked("rate_limited", EMAIL_DAILY_MESSAGE, 429, scope="email")
+
+    # Soft waitlist add — the gate doubles as a lead. Best-effort; never blocks.
+    try:
+        waitlist.join(email, source="demo")
+    except Exception:  # noqa: BLE001
+        log.info("demo: soft waitlist add failed for a visitor", exc_info=True)
+    return email, ip
+
+
 def register(app) -> None:
-    """Mount the public demo route."""
+    """Mount the public demo routes."""
 
     @app.post("/api/demo/run")
     def demo_run(body: DemoRequest, request: Request):
-        if not settings.DEMO_ENABLED:
-            return _blocked("unavailable", UNAVAILABLE_MESSAGE, 503)
-
-        # Public paid endpoint: refuse rather than run on per-process limiter state.
-        if require_shared_redis() and not redis.configured():
-            log.error("DEMO DISABLED — shared Redis not configured; refusing to serve "
-                      "a public, money-spending endpoint on per-process limits.")
-            return _blocked("unavailable", UNAVAILABLE_MESSAGE, 503)
-
-        # Honeypot: answer benignly, start nothing.
-        if (body.company or "").strip():
-            log.info("demo: honeypot tripped from %s", client_ip(request))
-            return _blocked("capacity", CAPACITY_MESSAGE, 200)
-
-        icp, website = body.icp, body.website
-        if not icp and not website:
+        # Input check precedes the gate so an empty ask never burns a limit.
+        if not body.icp and not body.website:
             return _blocked("need_input", NEED_INPUT_MESSAGE, 400)
-
-        email = waitlist.normalize(body.email)
-        if not waitlist.valid(email):
-            return _blocked("need_email", NEED_EMAIL_MESSAGE, 400)
-
-        ip = client_ip(request)
-
-        # Global ceiling FIRST, so a capacity-blocked visitor doesn't lose a per-IP
-        # run to a limit that isn't theirs.
-        if _global_budget_reached():
-            return _blocked("capacity", CAPACITY_MESSAGE, 503)
-
-        # Per-IP burst, then per-IP daily, then per-email daily (all fail-closed).
-        if _over_limit(f"demo:burst:{ip}", settings.DEMO_IP_BURST, settings.DEMO_IP_BURST_WINDOW):
-            return _blocked("rate_limited", BURST_MESSAGE, 429, scope="burst")
-        if _over_limit(f"demo:ip:{ip}", settings.DEMO_IP_DAILY, _DAY):
-            return _blocked("rate_limited", IP_DAILY_MESSAGE, 429, scope="ip")
-        if _over_limit(f"demo:em:{email}", settings.DEMO_EMAIL_DAILY, _DAY):
-            return _blocked("rate_limited", EMAIL_DAILY_MESSAGE, 429, scope="email")
-
-        # Soft waitlist add — the gate doubles as a lead. Best-effort; never blocks.
-        try:
-            waitlist.join(email, source="demo")
-        except Exception:  # noqa: BLE001
-            log.info("demo: soft waitlist add failed for a visitor", exc_info=True)
+        admitted = _gate(body, request)
+        if not isinstance(admitted, tuple):
+            return admitted
+        email, ip = admitted
+        icp, website = body.icp, body.website
 
         # One in-flight run per IP: stops parallel requests dodging the burst counter.
         token = uuid.uuid4().hex
@@ -213,3 +288,43 @@ def register(app) -> None:
                  "website" if website else "icp")
         return StreamingResponse(_event_stream(icp, website, ip, token),
                                  media_type="text/event-stream", headers=_SSE_HEADERS)
+
+    @app.post("/api/demo/session")
+    def demo_session_start(body: DemoRequest, request: Request):
+        """Mint a sandboxed demo session for an anonymous visitor: the SAME email
+        gate + caps as a run, then a signed short-lived cookie that lets the real
+        app pages render under a ``demo_*`` principal (disjoint from real users)."""
+        admitted = _gate(body, request)
+        if not isinstance(admitted, tuple):
+            return admitted
+        email, ip = admitted
+        demo_id = demo_session.new_demo_id()
+        token, exp = demo_session.mint_token(demo_id)
+        log.info("demo session start ip=%s email=%s id=%s", ip, email, demo_id)
+        resp = JSONResponse({"active": True, "expires_at": exp,
+                             "turns_used": 0,
+                             "turns_limit": settings.DEMO_SESSION_TURNS})
+        _set_session_cookies(resp, request, token, exp)
+        return resp
+
+    @app.get("/api/demo/session")
+    def demo_session_status(request: Request):
+        """Report the current demo session (or ``{active: false}``). Unauthenticated
+        and cheap: a real logged-in user simply has no demo cookie."""
+        tok = (request.headers.get(demo_session.HEADER_NAME)
+               or request.cookies.get(demo_session.COOKIE_NAME))
+        demo_id = demo_session.verify_token(tok) if tok else None
+        if not demo_id:
+            return JSONResponse({"active": False})
+        return JSONResponse({"active": True,
+                             "expires_at": demo_session.token_expiry(tok),
+                             "turns_used": demo_turns_used(demo_id),
+                             "turns_limit": settings.DEMO_SESSION_TURNS})
+
+    @app.delete("/api/demo/session")
+    def demo_session_end(request: Request):
+        """End the demo session by clearing its cookies (the token is stateless, so
+        there is nothing server-side to revoke; expiry does the rest)."""
+        resp = JSONResponse({"active": False})
+        _clear_session_cookies(resp)
+        return resp

@@ -31,6 +31,7 @@ from automation import oauth, push
 from automation.store import WorkflowStore
 from automation.tokens import TokenStore
 from server.auth import require_user
+from server.demo_auth import require_identity_or_demo
 
 log = logging.getLogger("saqua.oauth_api")
 
@@ -267,7 +268,10 @@ def register(app, rl_read=None, rl_write=None):
 
     @app.get("/api/oauth/accounts")
     def oauth_accounts(request: Request, _=Depends(_read),
-                       user: str = Depends(require_user)):
+                       user: str = Depends(require_identity_or_demo)):
+        # Read-only, own-scoped: a demo principal has no connected mailboxes, so
+        # this returns an empty list and the Settings page shows Gmail "Coming
+        # soon". The OAuth login/disconnect/watch routes stay member-only.
         return {"accounts": _tokens.list_accounts(user)}
 
     @app.post("/api/oauth/{provider}/disconnect")

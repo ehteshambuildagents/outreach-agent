@@ -392,6 +392,16 @@ DEMO_GLOBAL_DAILY_RUNS = int(os.getenv("DEMO_GLOBAL_DAILY_RUNS", "200"))   # fai
 DEMO_EST_COST_PER_RUN_USD = float(os.getenv("DEMO_EST_COST_PER_RUN_USD", "0.25"))  # ledgered per run
 DEMO_LEDGER_USER = "__demo__"          # synthetic user_id the demo meters its spend under
 
+# ── Demo SESSIONS (the in-app sandboxed demo) ─────────────────────────
+# An anonymous visitor who passes the email gate gets a signed, short-lived
+# session as principal "demo_<hex>" — a user-id namespace disjoint from Clerk's
+# "user_*", so every per-user store scopes it automatically. The secret signs the
+# session token (HMAC); with no secret set, a random per-process one is used —
+# fine for dev, and in prod it only means sessions die on restart.
+DEMO_SESSION_SECRET = os.getenv("DEMO_SESSION_SECRET", "")
+DEMO_SESSION_TTL_SECONDS = int(os.getenv("DEMO_SESSION_TTL_SECONDS", "3600"))
+DEMO_SESSION_TURNS = int(os.getenv("DEMO_SESSION_TURNS", "10"))  # agent turns / session
+
 # A realistic desktop-browser User-Agent so public pages serve normal HTML.
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
