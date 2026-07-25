@@ -54,11 +54,11 @@ CAPACITY_MESSAGE = (
     "every request, so we cap how many run each day. Join the waitlist and you'll be "
     "first in when it opens. The demo resets tomorrow.")
 IP_DAILY_MESSAGE = (
-    "You've used all of today's demo runs. Join the waitlist for full access. The"
-    "demo resets tomorrow.")
+    "You've used all of today's demo runs. Join the waitlist for full access. "
+    "The demo resets tomorrow.")
 EMAIL_DAILY_MESSAGE = (
-    "This email has used today's demo runs. Join the waitlist for full access. The"
-    "demo resets tomorrow.")
+    "This email has used today's demo runs. Join the waitlist for full access. "
+    "The demo resets tomorrow.")
 BURST_MESSAGE = (
     "One run at a time. Give the last one a few seconds, then try again.")
 IN_PROGRESS_MESSAGE = (
