@@ -402,6 +402,18 @@ DEMO_SESSION_SECRET = os.getenv("DEMO_SESSION_SECRET", "")
 DEMO_SESSION_TTL_SECONDS = int(os.getenv("DEMO_SESSION_TTL_SECONDS", "3600"))
 DEMO_SESSION_TURNS = int(os.getenv("DEMO_SESSION_TURNS", "5"))   # agent turns / session
 
+# Minting a session is CHEAP (an HMAC + a waitlist row), unlike a pipeline run,
+# so it gets its own far more permissive limits. Sharing the run's 1-per-90s
+# burst was actively hostile: a double-click, a retry, or simply a second
+# visitor behind the same office/carrier NAT was answered with "one run at a
+# time" — measured in production on launch day. Real spend stays bounded where
+# the money is actually spent: reserve_demo_turn enforces the global $ ceiling
+# and the per-session turn cap on every agent turn.
+DEMO_SESSION_IP_BURST = int(os.getenv("DEMO_SESSION_IP_BURST", "5"))        # mints / IP / window
+DEMO_SESSION_IP_BURST_WINDOW = int(os.getenv("DEMO_SESSION_IP_BURST_WINDOW", "60"))
+DEMO_SESSION_IP_DAILY = int(os.getenv("DEMO_SESSION_IP_DAILY", "20"))       # mints / IP / 24h
+DEMO_SESSION_EMAIL_DAILY = int(os.getenv("DEMO_SESSION_EMAIL_DAILY", "10")) # mints / email / 24h
+
 # A realistic desktop-browser User-Agent so public pages serve normal HTML.
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

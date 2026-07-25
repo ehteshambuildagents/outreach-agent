@@ -3,9 +3,8 @@
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "framer-motion";
-import { ArrowRight, Check, Loader2, Lock } from "lucide-react";
+import { AlertCircle, ArrowRight, Check, Loader2, Lock } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
-import { HeroForm } from "@/components/marketing/hero-form";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,14 +27,47 @@ import { cn } from "@/lib/utils";
  * the form.
  */
 
-type Blocked = { state: string; title: string; message: string };
+/** An inline failure under the button. `retry` marks the transient kind, where
+ *  trying again in a moment genuinely works, so we offer the action. */
+type Failure = { message: string; retry: boolean };
 
-const BLOCK_TITLES: Record<string, string> = {
-  capacity: "Today's demo capacity is full",
-  rate_limited: "That's all for now",
-  need_email: "That email didn't look right",
-  gmail_only: "Personal Gmail only, for now",
-};
+/**
+ * One message per real cause. A temporary pending lock, a genuine daily limit,
+ * a rejected address, and a server fault are four different situations, and
+ * answering all of them with "that's all for now" is how a visitor concludes
+ * the product is broken. `onWaitlist` is appended only when the visitor's email
+ * actually reached the waitlist (the gate adds it before minting), so we never
+ * ask for an address they already gave.
+ */
+function describe(status: number, payload: Record<string, unknown>): Failure {
+  const state = (payload.state as string) || "error";
+  const scope = payload.scope as string | undefined;
+  const server = (payload.message as string) || "";
+  const onWaitlist = " Your Gmail is already on the waitlist, so nothing is lost.";
+
+  if (state === "rate_limited" && scope === "burst") {
+    return {
+      message: "We couldn't start the demo just now. Please try again in a few seconds.",
+      retry: true,
+    };
+  }
+  if (state === "rate_limited") {
+    return { message: (server || "You've reached today's demo limit.") + onWaitlist, retry: false };
+  }
+  if (state === "capacity") {
+    return { message: (server || "Today's demo capacity is full.") + onWaitlist, retry: false };
+  }
+  if (state === "gmail_only" || state === "need_email") {
+    return { message: server || "That address didn't look right.", retry: false };
+  }
+  if (status === 0) {
+    return { message: "We couldn't reach the demo. Check your connection and try again.", retry: true };
+  }
+  return {
+    message: server || "Something went wrong starting the demo. Please try again in a moment.",
+    retry: true,
+  };
+}
 
 // The staged entry sequence. Earlier stages advance on a timer; the last check
 // lands only when the session is really minted, so the sequence is never a lie
@@ -49,8 +81,15 @@ export function DemoGate() {
   const [company, setCompany] = useState(""); // honeypot
   const [entering, setEntering] = useState(false);
   const [stage, setStage] = useState(0);
-  const [blocked, setBlocked] = useState<Blocked | null>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
   const timers = useRef<number[]>([]);
+  // Single-flight guard. A ref, NOT the `entering` state: state updates are not
+  // synchronous, so two submits in the same tick (a double-click, or Enter plus
+  // a click) both read the old value and both fire a request. The second then
+  // trips the per-IP burst limiter, and because the two responses race, a 429
+  // arriving after the 200 would tear down a session that had already been
+  // minted. One click must produce exactly one request.
+  const inFlight = useRef(false);
 
   const trimmed = email.trim().toLowerCase();
   const looksComplete = /.+@.+\..+/.test(trimmed);
@@ -67,8 +106,9 @@ export function DemoGate() {
 
   async function start(e: React.FormEvent) {
     e.preventDefault();
-    if (entering || !canStart) return;
-    setBlocked(null);
+    if (inFlight.current || !canStart) return;
+    inFlight.current = true;
+    setFailure(null);
 
     // Curtain up immediately: the boot sequence plays WHILE the mint runs.
     setEntering(true);
@@ -78,7 +118,7 @@ export function DemoGate() {
       window.setTimeout(() => setStage((s) => Math.max(s, i + 1)), STAGE_MS * (i + 1)),
     );
 
-    let fail: Blocked | null = null;
+    let fail: Failure | null = null;
     let ok = false;
     try {
       const res = await fetch("/api/demo/session", {
@@ -94,29 +134,19 @@ export function DemoGate() {
         /* fall through */
       }
       ok = res.ok && Boolean(payload.active);
-      if (!ok) {
-        const state = (payload.state as string) || "error";
-        fail = {
-          state,
-          title: BLOCK_TITLES[state] || "The demo is unavailable",
-          message:
-            (payload.message as string) ||
-            "The demo is unavailable right now. Please try again shortly.",
-        };
-      }
+      if (!ok) fail = describe(res.status, payload);
     } catch {
-      fail = {
-        state: "error",
-        title: "Couldn't reach the demo",
-        message: "Check your connection and try again.",
-      };
+      fail = describe(0, {});
     }
 
     if (!ok) {
+      // Release the guard so the visitor can genuinely retry, and put them back
+      // in the same card rather than replacing the page with an error.
+      inFlight.current = false;
       clearTimers();
       setEntering(false);
       setStage(0);
-      setBlocked(fail);
+      setFailure(fail);
       return;
     }
 
@@ -133,8 +163,6 @@ export function DemoGate() {
       }, wait),
     );
   }
-
-  const showWaitlist = blocked && ["capacity", "rate_limited", "gmail_only"].includes(blocked.state);
 
   return (
     <div className="w-full">
@@ -192,25 +220,34 @@ export function DemoGate() {
           </p>
         )}
 
+        {/* Failures stay INSIDE this card: a second full-width panel underneath
+            reads as a dead end, and the visitor already gave us their address,
+            so there is deliberately no second email field anywhere on /demo. */}
+        {failure && (
+          <div
+            className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-black/[0.02] px-3 py-2.5"
+            role="alert"
+          >
+            <AlertCircle className="mt-0.5 size-3.5 shrink-0 text-muted" />
+            <p className="text-xs leading-5 text-text-2">
+              {failure.message}
+              {failure.retry && (
+                <button
+                  type="submit"
+                  className="ml-1.5 font-semibold text-accent underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  Try again
+                </button>
+              )}
+            </p>
+          </div>
+        )}
+
         <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-muted">
-          <Lock className="size-3 shrink-0" /> No account. Five messages, sixty minutes, drafts
-          only. Your email also holds your waitlist spot.
+          <Lock className="size-3 shrink-0" /> No account. Five messages. Drafts only. Your email
+          also holds your waitlist spot.
         </p>
       </form>
-
-      {blocked && (
-        <div className="mt-6">
-          <div className="surface rounded-2xl p-6 text-center shadow-card">
-            <p className="text-base font-medium text-text">{blocked.title}</p>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted">{blocked.message}</p>
-          </div>
-          {showWaitlist && (
-            <div className="mt-6">
-              <HeroForm source="demo_gate_blocked" label="Join the waitlist" />
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── Staged transition into the workspace ─────────────────────────
           Covers the page the moment the button is clicked, builds the session

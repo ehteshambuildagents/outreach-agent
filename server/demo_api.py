@@ -207,12 +207,28 @@ def reserve_demo_turn(demo_id: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _gate(body: DemoRequest, request: Request):
+# Rate-limit profiles. A pipeline RUN spends real money per request, so it stays
+# tight. A session MINT costs an HMAC and a waitlist row, so it is allowed to
+# absorb double-clicks, retries, and several visitors sharing one NAT.
+_RUN_LIMITS = ("demo", lambda: (settings.DEMO_IP_BURST, settings.DEMO_IP_BURST_WINDOW,
+                                settings.DEMO_IP_DAILY, settings.DEMO_EMAIL_DAILY))
+_SESSION_LIMITS = ("demosess", lambda: (settings.DEMO_SESSION_IP_BURST,
+                                        settings.DEMO_SESSION_IP_BURST_WINDOW,
+                                        settings.DEMO_SESSION_IP_DAILY,
+                                        settings.DEMO_SESSION_EMAIL_DAILY))
+
+
+def _gate(body: DemoRequest, request: Request, limits=_RUN_LIMITS):
     """The shared admission gate for anything demo (a pipeline run OR a session
     mint): kill switch, shared-Redis posture, honeypot, email validity, the
     Gmail-only rule, global budget, per-IP burst/daily + per-email daily
     (fail-closed), soft waitlist add. Returns a friendly block response, or the
-    (email, ip) of an admitted visitor."""
+    (email, ip) of an admitted visitor.
+
+    ``limits`` selects the profile (and its bucket namespace) so a cheap session
+    mint is never rejected by a ceiling calibrated for a paid pipeline run."""
+    ns, read_limits = limits
+    burst_n, burst_window, ip_daily, email_daily = read_limits()
     if not settings.DEMO_ENABLED:
         return _blocked("unavailable", UNAVAILABLE_MESSAGE, 503)
 
@@ -246,11 +262,14 @@ def _gate(body: DemoRequest, request: Request):
         return _blocked("capacity", CAPACITY_MESSAGE, 503)
 
     # Per-IP burst, then per-IP daily, then per-email daily (all fail-closed).
-    if _over_limit(f"demo:burst:{ip}", settings.DEMO_IP_BURST, settings.DEMO_IP_BURST_WINDOW):
-        return _blocked("rate_limited", BURST_MESSAGE, 429, scope="burst")
-    if _over_limit(f"demo:ip:{ip}", settings.DEMO_IP_DAILY, _DAY):
+    # Every bucket carries its window as a TTL, so nothing can wedge a visitor
+    # out for longer than that window even if a request dies mid-flight.
+    if _over_limit(f"{ns}:burst:{ip}", burst_n, burst_window):
+        return _blocked("rate_limited", BURST_MESSAGE, 429, scope="burst",
+                        retry_after=burst_window)
+    if _over_limit(f"{ns}:ip:{ip}", ip_daily, _DAY):
         return _blocked("rate_limited", IP_DAILY_MESSAGE, 429, scope="ip")
-    if _over_limit(f"demo:em:{email}", settings.DEMO_EMAIL_DAILY, _DAY):
+    if _over_limit(f"{ns}:em:{email}", email_daily, _DAY):
         return _blocked("rate_limited", EMAIL_DAILY_MESSAGE, 429, scope="email")
 
     # Soft waitlist add — the gate doubles as a lead. Best-effort; never blocks.
@@ -302,10 +321,11 @@ def register(app) -> None:
 
     @app.post("/api/demo/session")
     def demo_session_start(body: DemoRequest, request: Request):
-        """Mint a sandboxed demo session for an anonymous visitor: the SAME email
-        gate + caps as a run, then a signed short-lived cookie that lets the real
-        app pages render under a ``demo_*`` principal (disjoint from real users)."""
-        admitted = _gate(body, request)
+        """Mint a sandboxed demo session for an anonymous visitor: the same email
+        gate as a run but the CHEAP limit profile, then a signed short-lived
+        cookie that lets the real app pages render under a ``demo_*`` principal
+        (disjoint from real users)."""
+        admitted = _gate(body, request, _SESSION_LIMITS)
         if not isinstance(admitted, tuple):
             return admitted
         email, ip = admitted

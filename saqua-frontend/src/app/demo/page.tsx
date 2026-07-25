@@ -41,7 +41,7 @@ export default function DemoPage() {
       <SiteNav />
 
       {/* ── Hero: what am I about to experience? ─────────────────────── */}
-      <section className="px-6 pt-32 text-center lg:px-12">
+      <section className="px-6 pt-24 text-center lg:px-12">
         <div className="mx-auto max-w-3xl">
           <Reveal>
             <span className="inline-flex h-8 items-center gap-2.5 rounded-full border border-border bg-white px-4 text-xs font-medium shadow-[0_1px_2px_rgba(17,17,17,.04)]">
@@ -76,8 +76,11 @@ export default function DemoPage() {
         </div>
       </section>
 
-      {/* ── The product first, then one small step ───────────────────── */}
-      <section className="relative px-6 pb-24 pt-12 lg:px-12">
+      {/* ── The product first, then one small step ─────────────────────
+             Tight by design: the preview sits close under the hero and the gate
+             overlaps its lower edge, so hero → product → "enter" reads as one
+             connected unit with no dead space between them. */}
+      <section className="relative px-6 pb-20 pt-8 lg:px-12">
         <Reveal delay={0.1} y={22}>
           <div className="relative">
             <WorkspacePreview />
@@ -85,11 +88,13 @@ export default function DemoPage() {
                 threshold INTO it, not a wall in front of it. */}
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-x-0 -bottom-px h-44 bg-gradient-to-t from-bg via-bg/75 to-transparent"
+              className="pointer-events-none absolute inset-x-0 -bottom-px h-40 bg-gradient-to-t from-bg via-bg/75 to-transparent"
             />
           </div>
         </Reveal>
-        <div className="relative z-10 mx-auto -mt-16 max-w-md md:-mt-20">
+        {/* Overlap stays inside the preview's 160px fade band, so the gate sits
+            ON the product image rather than in dead space below it. */}
+        <div className="relative z-10 mx-auto -mt-28 max-w-md md:-mt-32">
           <Reveal delay={0.18}>
             <DemoGate />
           </Reveal>

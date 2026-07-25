@@ -188,6 +188,43 @@ class DemoSessionEndpointTests(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["state"], "need_email")
 
+    def test_rapid_mints_are_not_burst_blocked(self):
+        """A session mint is cheap, so it must absorb a double-click and several
+        visitors behind one NAT. Sharing the paid run's 1-per-90s burst meant the
+        SECOND request from an IP was answered "one run at a time" (seen in
+        production on launch day)."""
+        for i in range(settings.DEMO_SESSION_IP_BURST):
+            r = self.c.post("/api/demo/session", json={"email": f"v{i}@gmail.com"},
+                            headers={"x-forwarded-for": "203.0.113.42"})
+            self.assertEqual(r.status_code, 200, f"mint {i + 1} should be admitted")
+            self.assertTrue(r.json()["active"])
+
+    def test_session_mint_still_has_a_burst_ceiling(self):
+        with mock.patch.object(settings, "DEMO_SESSION_IP_BURST", 2):
+            for _ in range(2):
+                self.assertEqual(
+                    self.c.post("/api/demo/session", json={"email": "v@gmail.com"},
+                                headers={"x-forwarded-for": "203.0.113.43"}).status_code, 200)
+            over = self.c.post("/api/demo/session", json={"email": "v@gmail.com"},
+                               headers={"x-forwarded-for": "203.0.113.43"})
+        self.assertEqual(over.status_code, 429)
+        self.assertEqual(over.json()["scope"], "burst")
+        # The block carries how long it lasts, and the bucket TTL equals that
+        # window, so nobody is wedged out for longer than it.
+        self.assertEqual(over.json()["retry_after"], settings.DEMO_SESSION_IP_BURST_WINDOW)
+
+    def test_mint_and_run_use_separate_buckets(self):
+        """A paid run must not consume the cheap mint allowance, or vice versa."""
+        from server import demo_api
+        r = self.c.post("/api/demo/session", json={"email": "v@gmail.com"},
+                        headers={"x-forwarded-for": "203.0.113.44"})
+        self.assertEqual(r.status_code, 200)
+        with mock.patch.object(demo_api, "run_demo",
+                               side_effect=lambda **_: iter([("done", {})])):
+            run = self.c.post("/api/demo/run", json={"email": "v@gmail.com", "icp": "devtools"},
+                              headers={"x-forwarded-for": "203.0.113.44"})
+        self.assertEqual(run.status_code, 200)  # run's own burst bucket is untouched
+
     def test_non_gmail_email_is_rejected_on_mint(self):
         import waitlist
         r = self.c.post("/api/demo/session", json={"email": "founder@work.io"})

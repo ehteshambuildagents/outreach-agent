@@ -1,13 +1,8 @@
-import {
-  Megaphone,
-  MessageSquare,
-  SendHorizonal,
-  Settings,
-  ShieldCheck,
-  Users,
-} from "lucide-react";
+import { SendHorizonal, ShieldCheck } from "lucide-react";
 import { BrowserFrame } from "@/components/ui/browser-frame";
 import { Logo } from "@/components/ui/logo";
+import { NAV } from "@/lib/nav";
+import { cn } from "@/lib/utils";
 
 /**
  * A non-interactive, illustrative preview of the /ai workspace, shown on /demo
@@ -24,26 +19,37 @@ export function WorkspacePreview() {
     <div aria-hidden className="pointer-events-none select-none">
       <BrowserFrame url="saqua.io/ai" className="mx-auto max-w-4xl">
         <div className="flex h-[400px] overflow-hidden md:h-[440px]">
-          {/* ── Rail (hidden on small screens; the chat carries the story) ── */}
-          <div className="hidden w-44 shrink-0 flex-col border-r border-border-faint bg-panel/50 px-3 py-4 md:flex">
-            <div className="flex items-center gap-2 px-1.5 font-display text-sm font-semibold text-text">
-              <Logo className="h-4 w-auto" /> Saqua
+          {/* ── Rail: the REAL nav, read from the same `NAV` source the shipped
+                 sidebar renders, with the shipped active treatment (accent-soft
+                 row, left accent bar, accent icon). Driving it from the product's
+                 own module is what keeps this preview honest as the app changes. */}
+          <div className="hidden w-44 shrink-0 flex-col border-r border-border-faint bg-panel/50 py-3 md:flex">
+            <div className="flex items-center gap-2 px-4 pb-2">
+              <Logo className="h-4 w-auto" />
+              <span className="truncate text-[13px] font-semibold tracking-tight text-text">Saqua</span>
             </div>
-            <div className="mt-5 space-y-1 text-[12px] font-medium">
-              <div className="flex items-center gap-2 rounded-md bg-accent-soft px-2.5 py-1.5 text-accent">
-                <MessageSquare className="size-3.5" /> Chat
-              </div>
-              <div className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-text-2">
-                <Users className="size-3.5" /> Prospects
-              </div>
-              <div className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-text-2">
-                <Megaphone className="size-3.5" /> Campaigns
-              </div>
-              <div className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-text-2">
-                <Settings className="size-3.5" /> Settings
-              </div>
-            </div>
-            <div className="mt-auto rounded-lg border border-border-faint bg-white/60 px-2.5 py-2 text-[10px] text-muted">
+            <nav className="px-2.5">
+              {NAV[0].items.map((item) => {
+                const active = item.href === "/ai";
+                const Icon = item.icon;
+                return (
+                  <div
+                    key={item.href}
+                    className={cn(
+                      "relative mb-0.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[12px]",
+                      active ? "bg-accent-soft text-text" : "text-text-2",
+                    )}
+                  >
+                    {active && (
+                      <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-accent" />
+                    )}
+                    <Icon className={cn("size-3.5 shrink-0", active ? "text-accent" : "text-muted")} />
+                    <span className="truncate">{item.label}</span>
+                  </div>
+                );
+              })}
+            </nav>
+            <div className="mt-auto mx-2.5 rounded-lg border border-border-faint bg-white/60 px-2.5 py-2 text-[10px] text-muted">
               Demo visitor · sandboxed
             </div>
           </div>

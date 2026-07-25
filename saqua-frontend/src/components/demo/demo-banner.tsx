@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Sparkles, Clock, X } from "lucide-react";
+import { Sparkles, MessageSquare, X } from "lucide-react";
 import { useDemo } from "@/components/demo/demo-provider";
 
 /**
@@ -13,8 +13,8 @@ export function DemoBanner() {
   const { isDemo, expiresAt, turnsUsed, turnsLimit, endSession } = useDemo();
   if (!isDemo) return null;
 
-  const minsLeft =
-    expiresAt !== null ? Math.max(0, Math.round((expiresAt * 1000 - Date.now()) / 60000)) : null;
+  // Session duration is deliberately NOT shown. It still exists server-side for
+  // cleanup and security, but a visible countdown just rushes the visitor.
   const turnsLeft = turnsLimit > 0 ? Math.max(0, turnsLimit - turnsUsed) : null;
 
   return (
@@ -27,11 +27,10 @@ export function DemoBanner() {
           You&apos;re exploring the real product on a sandbox, with real research, scoring, and
           guard-checked drafts. Sending stays off until Gmail clears Google&apos;s review.
         </span>
-        {minsLeft !== null && (
+        {turnsLeft !== null && (
           <span className="inline-flex items-center gap-1 text-muted">
-            <Clock className="size-3.5" />
-            {minsLeft > 0 ? `${minsLeft} min left` : "ending…"}
-            {turnsLeft !== null ? ` · ${turnsLeft} message${turnsLeft === 1 ? "" : "s"} left` : ""}
+            <MessageSquare className="size-3.5" />
+            {turnsLeft} message{turnsLeft === 1 ? "" : "s"} left
           </span>
         )}
         <span className="ml-auto inline-flex items-center gap-3">
