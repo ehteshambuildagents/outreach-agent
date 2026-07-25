@@ -132,17 +132,17 @@ export default function ProspectsPage() {
                     </button>
                   </TD>
                   <TD className="text-text-2">
-                    {[p.industry, p.estimated_stage].filter(Boolean).join(" · ") || "—"}
+                    {[p.industry, p.estimated_stage].filter(Boolean).join(" · ") || "-"}
                   </TD>
-                  <TD className="text-text-2">{p.location || "—"}</TD>
+                  <TD className="text-text-2">{p.location || "-"}</TD>
                   <TD className="text-right">
                     {pct(p.confidence) ? (
                       <span className="font-mono font-medium text-accent">{pct(p.confidence)}</span>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted">-</span>
                     )}
                   </TD>
-                  <TD className="max-w-[320px] truncate text-muted">{p.why_it_matches || "—"}</TD>
+                  <TD className="max-w-[320px] truncate text-muted">{p.why_it_matches || "-"}</TD>
                   <TD className="text-right">
                     <Button variant="secondary" size="sm" onClick={() => setSelected(p)}>
                       <Eye className="size-4" /> Review
@@ -248,7 +248,7 @@ function Info({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="rounded-md border border-border-faint bg-black/[0.02] p-3">
       <div className="text-muted">{label}</div>
-      <div className="mt-1 truncate font-medium text-text">{value || "—"}</div>
+      <div className="mt-1 truncate font-medium text-text">{value || "-"}</div>
     </div>
   );
 }

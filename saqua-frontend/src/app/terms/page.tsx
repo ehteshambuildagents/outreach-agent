@@ -3,7 +3,7 @@ import { SiteNav } from "@/components/marketing/site-nav";
 import { SiteFooter } from "@/components/marketing/site-footer";
 
 export const metadata = {
-  title: "Terms of Service — Saqua",
+  title: "Terms of Service · Saqua",
   description: "The terms for using Saqua while it's in early access.",
 };
 
@@ -23,7 +23,7 @@ export default function TermsPage() {
         <p className="mt-2 text-sm text-muted">Last updated: 13 July 2026.</p>
 
         <div className="glass mt-6 rounded-lg border border-border p-4 text-sm text-text-2 shadow-card">
-          A clear, plain-English draft written in good faith — not yet a lawyer-reviewed
+          A clear, plain-English draft written in good faith, not yet a lawyer-reviewed
           contract. We intend to have it formally reviewed before general availability.
         </div>
 

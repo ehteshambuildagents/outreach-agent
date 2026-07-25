@@ -24,7 +24,7 @@ export function DemoBanner() {
           <Sparkles className="size-3.5" /> Live demo
         </span>
         <span className="text-text-2">
-          You&apos;re exploring the real product on a sandbox — real research, scoring, and
+          You&apos;re exploring the real product on a sandbox, with real research, scoring, and
           guard-checked drafts. Sending stays off until Gmail clears Google&apos;s review.
         </span>
         {minsLeft !== null && (

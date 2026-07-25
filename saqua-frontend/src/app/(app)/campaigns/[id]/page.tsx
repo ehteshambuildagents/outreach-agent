@@ -179,7 +179,7 @@ export default function CampaignDetailPage() {
                   <span className="text-sm text-text-2">
                     {w.current_step}/{w.total_steps} steps
                   </span>
-                  <span className="text-sm text-text-2">{w.reply_detected ? "reply" : "—"}</span>
+                  <span className="text-sm text-text-2">{w.reply_detected ? "reply" : "-"}</span>
                 </div>
               ))}
             </div>

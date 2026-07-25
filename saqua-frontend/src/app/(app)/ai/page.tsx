@@ -388,7 +388,7 @@ function EmptyState({ onPick }: { onPick: (text: string) => void }) {
       <h1 className="text-xl font-semibold text-text">Who should we go after?</h1>
       <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-text-2">
         Describe who to find, or paste a list of companies. Saqua researches each one, scores fit,
-        and drafts the opener — right here. Nothing sends without you.
+        and drafts the opener, right here. Nothing sends without you.
       </p>
       {/* Starter prompts: quiet, secondary chips — not the visual focus. */}
       <div className="mx-auto mt-5 flex max-w-xl flex-wrap items-center justify-center gap-1.5">

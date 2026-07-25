@@ -168,7 +168,7 @@ class DemoSessionEndpointTests(unittest.TestCase):
         os.environ.pop("WAITLIST_REQUIRE_SHARED_REDIS", None)
 
     def test_mint_sets_cookie_and_returns_active(self):
-        r = self.c.post("/api/demo/session", json={"email": "v@example.com"})
+        r = self.c.post("/api/demo/session", json={"email": "v@gmail.com"})
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.json()["active"])
         self.assertIn(demo_session.COOKIE_NAME, r.cookies)
@@ -187,6 +187,14 @@ class DemoSessionEndpointTests(unittest.TestCase):
         r = self.c.post("/api/demo/session", json={"email": "not-an-email"})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["state"], "need_email")
+
+    def test_non_gmail_email_is_rejected_on_mint(self):
+        import waitlist
+        r = self.c.post("/api/demo/session", json={"email": "founder@work.io"})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["state"], "gmail_only")
+        self.assertNotIn(demo_session.COOKIE_NAME, r.cookies)
+        waitlist.join.assert_not_called()  # a rejected visitor is never signed up
 
     def test_honeypot_on_mint_starts_no_session(self):
         r = self.c.post("/api/demo/session",

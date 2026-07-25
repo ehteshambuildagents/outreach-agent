@@ -228,19 +228,32 @@ class DemoEndpointTests(unittest.TestCase):
         self.assertEqual(self.joined, [])
 
     def test_happy_path_streams_sse_and_soft_joins_waitlist(self):
-        r = self._post(icp="devtools startups", email="visitor@example.com")
+        r = self._post(icp="devtools startups", email="visitor@gmail.com")
         self.assertEqual(r.status_code, 200)
         self.assertIn("text/event-stream", r.headers["content-type"])
         self.assertIn("event: start", r.text)
         self.assertIn("event: icp", r.text)
         self.assertIn("event: done", r.text)
         self.assertEqual(self.runs, ["devtools startups"])
-        self.assertEqual(self.joined, [("visitor@example.com", "demo")])
+        self.assertEqual(self.joined, [("visitor@gmail.com", "demo")])
+
+    def test_non_gmail_email_is_rejected_before_limits(self):
+        # Friendly gmail_only state: never runs, never joins the waitlist, and
+        # burns no per-IP bucket, so the SAME IP is admitted right after (the
+        # burst cap of 1 would 429 the second request if the reject had counted).
+        r = self._post(icp="devtools", email="ceo@company.com", ip="203.0.113.60")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["state"], "gmail_only")
+        self.assertEqual(self.runs, [])
+        self.assertEqual(self.joined, [])
+        ok = self._post(icp="devtools", email="a@gmail.com", ip="203.0.113.60")
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(self.joined, [("a@gmail.com", "demo")])
 
     def test_per_ip_burst_blocks_second_immediate_run(self):
-        first = self._post(icp="devtools", email="a@b.co", ip="203.0.113.88")
+        first = self._post(icp="devtools", email="a@gmail.com", ip="203.0.113.88")
         self.assertEqual(first.status_code, 200)
-        second = self._post(icp="devtools", email="a@b.co", ip="203.0.113.88")
+        second = self._post(icp="devtools", email="a@gmail.com", ip="203.0.113.88")
         self.assertEqual(second.status_code, 429)
         self.assertEqual(second.json()["state"], "rate_limited")
         self.assertEqual(second.json()["scope"], "burst")
@@ -248,7 +261,7 @@ class DemoEndpointTests(unittest.TestCase):
 
     def test_global_run_backstop_is_capacity_not_error(self):
         with mock.patch.object(settings, "DEMO_GLOBAL_DAILY_RUNS", 0):
-            r = self._post(icp="devtools", email="a@b.co", ip="203.0.113.99")
+            r = self._post(icp="devtools", email="a@gmail.com", ip="203.0.113.99")
         self.assertEqual(r.status_code, 503)
         self.assertEqual(r.json()["state"], "capacity")
         self.assertEqual(self.runs, [])

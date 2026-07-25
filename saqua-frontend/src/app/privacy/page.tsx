@@ -3,7 +3,7 @@ import { SiteNav } from "@/components/marketing/site-nav";
 import { SiteFooter } from "@/components/marketing/site-footer";
 
 export const metadata = {
-  title: "Privacy Policy — Saqua",
+  title: "Privacy Policy · Saqua",
   description: "How Saqua collects, uses, and protects your data.",
 };
 
@@ -34,10 +34,10 @@ export default function PrivacyPage() {
             <ul className="mt-2 list-disc space-y-1 pl-5 text-text-2">
               <li>Account info (name, email) from our auth provider, Clerk.</li>
               <li>Email content you draft, edit, and send through Saqua.</li>
-              <li>Prospect and research data — the companies you research and the public info gathered about them.</li>
+              <li>Prospect and research data: the companies you research and the public info gathered about them.</li>
               <li>
                 Encrypted mailbox OAuth tokens (Gmail/Outlook), used to send email and detect
-                replies. For Gmail we read only message metadata (identifiers and labels) — never
+                replies. For Gmail we read only message metadata (identifiers and labels), never
                 message content. Tokens are never shown in the browser.
               </li>
               <li>Your conversations and workspace drafts.</li>
@@ -58,14 +58,14 @@ export default function PrivacyPage() {
             </p>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-text-2">
               <li>
-                <span className="font-medium text-text">Send</span> (<code>gmail.send</code>) — to
+                <span className="font-medium text-text">Send</span> (<code>gmail.send</code>), used to
                 send the emails you draft and approve, and their follow-ups.
               </li>
               <li>
-                <span className="font-medium text-text">Metadata</span> (<code>gmail.metadata</code>)
-                — to detect replies to your sequences. This scope grants access only to message and
+                <span className="font-medium text-text">Metadata</span> (<code>gmail.metadata</code>),
+                used to detect replies to your sequences. This scope grants access only to message and
                 thread <span className="font-medium text-text">identifiers and labels</span> (such as
-                INBOX and SENT) — never the subject or body of any message. Saqua cannot and does not
+                INBOX and SENT), never the subject or body of any message. Saqua cannot and does not
                 read your email content. When a reply is detected, Saqua stores only the message&apos;s
                 opaque ID and a timestamp, and uses them solely to stop the follow-up sequence.
               </li>
@@ -122,8 +122,8 @@ export default function PrivacyPage() {
             <h2 className="text-lg font-semibold">Third parties your data passes through</h2>
             <p className="mt-2 text-text-2">
               Anthropic (Claude), Firecrawl, Tavily, Exa, Jina, Hunter, the X (Twitter) API, Google
-              (Gmail), Microsoft (Outlook), and Clerk — each processes only the minimum needed to
-              return your result. Your Gmail data is used only within Saqua for reply detection — it
+              (Gmail), Microsoft (Outlook), and Clerk. Each processes only the minimum needed to
+              return your result. Your Gmail data is used only within Saqua for reply detection, and it
               is not sent to Anthropic or any AI provider.
             </p>
           </div>
@@ -133,7 +133,7 @@ export default function PrivacyPage() {
             <p className="mt-2 text-text-2">
               Mailbox OAuth tokens and other secrets are encrypted at rest; our database stores only
               ciphertext, never raw tokens. Traffic to and from Saqua uses TLS. API keys and secrets
-              live only in our server environment — never shown in the interface or sent to your
+              live only in our server environment, never shown in the interface or sent to your
               browser. Access to production data is limited to what is needed to operate the service.
             </p>
           </div>
@@ -143,7 +143,7 @@ export default function PrivacyPage() {
             <p className="mt-2 text-text-2">
               We keep your conversations, drafts, and research while your account is active. You can
               delete any conversation at any time, which removes it from our systems. For Gmail, we
-              store no message content at any point — only the opaque message IDs and timestamps used
+              store no message content at any point, only the opaque message IDs and timestamps used
               to detect replies. Mailbox tokens are kept until you disconnect the mailbox or delete
               your account, at which point they are deleted and access is revoked. Operational logs
               (usage, errors) are kept for a limited period for security and reliability, then aged

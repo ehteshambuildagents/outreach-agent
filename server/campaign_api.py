@@ -145,7 +145,7 @@ def register(app, rl_read=None, rl_write=None):
             raise HTTPException(
                 status_code=500,
                 detail=(f"Campaign orchestration failed unexpectedly (reference {trace_id}). "
-                        "This was logged server-side — please retry; if it persists the "
+                        "This was logged server-side. Please retry; if it persists the "
                         "campaign service or database may be unavailable."),
             ) from exc
 
@@ -271,7 +271,7 @@ def _run_pipeline(user: str, body: CampaignCreate, trace_id: str = "") -> tuple[
     except Exception as exc:  # noqa: BLE001 - a provider error/timeout must not 500 the campaign
         log.exception("campaign_stage_failed trace_id=%s stage=discovery", trace_id)
         event("discovery_error", f"discovery failed: {type(exc).__name__}")
-        reason = ("Prospect discovery could not complete — a data provider errored or timed out, "
+        reason = ("Prospect discovery could not complete: a data provider errored or timed out, "
                   "so no prospects were processed. Please try again in a moment.")
         result = {
             "status": "provider_failed",
@@ -320,7 +320,7 @@ def _run_pipeline(user: str, body: CampaignCreate, trace_id: str = "") -> tuple[
     else:
         result_status = "no_launchable_prospects"
         status = "blocked"
-        reason = ("No launchable prospects — every email was blocked, held, route-only, or lacked a "
+        reason = ("No launchable prospects: every email was blocked, held, route-only, or lacked a "
                   "valid recipient address, so nothing can be sent.")
     result = {
         "status": result_status,
@@ -806,7 +806,7 @@ def _cadence_warning(prospect: dict) -> dict | None:
     manual = bool(prospect.get("manual_recipient")) or bool((email.get("recipient") or {}).get("manual"))
     if manual:
         return {"code": "manual_recipient_no_followups", "planned_steps": 3,
-                "message": ("Manual recipient — no follow-ups were generated, so this "
+                "message": ("Manual recipient, so no follow-ups were generated. This "
                             "prospect will send a 3-step cadence (initial + bump + "
                             "break-up), not the full 5-touch sequence.")}
     return {"code": "followups_dropped_at_create", "planned_steps": 3,
@@ -833,7 +833,7 @@ def _result_with_warnings(result: dict) -> dict:
 
 
 # ── Launch-time cadence assembly (pure; no model or guard calls here) ────
-_BUMP_INTRO = ("Floating this back to the top in case it got buried — no worries if "
+_BUMP_INTRO = ("Floating this back to the top in case it got buried. No worries if "
                "the timing's off, just wanted to make sure it reached you.")
 
 

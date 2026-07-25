@@ -105,7 +105,7 @@ export function ProspectCard({
                   <AgentRow icon={Search} label="Research">
                     {p.research?.status === "ok" ? (
                       <>
-                        Score {p.research.research_score ?? "—"} · {p.research.pages_crawled.length} pages
+                        Score {p.research.research_score ?? "-"} · {p.research.pages_crawled.length} pages
                         {p.research.named_person ? ` · ${p.research.named_person}` : ""}
                       </>
                     ) : (
@@ -118,7 +118,7 @@ export function ProspectCard({
                         {p.qualification.recommendation} · score {p.qualification.qualification_score}
                       </>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted">-</span>
                     )}
                   </AgentRow>
                   <AgentRow icon={Sparkles} label="Strategy">
@@ -128,7 +128,7 @@ export function ProspectCard({
                         {p.strategy.primary_hook ? ` · “${p.strategy.primary_hook}”` : ""}
                       </>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted">-</span>
                     )}
                   </AgentRow>
                   <AgentRow icon={ShieldCheck} label="Guard">
@@ -137,7 +137,7 @@ export function ProspectCard({
                         {p.guard.decision} · risk {p.guard.overallRisk}/100
                       </>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted">-</span>
                     )}
                   </AgentRow>
                 </div>
@@ -146,7 +146,7 @@ export function ProspectCard({
                   {hasEmail ? (
                     <>
                       <div className="mb-1 text-[11px] uppercase tracking-wide text-muted">
-                        To {email?.to || email?.recipient?.email || email?.recipient?.route || "—"}
+                        To {email?.to || email?.recipient?.email || email?.recipient?.route || "-"}
                       </div>
                       <div className="text-sm font-medium text-text">{email?.subject}</div>
                       <p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-text-2">{email?.body}</p>

@@ -400,7 +400,7 @@ DEMO_LEDGER_USER = "__demo__"          # synthetic user_id the demo meters its s
 # fine for dev, and in prod it only means sessions die on restart.
 DEMO_SESSION_SECRET = os.getenv("DEMO_SESSION_SECRET", "")
 DEMO_SESSION_TTL_SECONDS = int(os.getenv("DEMO_SESSION_TTL_SECONDS", "3600"))
-DEMO_SESSION_TURNS = int(os.getenv("DEMO_SESSION_TURNS", "10"))  # agent turns / session
+DEMO_SESSION_TURNS = int(os.getenv("DEMO_SESSION_TURNS", "5"))   # agent turns / session
 
 # A realistic desktop-browser User-Agent so public pages serve normal HTML.
 USER_AGENT = (

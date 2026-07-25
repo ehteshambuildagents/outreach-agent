@@ -29,7 +29,7 @@ type Bucket = "launched" | "ready" | "blocked";
 const BUCKET_META: Record<Bucket, { label: string; dot: string; hint: string }> = {
   launched: { label: "Launched", dot: "bg-accent", hint: "Live sequences, sending and following up." },
   ready: { label: "Ready", dot: "bg-text-2", hint: "Previewed and ready to launch." },
-  blocked: { label: "Blocked", dot: "bg-danger", hint: "Nothing reachable — needs attention." },
+  blocked: { label: "Blocked", dot: "bg-danger", hint: "Nothing reachable. Needs attention." },
 };
 
 function bucketOf(c: CampaignDetail): Bucket {
@@ -104,7 +104,7 @@ export default function CampaignsPage() {
     <div>
       <PageHeader
         title="Campaigns"
-        subtitle="Every sequence Saqua has previewed or launched — grouped by where it stands."
+        subtitle="Every sequence Saqua has previewed or launched, grouped by where it stands."
         actions={
           <Button asChild variant="primary">
             <Link href="/campaigns/new">
@@ -123,7 +123,7 @@ export default function CampaignsPage() {
           icon={MailCheck}
           accent={stats.replies > 0}
         />
-        <Stat label="Avg fit score" value={stats.ready ? null : stats.avgFit === null ? "—" : `${stats.avgFit}`} icon={Megaphone} />
+        <Stat label="Avg fit score" value={stats.ready ? null : stats.avgFit === null ? "-" : `${stats.avgFit}`} icon={Megaphone} />
       </div>
 
       {state.status === "loading" && (
@@ -267,7 +267,7 @@ function CampaignRow({ campaign: c, detail }: { campaign: CampaignDetail; detail
                   <span>
                     <span className="font-medium text-danger">Nothing launched.</span> All{" "}
                     {discovered} discovered {discovered === 1 ? "prospect" : "prospects"} were blocked, held, or
-                    had no valid recipient — so this campaign has no live sequence.{" "}
+                    had no valid recipient, so this campaign has no live sequence.{" "}
                     {detail && <ReasonBreakdown prospects={prospects} />}
                   </span>
                 </div>

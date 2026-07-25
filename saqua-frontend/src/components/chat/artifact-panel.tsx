@@ -75,7 +75,7 @@ export function ArtifactPanel({ draft, onClose }: { draft: EmailCardData; onClos
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
           {copied ? "Copied" : "Copy draft"}
         </Button>
-        <span className="text-[11px] text-muted">Nothing sends from here — you copy and send it yourself.</span>
+        <span className="text-[11px] text-muted">Nothing sends from here. You copy and send it yourself.</span>
       </div>
     </div>
   );

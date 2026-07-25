@@ -47,7 +47,7 @@ export function RepliesCard({ data }: { data: RepliesCardData }) {
         </div>
 
         <div className="border-t border-border-faint px-5 py-2.5 text-[11px] text-muted">
-          Saqua stops a sequence the moment a reply lands — reply to these personally.
+          Saqua stops a sequence the moment a reply lands. Reply to these personally.
         </div>
       </Card>
     </motion.div>

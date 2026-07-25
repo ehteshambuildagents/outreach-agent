@@ -166,7 +166,7 @@ function ProspectRow({
             >
               <div className="space-y-4 px-5 py-4">
                 <Section label="Why this score">
-                  <p className="text-xs leading-5 text-text-2">{p.score_reason || "—"}</p>
+                  <p className="text-xs leading-5 text-text-2">{p.score_reason || "-"}</p>
                   {(detail.strongest_signals?.length ?? 0) > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {detail.strongest_signals!.map((s, k) => (

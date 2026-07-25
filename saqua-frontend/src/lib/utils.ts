@@ -6,17 +6,17 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function fmtNumber(n: number | undefined | null): string {
-  if (n == null) return "—";
+  if (n == null) return "-";
   return new Intl.NumberFormat("en-US").format(n);
 }
 
 export function fmtCurrency(n: number | undefined | null, digits = 2): string {
-  if (n == null) return "—";
+  if (n == null) return "-";
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
 export function fmtPct(n: number | undefined | null, digits = 1): string {
-  if (n == null) return "—";
+  if (n == null) return "-";
   return `${(n * 100).toFixed(digits)}%`;
 }
 

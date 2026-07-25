@@ -14,7 +14,6 @@ import { Reveal } from "@/components/ui/reveal";
 import { SiteNav } from "@/components/marketing/site-nav";
 import { SiteFooter } from "@/components/marketing/site-footer";
 import { HeroForm } from "@/components/marketing/hero-form";
-import { Countdown } from "@/components/marketing/countdown";
 import { FeatureTabs } from "@/components/marketing/feature-tabs";
 
 const AUDIENCES = [
@@ -108,24 +107,25 @@ export default function LandingPage() {
         </Reveal>
 
         <Reveal delay={0.15}>
-          {/* Two CTAs, equal weight: the waitlist (conversion) and the live demo
-              (proof). The full waitlist form lives in the #waitlist section. */}
+          {/* Two CTAs: the live demo is the PRIMARY action (visitors from PH/X/
+              LinkedIn should feel the product first); the waitlist is the quieter
+              second path. The full waitlist form lives in the #waitlist section. */}
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <a
-              href="#waitlist"
+              href="/demo"
               className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-accent px-7 text-sm font-semibold text-white shadow-[0_1px_2px_rgba(79,90,247,.35)] transition-all hover:-translate-y-px hover:bg-accent-hi hover:shadow-[0_8px_22px_rgba(79,90,247,.32)] sm:w-auto"
+            >
+              Try the live demo <Sparkles className="size-4" />
+            </a>
+            <a
+              href="#waitlist"
+              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-border-strong bg-white px-7 text-sm font-semibold text-text shadow-[0_1px_2px_rgba(17,17,17,.06)] transition-all hover:-translate-y-px hover:border-accent-line hover:text-accent hover:shadow-[0_8px_22px_rgba(79,90,247,.16)] sm:w-auto"
             >
               Join the waitlist
             </a>
-            <a
-              href="/demo"
-              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border border-border-strong bg-white px-7 text-sm font-semibold text-text shadow-[0_1px_2px_rgba(17,17,17,.06)] transition-all hover:-translate-y-px hover:border-accent-line hover:text-accent hover:shadow-[0_8px_22px_rgba(79,90,247,.16)] sm:w-auto"
-            >
-              Try the live demo <Sparkles className="size-4 text-accent" />
-            </a>
           </div>
           <p className="mt-4 text-xs text-muted">
-            The demo runs the real pipeline on live data — no account needed.{" "}
+            The demo runs the real pipeline on live data. No account, just a personal Gmail.{" "}
             <a href="https://cal.com/saqua/demo-call" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
               Or book a call
             </a>
@@ -133,7 +133,8 @@ export default function LandingPage() {
           </p>
         </Reveal>
 
-        {/* Founding offer — gradient label + card + live countdown */}
+        {/* Founding offer: no countdown, no manufactured urgency. The one real
+            condition (be on the waitlist before launch) is stated plainly. */}
         <Reveal delay={0.2} className="mx-auto mt-10 max-w-sm">
           <div className="grad-text font-display text-lg font-semibold">
             Start free with founding pricing, locked for life
@@ -146,7 +147,10 @@ export default function LandingPage() {
               <span className="font-display text-lg font-semibold text-text">30% off</span>{" "}
               <span className="text-muted">for life</span>
             </div>
-            <Countdown hours={60} />
+            <p className="mt-4 text-xs leading-5 text-muted">
+              For everyone on the waitlist before launch day. Early access stays
+              limited while Gmail verification is in progress.
+            </p>
           </div>
         </Reveal>
 

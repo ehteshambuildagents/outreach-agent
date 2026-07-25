@@ -52,25 +52,29 @@ _MAX_WEBSITE_LEN = 300
 CAPACITY_MESSAGE = (
     "The live demo has hit today's limit. It runs Saqua's real research pipeline on "
     "every request, so we cap how many run each day. Join the waitlist and you'll be "
-    "first in when it opens — the demo resets tomorrow.")
+    "first in when it opens. The demo resets tomorrow.")
 IP_DAILY_MESSAGE = (
-    "You've used all of today's demo runs. Join the waitlist for full access — the "
+    "You've used all of today's demo runs. Join the waitlist for full access. The"
     "demo resets tomorrow.")
 EMAIL_DAILY_MESSAGE = (
-    "This email has used today's demo runs. Join the waitlist for full access — the "
+    "This email has used today's demo runs. Join the waitlist for full access. The"
     "demo resets tomorrow.")
 BURST_MESSAGE = (
-    "One run at a time — give the last one a few seconds, then try again.")
+    "One run at a time. Give the last one a few seconds, then try again.")
 IN_PROGRESS_MESSAGE = (
     "A demo run is already going in this browser. Let it finish, then start another.")
-NEED_EMAIL_MESSAGE = "Enter a valid email to run the live demo — no account needed."
+NEED_EMAIL_MESSAGE = "Enter a valid email to run the live demo. No account needed."
+GMAIL_ONLY_MESSAGE = (
+    "The live demo currently supports personal Gmail addresses only, so enter an "
+    "@gmail.com address to start. Every other provider gets full access at launch, "
+    "and the waitlist takes any email.")
 NEED_INPUT_MESSAGE = "Tell me who you sell to, or paste your website, to run the demo."
 UNAVAILABLE_MESSAGE = (
-    "The live demo is briefly unavailable. Please try again shortly — or join the "
+    "The live demo is briefly unavailable. Please try again shortly, or join the "
     "waitlist below.")
 TURNS_MESSAGE = (
     "You've reached this demo session's message limit. Join the waitlist for full, "
-    "unlimited access — real sends open the moment Gmail clears Google's review.")
+    "unlimited access. Real sends open the moment Gmail clears Google's review.")
 SESSION_ENDED_MESSAGE = (
     "Your demo session has ended. Start a new one from the demo page, or join the "
     "waitlist for full access.")
@@ -205,10 +209,10 @@ def reserve_demo_turn(demo_id: str) -> tuple[bool, str]:
 
 def _gate(body: DemoRequest, request: Request):
     """The shared admission gate for anything demo (a pipeline run OR a session
-    mint): kill switch, shared-Redis posture, honeypot, email validity, global
-    budget, per-IP burst/daily + per-email daily (fail-closed), soft waitlist
-    add. Returns a friendly block response, or the (email, ip) of an admitted
-    visitor."""
+    mint): kill switch, shared-Redis posture, honeypot, email validity, the
+    Gmail-only rule, global budget, per-IP burst/daily + per-email daily
+    (fail-closed), soft waitlist add. Returns a friendly block response, or the
+    (email, ip) of an admitted visitor."""
     if not settings.DEMO_ENABLED:
         return _blocked("unavailable", UNAVAILABLE_MESSAGE, 503)
 
@@ -226,6 +230,13 @@ def _gate(body: DemoRequest, request: Request):
     email = waitlist.normalize(body.email)
     if not waitlist.valid(email):
         return _blocked("need_email", NEED_EMAIL_MESSAGE, 400)
+
+    # Personal Gmail only for the demo period (product decision). Checked before
+    # any limiter so a work-address attempt never burns a per-IP bucket, and
+    # before the soft waitlist add so a rejected visitor is never signed up to
+    # anything they were just told they can't use.
+    if not email.endswith("@gmail.com"):
+        return _blocked("gmail_only", GMAIL_ONLY_MESSAGE, 400)
 
     ip = client_ip(request)
 

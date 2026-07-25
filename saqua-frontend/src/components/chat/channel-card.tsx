@@ -61,7 +61,7 @@ export function ChannelCard({ data }: { data: ChannelCardData }) {
             {posted ? <Check className="size-3.5" /> : <Send className="size-3.5" />}
             {posted ? "Marked as posted" : "Mark as posted"}
           </Button>
-          <span className="ml-auto text-[11px] text-muted">Draft only — post it manually.</span>
+          <span className="ml-auto text-[11px] text-muted">Draft only. Post it manually.</span>
         </div>
       </Card>
     </motion.div>

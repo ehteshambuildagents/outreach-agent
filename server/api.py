@@ -174,7 +174,7 @@ def _rate_limit(request: Request, bucket: str, limit: int, window: float) -> Non
         dq.popleft()
     if len(dq) >= limit:
         raise HTTPException(status_code=429,
-                            detail="You're going a little fast — please wait a moment.")
+                            detail="You're going a little fast. Please wait a moment.")
     dq.append(now)
 
 
@@ -401,7 +401,7 @@ async def _validation_error(request: Request, exc: RequestValidationError):
 # ── Access control: verified + approved + not-paused ───────────────────
 _ACCESS_MESSAGE = {
     "pending": ("Your access request is pending approval. We're rolling out access "
-                "gradually — you'll be able to sign in as soon as you're approved."),
+                "gradually, and you'll be able to sign in as soon as you're approved."),
     "denied": "This account doesn't have access.",
 }
 

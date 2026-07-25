@@ -106,7 +106,7 @@ def register(app) -> None:
             raise HTTPException(status_code=400,
                                 detail="Please include a message.")
 
-        subject = body.subject or "Saqua — hello"
+        subject = body.subject or "Saqua: hello"
         html, text = _body(email, subject, body.message)
         sent, detail = mailer.send(
             support_email(),

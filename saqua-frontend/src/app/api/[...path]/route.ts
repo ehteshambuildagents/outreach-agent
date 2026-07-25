@@ -21,7 +21,7 @@ if (IS_PRODUCTION && !API_ORIGIN) {
   console.error(
     JSON.stringify({
       event: "api_proxy_misconfigured",
-      reason: "SAQUA_API_ORIGIN is not set in production — /api requests will 500",
+      reason: "SAQUA_API_ORIGIN is not set in production, so /api requests will 500",
     }),
   );
 } else if (!RAW_API_ORIGIN && !IS_PRODUCTION) {

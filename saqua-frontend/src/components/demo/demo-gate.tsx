@@ -1,108 +1,152 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { ArrowRight, Loader2, Lock, Sparkles } from "lucide-react";
+import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { motion, useReducedMotion } from "framer-motion";
+import { ArrowRight, Check, Loader2, Lock } from "lucide-react";
+import { Logo } from "@/components/ui/logo";
 import { HeroForm } from "@/components/marketing/hero-form";
 import { cn } from "@/lib/utils";
 
 /**
- * The entry gate to the sandboxed in-app demo.
+ * The one small step between /demo and the real workspace.
  *
- * A visitor gives a work email (no account, no password). That mints a signed,
- * short-lived demo session cookie via ``POST /api/demo/session`` — passing the
- * SAME abuse gate as a live run (honeypot, per-IP + per-email caps, global daily
- * budget, soft waitlist add). On success we navigate into the REAL app (``/ai``),
- * where the middleware now recognises the demo cookie and every page renders
- * over demo-scoped data.
+ * A visitor gives a personal Gmail address (no account, no password). That
+ * mints a signed, short-lived demo session cookie via ``POST /api/demo/session``,
+ * passing the SAME abuse gate as a live run (honeypot, Gmail-only rule, per-IP +
+ * per-email caps, global daily budget, soft waitlist add).
  *
- * Every backend block (capacity, per-IP/email limit) comes back as a clean
- * ``{state,message}`` JSON, rendered here as an honest message with the waitlist —
- * never a broken error.
+ * The staged transition starts the INSTANT the button is clicked, so entering
+ * feels like the product booting rather than a request spinner: the first
+ * stages advance on their own while the mint runs, and the LAST stage only
+ * completes once the server confirms, then a FULL navigation into ``/ai`` lets
+ * the middleware see the new cookie and boot the shell in demo mode. If the
+ * mint is refused, the overlay steps aside and the honest block message shows.
+ *
+ * The Gmail-only rule is enforced inline before submit (small hint, disabled
+ * button), and again by the backend (``gmail_only`` state) for anyone bypassing
+ * the form.
  */
 
 type Blocked = { state: string; title: string; message: string };
 
+const BLOCK_TITLES: Record<string, string> = {
+  capacity: "Today's demo capacity is full",
+  rate_limited: "That's all for now",
+  need_email: "That email didn't look right",
+  gmail_only: "Personal Gmail only, for now",
+};
+
+// The staged entry sequence. Earlier stages advance on a timer; the last check
+// lands only when the session is really minted, so the sequence is never a lie
+// about progress, and the whole handoff stays a bit under ~3s on a normal mint.
+const STAGES = ["Research environment…", "Preparing your workspace…", "Launching Saqua…"];
+const STAGE_MS = 700;
+
 export function DemoGate() {
-  const router = useRouter();
+  const reduced = useReducedMotion();
   const [email, setEmail] = useState("");
   const [company, setCompany] = useState(""); // honeypot
-  const [busy, setBusy] = useState(false);
+  const [entering, setEntering] = useState(false);
+  const [stage, setStage] = useState(0);
   const [blocked, setBlocked] = useState<Blocked | null>(null);
+  const timers = useRef<number[]>([]);
 
-  const canStart = /.+@.+\..+/.test(email.trim());
+  const trimmed = email.trim().toLowerCase();
+  const looksComplete = /.+@.+\..+/.test(trimmed);
+  const isGmail = trimmed.endsWith("@gmail.com");
+  const canStart = looksComplete && isGmail;
+  // The moment a complete non-Gmail address is typed, explain the rule quietly
+  // instead of letting a dead button do the talking.
+  const gmailHint = looksComplete && !isGmail;
+
+  function clearTimers() {
+    timers.current.forEach((t) => window.clearTimeout(t));
+    timers.current = [];
+  }
 
   async function start(e: React.FormEvent) {
     e.preventDefault();
-    if (busy || !canStart) return;
-    setBusy(true);
+    if (entering || !canStart) return;
     setBlocked(null);
 
-    let res: Response;
+    // Curtain up immediately: the boot sequence plays WHILE the mint runs.
+    setEntering(true);
+    setStage(0);
+    const t0 = performance.now();
+    timers.current = STAGES.slice(0, -1).map((_, i) =>
+      window.setTimeout(() => setStage((s) => Math.max(s, i + 1)), STAGE_MS * (i + 1)),
+    );
+
+    let fail: Blocked | null = null;
+    let ok = false;
     try {
-      res = await fetch("/api/demo/session", {
+      const res = await fetch("/api/demo/session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
         body: JSON.stringify({ email, company }),
       });
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = await res.json();
+      } catch {
+        /* fall through */
+      }
+      ok = res.ok && Boolean(payload.active);
+      if (!ok) {
+        const state = (payload.state as string) || "error";
+        fail = {
+          state,
+          title: BLOCK_TITLES[state] || "The demo is unavailable",
+          message:
+            (payload.message as string) ||
+            "The demo is unavailable right now. Please try again shortly.",
+        };
+      }
     } catch {
-      setBlocked({
+      fail = {
         state: "error",
         title: "Couldn't reach the demo",
         message: "Check your connection and try again.",
-      });
-      setBusy(false);
+      };
+    }
+
+    if (!ok) {
+      clearTimers();
+      setEntering(false);
+      setStage(0);
+      setBlocked(fail);
       return;
     }
 
-    let payload: Record<string, unknown> = {};
-    try {
-      payload = await res.json();
-    } catch {
-      /* fall through */
-    }
-
-    if (res.ok && payload.active) {
-      // Cookie is set; enter the real product. A full navigation ensures the
-      // middleware sees the new cookie and the shell boots in demo mode.
-      window.location.assign("/ai");
-      return;
-    }
-
-    const state = (payload.state as string) || "error";
-    setBlocked({
-      state,
-      title:
-        state === "capacity"
-          ? "Today's demo capacity is full"
-          : state === "rate_limited"
-            ? "That's all for now"
-            : state === "need_email"
-              ? "That email didn't look right"
-              : "The demo is unavailable",
-      message:
-        (payload.message as string) ||
-        "The demo is unavailable right now. Please try again shortly.",
-    });
-    setBusy(false);
+    // Session is real. Let the sequence finish (never rushing it below the
+    // full run), stamp the last check, then hand the page to the workspace.
+    const elapsed = performance.now() - t0;
+    const wait = Math.max(0, STAGE_MS * STAGES.length - elapsed);
+    timers.current.push(
+      window.setTimeout(() => {
+        setStage(STAGES.length);
+        timers.current.push(
+          window.setTimeout(() => window.location.assign("/ai"), 500),
+        );
+      }, wait),
+    );
   }
 
-  const showWaitlist = blocked && ["capacity", "rate_limited"].includes(blocked.state);
+  const showWaitlist = blocked && ["capacity", "rate_limited", "gmail_only"].includes(blocked.state);
 
   return (
-    <div className="mx-auto w-full max-w-lg">
-      <form onSubmit={start} className="glass rounded-2xl border border-border p-6 shadow-card md:p-8">
-        <div className="mb-5 flex items-center gap-2 text-sm font-semibold text-accent">
-          <Sparkles className="size-4" /> Start your live demo
-        </div>
-        <p className="mb-5 text-sm leading-6 text-muted">
-          You&apos;ll step into the real Saqua workspace — chat, prospects, settings — running the
-          real research pipeline on live data. No account, just a work email so we can hold your
-          spot. Sending stays off until Gmail clears Google&apos;s review.
-        </p>
+    <div className="w-full">
+      <form
+        onSubmit={start}
+        className="glass rounded-2xl border border-border p-6 shadow-card backdrop-blur-md"
+      >
+        <label htmlFor="demo-email" className="block text-sm font-medium text-text">
+          Enter your personal Gmail to begin.
+        </label>
 
-        {/* Honeypot — hidden; a bot that fills it gets a benign non-start. */}
+        {/* Honeypot: hidden; a bot that fills it gets a benign non-start. */}
         <input
           type="text"
           name="company"
@@ -114,38 +158,43 @@ export function DemoGate() {
           className="pointer-events-none absolute left-[-9999px] size-0 opacity-0"
         />
 
-        <input
-          type="email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Your work email"
-          aria-label="Work email"
-          disabled={busy}
-          className="h-12 w-full rounded-lg border border-border-strong bg-white px-4 text-sm text-text outline-none transition-all placeholder:text-faint focus:border-accent-line focus:shadow-[0_0_0_4px_var(--accent-soft)] disabled:opacity-60"
-        />
+        <div className="mt-3 flex flex-col gap-2.5 sm:flex-row">
+          <input
+            id="demo-email"
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@gmail.com"
+            aria-label="Personal Gmail address"
+            disabled={entering}
+            className="h-12 w-full min-w-0 flex-1 rounded-lg border border-border-strong bg-white px-4 text-sm text-text outline-none transition-all placeholder:text-faint focus:border-accent-line focus:shadow-[0_0_0_4px_var(--accent-soft)] disabled:opacity-60"
+          />
+          <button
+            type="submit"
+            disabled={entering || !canStart}
+            className={cn(
+              "inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-lg bg-accent px-5 text-sm font-semibold text-white shadow-[0_1px_2px_rgba(79,90,247,.35)] transition-all hover:-translate-y-px hover:bg-accent-hi hover:shadow-[0_8px_22px_rgba(79,90,247,.32)]",
+              "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+              "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0",
+            )}
+          >
+            Enter the demo <ArrowRight className="size-4" />
+          </button>
+        </div>
 
-        <button
-          type="submit"
-          disabled={busy || !canStart}
-          className={cn(
-            "mt-3 inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-accent text-sm font-semibold text-white shadow-[0_1px_2px_rgba(79,90,247,.35)] transition-all hover:-translate-y-px hover:bg-accent-hi hover:shadow-[0_8px_22px_rgba(79,90,247,.32)]",
-            "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0",
-          )}
-        >
-          {busy ? (
-            <>
-              <Loader2 className="size-4 animate-spin" /> Setting up your demo…
-            </>
-          ) : (
-            <>
-              Enter the live demo <ArrowRight className="size-4" />
-            </>
-          )}
-        </button>
+        {/* Guidance, not a warning: the button is already disabled, and amber
+            text on the cream canvas fails contrast. Quiet ink reads better. */}
+        {gmailHint && (
+          <p className="mt-2 text-xs leading-5 text-text-2" role="status">
+            The demo takes personal Gmail addresses only for now. Any email works
+            for the waitlist, and every provider gets full access at launch.
+          </p>
+        )}
 
         <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-muted">
-          <Lock className="size-3" /> No account or password. Real pipeline, drafts only.
+          <Lock className="size-3 shrink-0" /> No account. Five messages, sixty minutes, drafts
+          only. Your email also holds your waitlist spot.
         </p>
       </form>
 
@@ -162,6 +211,74 @@ export function DemoGate() {
           )}
         </div>
       )}
+
+      {/* ── Staged transition into the workspace ─────────────────────────
+          Covers the page the moment the button is clicked, builds the session
+          in three visible steps, then the /ai navigation replaces the page. If
+          the mint is refused it unmounts to the honest message. Two hard-won
+          constraints: the sheet is static and only the content animates
+          (.demo-entry-content), because animation timelines freeze in
+          throttled/hidden tabs and a sheet fading from 0 would strand an
+          invisible cover; and it renders in a PORTAL to <body>, because the
+          gate sits inside a transformed Reveal wrapper, which would otherwise
+          become the containing block and clip "fixed" to the card's box. */}
+      {entering &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100] grid place-items-center bg-bg"
+          >
+            <div aria-hidden className="hero-glow-cool pointer-events-none absolute inset-x-0 top-0 h-[480px]" />
+            <div className="demo-entry-content relative flex w-full max-w-xs flex-col items-center gap-8 px-6">
+              <motion.span
+                className="relative"
+                animate={reduced ? undefined : { scale: [1, 1.07, 1] }}
+                transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+              >
+                <span
+                  aria-hidden
+                  className="absolute left-1/2 top-1/2 -z-10 size-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/20 blur-xl"
+                />
+                <Logo className="h-10 w-auto" />
+              </motion.span>
+
+              <div className="w-full space-y-3" role="status" aria-live="polite">
+                {STAGES.map((label, i) => {
+                  const done = stage > i;
+                  const active = stage === i;
+                  return (
+                    <div key={label} className="flex items-center gap-2.5 text-sm">
+                      {done ? (
+                        <Check className="size-4 shrink-0 text-accent" />
+                      ) : active ? (
+                        <Loader2 className="size-4 shrink-0 animate-spin text-accent" />
+                      ) : (
+                        <span className="grid size-4 shrink-0 place-items-center">
+                          <span className="size-1.5 rounded-full bg-border-strong" />
+                        </span>
+                      )}
+                      <span
+                        className={cn(
+                          "transition-colors duration-300",
+                          done || active ? "text-text" : "text-faint",
+                        )}
+                      >
+                        {label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="h-1 w-full overflow-hidden rounded-full bg-black/[0.07]">
+                <div
+                  className="h-full rounded-full bg-accent transition-all duration-500 ease-out"
+                  style={{ width: `${(Math.min(stage, STAGES.length) / STAGES.length) * 100}%` }}
+                />
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

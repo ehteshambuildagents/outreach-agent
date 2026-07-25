@@ -190,7 +190,7 @@ export default function NewCampaignPage() {
             </CardHeader>
             <CardContent className="grid gap-5">
               <Field label="Campaign name">
-                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="SaaS Founders — US" />
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="SaaS Founders, US" />
               </Field>
               <Field label="Describe your ICP">
                 <Textarea
@@ -264,7 +264,7 @@ export default function NewCampaignPage() {
                 <CheckCircle2 className="size-5 text-success" />
                 <div className="flex-1">
                   <div className="text-sm font-medium text-text">
-                    Launched — {campaign.workflow_ids.length} workflow{campaign.workflow_ids.length === 1 ? "" : "s"} created
+                    Launched: {campaign.workflow_ids.length} workflow{campaign.workflow_ids.length === 1 ? "" : "s"} created
                     via {provider}.
                   </div>
                   <div className="text-xs text-muted">Follow-ups stop automatically when a prospect replies.</div>

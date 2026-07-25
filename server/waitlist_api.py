@@ -237,7 +237,7 @@ def register(app) -> None:
             return HTMLResponse(_page(
                 "We could not confirm you just now",
                 "Your link is valid, but we could not save the change. Please open "
-                "the link again in a moment — nothing is lost."),
+                "the link again in a moment. Nothing is lost."),
                 status_code=503)
         if not row:
             return HTMLResponse(_page(

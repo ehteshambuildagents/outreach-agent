@@ -11,7 +11,7 @@ const STEPS: Step[] = [
   {
     sel: '[data-tour="rail"]',
     title: "Threads & campaigns",
-    body: "Your research threads and running campaigns live here — switch between them any time.",
+    body: "Your research threads and running campaigns live here. Switch between them any time.",
     place: "right",
   },
   {

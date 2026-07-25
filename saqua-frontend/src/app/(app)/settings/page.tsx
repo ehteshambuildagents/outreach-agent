@@ -239,7 +239,7 @@ export default function SettingsPage() {
                 <div className="md:col-span-2">
                   <EmptyState
                     icon={Mail}
-                    title={isDemo ? "Mailbox connections — coming soon" : "No mailbox connected."}
+                    title={isDemo ? "Mailbox connections: coming soon" : "No mailbox connected."}
                     body={
                       isDemo
                         ? "Connecting Gmail and sending is in final review with Google. Everything up to the send is live in this demo; real sending opens the moment it clears."
@@ -278,7 +278,7 @@ export default function SettingsPage() {
                     <div className="mt-4 flex gap-2">
                       {isDemo ? (
                         <Button variant="secondary" size="sm" className="flex-1" disabled
-                                title="In final review with Google — coming soon">
+                                title="In final review with Google, coming soon">
                           Coming soon
                         </Button>
                       ) : (
@@ -322,7 +322,7 @@ export default function SettingsPage() {
               // waitlist rather than showing a fake identity.
               <CardContent>
                 <p className="text-sm leading-6 text-text-2">
-                  You&apos;re in a live demo — no account is created and nothing here is saved.
+                  You&apos;re in a live demo. No account is created and nothing here is saved.
                   This sandbox resets when your session ends.
                 </p>
                 <Button asChild variant="primary" className="mt-4">

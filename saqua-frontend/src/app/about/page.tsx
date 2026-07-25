@@ -7,7 +7,7 @@ import { SiteFooter } from "@/components/marketing/site-footer";
 import { PRELAUNCH, WAITLIST_ANCHOR } from "@/lib/launch";
 
 export const metadata = {
-  title: "About — Saqua",
+  title: "About · Saqua",
   description:
     "Why Saqua exists: the whole outbound pipeline a founder runs alone, built to show its work at every step.",
 };

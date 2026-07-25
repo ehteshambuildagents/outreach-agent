@@ -261,7 +261,7 @@ def run_demo(*, icp_text: str = "", website: str = "",
         return
     if result.status != "ok" or not result.prospects:
         yield "empty", {"reason": getattr(result, "reason", "")
-                        or "No matching companies found — try a broader description."}
+                        or "No matching companies found. Try a broader description."}
         return
     prospects = result.prospects[:candidates]
     yield "candidates", {"count": len(prospects), "prospects": [
@@ -335,12 +335,12 @@ def run_demo(*, icp_text: str = "", website: str = "",
             "best_company": _display_name(top_prospect, top_research),
             "best_score": top_q.qualification_score,
             "reason": (
-                "None of these cleared Saqua's pursue bar — the closest was "
+                "None of these cleared Saqua's pursue bar. The closest was "
                 f"{_display_name(top_prospect, top_research)} at "
                 f"{top_q.qualification_score}/100. Saqua only writes when the "
                 "evidence gives it a real reason to reach out; sending generic "
                 "email to weak fits is exactly what it exists to avoid. Try "
-                "describing who you sell to more concretely — a specific kind "
+                "describing who you sell to more concretely. A specific kind "
                 "of company tends to match far better than a broad category."),
         }
         yield "done", {}
@@ -379,7 +379,7 @@ def run_demo(*, icp_text: str = "", website: str = "",
         if guard.get("decision") == "BLOCK":
             log.info("demo: guard blocked the draft (risk=%s)", guard.get("risk"))
             yield "draft_skip", {"reason":
-                                 "The deliverability guard blocked this draft — it "
+                                 "The deliverability guard blocked this draft. It "
                                  "didn't meet the bar Saqua holds real sends to, so "
                                  "we won't show it. Run it again, or try another "
                                  "description."}
@@ -391,7 +391,7 @@ def run_demo(*, icp_text: str = "", website: str = "",
                             "guard": guard}
     else:
         yield "draft_skip", {"reason":
-                             "Couldn't finish a grounded opener for this one just now — "
+                             "Couldn't finish a grounded opener for this one just now. "
                              "Saqua drafts around verified evidence or not at all. "
                              "Run it again, or try another description."}
 

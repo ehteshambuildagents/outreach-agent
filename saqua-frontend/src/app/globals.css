@@ -256,6 +256,24 @@ h1, h2, h3, h4 {
     }
   }
 
+  /* /demo gate → workspace transition. The covering sheet is deliberately
+     STATIC (opacity 1): hidden/throttled tabs freeze animation timelines, and
+     a sheet animating up from 0 would strand an invisible click-eating cover.
+     Only the inner content fades/rises; if a tab is hidden mid-entry, that
+     animation simply resumes when the tab is shown again. */
+  @keyframes demo-fade-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .demo-entry-content {
+    animation: demo-fade-up 0.45s ease-out both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .demo-entry-content {
+      animation: none;
+    }
+  }
+
   /* Indigo signal glow — behind live/interactive orbs (the accent, sparingly) */
   .accent-glow {
     background: radial-gradient(

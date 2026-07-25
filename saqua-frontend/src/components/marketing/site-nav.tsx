@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AnimatedLogo } from "@/components/ui/animated-logo";
@@ -10,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 const LINKS = [
   { href: "/#pipeline", label: "How it works" },
-  { href: "/demo", label: "Live demo" },
+  { href: WAITLIST_ANCHOR, label: "Waitlist" },
   { href: "/pricing", label: "Pricing" },
   { href: "/about", label: "About" },
 ];
@@ -22,6 +23,9 @@ const LINKS = [
  */
 export function SiteNav() {
   const [stuck, setStuck] = useState(false);
+  // On /demo the CTA flips to the waitlist: a button pointing at the page it
+  // is already on is noise, and the waitlist is that page's natural second exit.
+  const onDemoPage = (usePathname() || "").startsWith("/demo");
   useEffect(() => {
     const onScroll = () => setStuck(window.scrollY > 16);
     onScroll();
@@ -55,10 +59,14 @@ export function SiteNav() {
           ))}
         </nav>
         <div className="flex items-center gap-2">
-          {/* Pre-launch: no login path. The only action is joining the waitlist. */}
+          {/* Pre-launch: the live demo is the primary action everywhere; the
+              waitlist stays one click away in the links. */}
           <Button asChild variant="primary" size="sm" className="rounded-full">
-            <Link href={PRELAUNCH ? WAITLIST_ANCHOR : "/sign-up"} className="group/cta">
-              {PRELAUNCH ? "Join the waitlist" : "Get started"}{" "}
+            <Link
+              href={PRELAUNCH ? (onDemoPage ? WAITLIST_ANCHOR : "/demo") : "/sign-up"}
+              className="group/cta"
+            >
+              {PRELAUNCH ? (onDemoPage ? "Join the waitlist" : "Try the demo") : "Get started"}{" "}
               <ArrowUpRight className="size-4 transition-transform duration-200 ease-smooth group-hover/cta:translate-x-0.5 group-hover/cta:-translate-y-0.5" />
             </Link>
           </Button>
