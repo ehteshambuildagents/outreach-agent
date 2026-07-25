@@ -144,7 +144,7 @@ export default function LandingPage() {
               <BadgePercent className="size-5" />
             </div>
             <div>
-              <span className="font-display text-lg font-semibold text-text">30% off</span>{" "}
+              <span className="font-display text-lg font-semibold text-text">40% off</span>{" "}
               <span className="text-muted">for life</span>
             </div>
             <p className="mt-4 text-xs leading-5 text-muted">
