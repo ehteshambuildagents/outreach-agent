@@ -76,29 +76,36 @@ export default function DemoPage() {
         </div>
       </section>
 
-      {/* ── The product first, then one small step ─────────────────────
-             Tight by design: the preview sits close under the hero and the gate
-             overlaps its lower edge, so hero → product → "enter" reads as one
-             connected unit with no dead space between them. */}
-      <section className="relative px-6 pb-20 pt-8 lg:px-12">
-        <Reveal delay={0.1} y={22}>
-          <div className="relative">
-            <WorkspacePreview />
-            {/* The preview dissolves into the canvas so the gate reads as the
-                threshold INTO it, not a wall in front of it. */}
+      {/* ── The ask, immediately after the hero ─────────────────────────
+             This is the page's primary conversion point, so it sits directly
+             under the trust bullets: a visitor finishes reading what Saqua does
+             and the very next thing is the one field that gets them in. The
+             preview below is supporting evidence, not a gate to scroll past. */}
+      <section className="px-6 pt-10 lg:px-12">
+        <Reveal delay={0.18}>
+          <div className="relative mx-auto max-w-md">
+            {/* A soft accent bloom behind the card lifts it off the canvas as
+                the focal point without adding any borders or shouting. */}
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-x-0 -bottom-px h-40 bg-gradient-to-t from-bg via-bg/75 to-transparent"
+              className="accent-glow pointer-events-none absolute -inset-10 -z-10 rounded-[32px]"
             />
+            <DemoGate />
           </div>
         </Reveal>
-        {/* Overlap stays inside the preview's 160px fade band, so the gate sits
-            ON the product image rather than in dead space below it. */}
-        <div className="relative z-10 mx-auto -mt-28 max-w-md md:-mt-32">
-          <Reveal delay={0.18}>
-            <DemoGate />
-          </Reveal>
-        </div>
+      </section>
+
+      {/* ── Supporting evidence: the workspace they are about to enter ── */}
+      <section className="px-6 pb-20 pt-14 lg:px-12">
+        <Reveal delay={0.05} y={22}>
+          <WorkspacePreview />
+        </Reveal>
+        <Reveal delay={0.1}>
+          <p className="mx-auto mt-5 max-w-xl text-center text-sm leading-6 text-muted">
+            A preview of the workspace you&apos;ll enter. Research, fit scoring, and
+            guard-checked drafts all run for real on live data.
+          </p>
+        </Reveal>
       </section>
 
       <SiteFooter />

@@ -16,6 +16,7 @@ import { CampaignsCard } from "@/components/chat/campaigns-card";
 import { ArtifactPanel } from "@/components/chat/artifact-panel";
 import { useStreamedText } from "@/components/chat/use-streamed-text";
 import { useChatNav } from "@/components/chat/chat-nav";
+import { useDemo } from "@/components/demo/demo-provider";
 import { OnboardingTour } from "@/components/onboarding/tour";
 import {
   api,
@@ -46,6 +47,10 @@ const ACTION_PROMPT: Record<string, (company: string) => string> = {
 
 export default function AIChatPage() {
   const { activeId, setActive, refresh } = useChatNav();
+  // Demo sessions meter turns server-side; refreshing right after a send keeps
+  // the banner's remaining-messages count and the engagement prompt honest
+  // instead of waiting up to a minute for the background poll.
+  const { refresh: refreshDemo } = useDemo();
   const [convId, setConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -125,8 +130,9 @@ export default function AIChatPage() {
       // Reveal the last assistant message's narration progressively.
       setStreamAt(next.length && next[next.length - 1].role === "assistant" ? next.length - 1 : -1);
       refresh(); // sidebar Recents — the title may have been auto-generated this turn
+      refreshDemo(); // demo only: turns used just changed
     },
-    [convId, sending, setActive, refresh],
+    [convId, sending, setActive, refresh, refreshDemo],
   );
 
   const onAction = useCallback(

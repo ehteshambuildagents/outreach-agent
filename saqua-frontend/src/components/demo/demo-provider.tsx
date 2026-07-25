@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 /**
  * Demo-session awareness for the real app shell.
@@ -46,7 +46,10 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
   const [turnsLimit, setTurnsLimit] = useState(0);
   const [tick, setTick] = useState(0); // re-evaluates isDemo as the clock runs out
 
-  const refresh = () => {
+  // Stable identity: consumers put this in effect/callback dependency arrays
+  // (the chat page calls it after every send), and a fresh function each render
+  // would churn those callbacks. It only touches setters, so [] is correct.
+  const refresh = useCallback(() => {
     const exp = readExpCookie();
     if (!exp || exp * 1000 <= Date.now()) {
       setExpiresAt(null);
@@ -68,7 +71,7 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
       .catch(() => {
         /* keep the cookie-derived expiry; status is a nice-to-have */
       });
-  };
+  }, []);
 
   useEffect(() => {
     refresh();

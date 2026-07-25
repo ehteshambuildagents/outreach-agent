@@ -166,11 +166,13 @@ export function DemoGate() {
 
   return (
     <div className="w-full">
+      {/* The page's primary conversion point: a touch more presence than a
+          plain card (accent hairline, deeper shadow) while staying minimal. */}
       <form
         onSubmit={start}
-        className="glass rounded-2xl border border-border p-6 shadow-card backdrop-blur-md"
+        className="glass rounded-2xl border border-accent-line p-6 shadow-pop backdrop-blur-md md:p-7"
       >
-        <label htmlFor="demo-email" className="block text-sm font-medium text-text">
+        <label htmlFor="demo-email" className="block text-[15px] font-semibold text-text">
           Enter your personal Gmail to begin.
         </label>
 
