@@ -84,6 +84,32 @@ class AdminApiTests(unittest.TestCase):
         self.assertTrue(any(e["status"] == 502 and e["user_id"] == "user_test"
                             for e in rows))
 
+    def test_admin_providers_diagnostic_is_gated_and_leaks_nothing(self):
+        """The endpoint that makes a missing provider key visible. It must be
+        admin-only and must never carry key material, since whoever holds the
+        admin token still has no business seeing a provider secret."""
+        env = {"SAQUA_ADMIN_TOKEN": "s3cret", "APOLLO_API_KEY": "sk-live-supersecret",
+               "TAVILY_API_KEY": "", "EXA_API_KEY": "ex-key"}
+        with mock.patch.dict(os.environ, {"SAQUA_ADMIN_TOKEN": ""}, clear=False):
+            self.assertEqual(self.client.get("/api/admin/providers").status_code, 404)
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(self.client.get("/api/admin/providers").status_code, 403)
+            self.assertEqual(
+                self.client.get("/api/admin/providers",
+                                headers={"X-Admin-Token": "nope"}).status_code, 403)
+            r = self.client.get("/api/admin/providers",
+                                headers={"X-Admin-Token": "s3cret"})
+        self.assertEqual(r.status_code, 200)
+        providers = r.json()["providers"]
+        self.assertTrue(providers["apollo_configured"])
+        self.assertFalse(providers["tavily_configured"])   # empty value is NOT configured
+        self.assertTrue(providers["exa_configured"])
+        for value in providers.values():
+            self.assertIsInstance(value, bool)
+        self.assertNotIn("supersecret", r.text)
+        self.assertNotIn("sk-live", r.text)
+        self.assertNotIn("ex-key", r.text)
+
     def test_admin_errors_requires_token(self):
         error_log.record_error(error_type="E", message="m", notify=False)
         # Disabled entirely when no admin token is configured.

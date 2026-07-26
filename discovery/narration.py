@@ -61,6 +61,48 @@ def role_phrase(role_label: str) -> str:
     return f"{article} {phrase}"
 
 
+# ── 0. A provider that could not be used ───────────────────────────────────
+# Only "unavailable" (no key) and "failed" (it errored) are worth saying. "empty"
+# means the provider worked and had nothing, which is a result, not an outage.
+_DOWN = ("unavailable", "failed")
+
+
+def provider_gap(*, apollo=None, web=None) -> list:
+    """Say plainly when the run was missing a source, and what that costs.
+
+    Grounded in the OUTCOME of each provider this run, so it can never claim an
+    outage that did not happen, and equally never lets a silent degradation pass
+    as a normal result. ``apollo`` is a state string; ``web`` maps provider name
+    to state.
+    """
+    out = []
+    if apollo in _DOWN:
+        why = "is not configured" if apollo == "unavailable" else "did not respond"
+        out.append(f"Apollo {why}, so I am continuing with web sources. "
+                   "Hiring verification will be weaker.")
+
+    web = dict(web or {})
+    down = sorted(n for n, s in web.items() if s in _DOWN)
+    up = sorted(n for n, s in web.items() if s == "ok")
+    if down and not up:
+        out.append(f"{_subject(down)} unavailable too, so there is nothing to "
+                   "corroborate against this run.")
+    elif down:
+        out.append(f"{_subject(down)} unavailable, so corroboration comes from "
+                   f"{_listed(up)} alone.")
+    return out
+
+
+def _listed(names) -> str:
+    """"Tavily" / "Tavily and Exa" — for object position, no verb."""
+    return " and ".join(n.capitalize() for n in names)
+
+
+def _subject(names) -> str:
+    """"Tavily is" / "Tavily and Exa are" — for subject position, with agreement."""
+    return _listed(names) + (" is" if len(list(names)) == 1 else " are")
+
+
 # ── 1. After the Apollo company search ─────────────────────────────────────
 def after_apollo(*, total=None, kept=0, staffing_dropped=0, recruiter_names=(),
                  agency_dropped=0, role_label="") -> list:

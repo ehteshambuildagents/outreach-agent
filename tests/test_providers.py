@@ -39,6 +39,51 @@ class ProviderAvailabilityTests(unittest.TestCase):
             self.assertTrue(jina.available())
 
 
+class ProviderDiagnosticsTests(unittest.TestCase):
+    """The diagnostic that would have caught production running on web search
+    alone for a full deploy cycle, because APOLLO_API_KEY was unset on the backend."""
+
+    def test_env_names_match_each_provider_module(self):
+        """PROVIDER_ENV is declared away from the modules (they import it), so it
+        could silently drift and report a provider configured under a name nothing
+        actually reads. Pin every one to its module's own _ENV."""
+        from research import apollo_orgs, x_search
+        from research.providers_common import PROVIDER_ENV
+        for name, module in (("apollo", apollo_orgs), ("tavily", tavily),
+                             ("exa", exa), ("x", x_search),
+                             ("firecrawl", firecrawl), ("jina", jina)):
+            self.assertEqual(PROVIDER_ENV[name], module._ENV, name)
+
+    def test_status_is_booleans_only_and_tracks_the_environment(self):
+        from research.providers_common import provider_status
+        with mock.patch.dict(os.environ, {}, clear=True):
+            off = provider_status()
+        with mock.patch.dict(os.environ, {"APOLLO_API_KEY": "super-secret-value"},
+                             clear=True):
+            on = provider_status()
+        self.assertFalse(off["apollo"])
+        self.assertTrue(on["apollo"])
+        self.assertFalse(on["tavily"])
+        for value in list(off.values()) + list(on.values()):
+            self.assertIsInstance(value, bool)      # never a key, length or prefix
+        self.assertNotIn("super-secret-value", repr(on))
+
+    def test_whitespace_only_key_counts_as_not_configured(self):
+        from research.providers_common import provider_status
+        with mock.patch.dict(os.environ, {"APOLLO_API_KEY": "   "}, clear=True):
+            self.assertFalse(provider_status()["apollo"])
+
+    def test_log_line_is_greppable_and_leaks_nothing(self):
+        from research.providers_common import provider_status_line
+        with mock.patch.dict(os.environ, {"APOLLO_API_KEY": "sk-live-abc123"},
+                             clear=True):
+            line = provider_status_line()
+        self.assertIn("apollo=true", line)
+        self.assertIn("tavily=false", line)
+        self.assertNotIn("sk-live", line)
+        self.assertNotIn("abc123", line)
+
+
 class FirecrawlTests(unittest.TestCase):
     def test_scrape_parses_markdown(self):
         payload = {"data": {"markdown": "# Hello\nbody",

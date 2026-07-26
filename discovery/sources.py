@@ -458,23 +458,28 @@ def search_candidates(query, pool_size: int = None, *, search_text: str = None,
     if not q:
         return []
 
-    def run_tavily():
-        try:
-            return [("tavily", r) for r in tavily.search(q, max_results=pool)]
-        except Exception:  # noqa: BLE001
-            log.info("tavily discovery search failed")
-            return []
+    # Per-provider outcome, so a provider that never ran is distinguishable from
+    # one that ran and found nothing. Without this the narration cannot honestly
+    # say "Tavily is unavailable" versus "Tavily found nothing".
+    web_state = {}
 
-    def run_exa():
+    def _run(name, provider):
+        if not provider.available():
+            web_state[name] = "unavailable"
+            return []
         try:
-            return [("exa", r) for r in exa.search(q, max_results=pool)]
+            results = [(name, r) for r in provider.search(q, max_results=pool)]
+            web_state[name] = "ok"
+            return results
         except Exception:  # noqa: BLE001
-            log.info("exa discovery search failed")
+            log.info("%s discovery search failed", name)
+            web_state[name] = "failed"
             return []
 
     raws = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool_ex:
-        for fut in (pool_ex.submit(run_exa), pool_ex.submit(run_tavily)):
+        for fut in (pool_ex.submit(_run, "exa", exa),
+                    pool_ex.submit(_run, "tavily", tavily)):
             raws.extend(fut.result())
 
     out = []
@@ -495,7 +500,8 @@ def search_candidates(query, pool_size: int = None, *, search_text: str = None,
     )
     if stats is not None:
         stats.update({"raw": len(raws), "demoted": dict(demoted),
-                      "rejected": dict(rejected), "kept": len(out)})
+                      "rejected": dict(rejected), "kept": len(out),
+                      "web_state": dict(web_state)})
     return out
 
 
@@ -518,6 +524,8 @@ def search_apollo(query, *, plan=None, keywords=None, job_titles=None,
     so a streaming caller can narrate the run from real observations.
     """
     if not (APOLLO_ORG_SEARCH_ENABLED and apollo_orgs.available()):
+        if stats is not None:
+            stats["state"] = "unavailable"
         return []
     tags = keywords if keywords is not None else (
         list(getattr(plan, "keyword_tags", None) or []) if plan else apollo_keywords(query))
@@ -535,6 +543,12 @@ def search_apollo(query, *, plan=None, keywords=None, job_titles=None,
         locations=locations, page=page)
     if res.get("status") != "ok":
         log.info("apollo org search unusable: %s", res.get("reason") or res.get("status"))
+        if stats is not None:
+            # "empty" is a real answer from a working provider; the others mean the
+            # provider did not actually run, which the narration must not gloss over.
+            stats["state"] = ("empty" if res.get("status") == "empty"
+                              else "unavailable" if res.get("status") == "unavailable"
+                              else "failed")
         return []
 
     query_text = _query_text(query)
@@ -612,7 +626,7 @@ def search_apollo(query, *, plan=None, keywords=None, job_titles=None,
     log.info("discovery_apollo tags=%s titles=%s candidates=%s staffing_dropped=%s of %s total",
              tags, titles, len(out), staffing_dropped, res.get("total"))
     if stats is not None:
-        stats.update({"total": res.get("total"), "kept": len(out),
+        stats.update({"state": "ok", "total": res.get("total"), "kept": len(out),
                       "staffing_dropped": staffing_dropped,
                       "recruiter_names": recruiter_names,
                       "agency_dropped": agency_dropped})

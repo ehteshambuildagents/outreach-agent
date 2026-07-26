@@ -67,6 +67,55 @@ class GroundingTests(unittest.TestCase):
         self.assertNotIn("founder", _text(narration.top_pick(p)))
 
 
+class ProviderDegradationTests(unittest.TestCase):
+    """When a source is missing, say so. Production ran on web search alone for a
+    whole deploy cycle and the stream gave no hint, because a provider with no key
+    contributes nothing rather than failing."""
+
+    def test_a_missing_apollo_is_stated_with_its_cost(self):
+        said = _text(narration.provider_gap(apollo="unavailable"))
+        self.assertIn("apollo is not configured", said)
+        self.assertIn("continuing with web sources", said)
+        self.assertIn("verification will be weaker", said)
+
+    def test_a_failing_provider_is_described_as_failing_not_missing(self):
+        self.assertIn("did not respond", _text(narration.provider_gap(apollo="failed")))
+
+    def test_a_working_or_merely_empty_provider_says_nothing(self):
+        self.assertEqual(narration.provider_gap(apollo="ok"), [])
+        # "empty" is a real answer from a working provider, not an outage.
+        self.assertEqual(narration.provider_gap(apollo="empty"), [])
+        self.assertEqual(narration.provider_gap(), [])
+        self.assertEqual(narration.provider_gap(web={"exa": "ok", "tavily": "ok"}), [])
+
+    def test_web_providers_report_who_is_left(self):
+        one = _text(narration.provider_gap(web={"tavily": "unavailable", "exa": "ok"}))
+        self.assertIn("tavily is unavailable", one)
+        self.assertIn("from exa alone", one)
+        both = _text(narration.provider_gap(
+            web={"tavily": "unavailable", "exa": "failed"}))
+        self.assertIn("nothing to corroborate", both)
+
+    def test_the_engine_never_claims_a_search_it_could_not_run(self):
+        """The narration must not announce "Searching Apollo" when Apollo is not
+        configured; it must announce the gap instead."""
+        q = DiscoveryQuery(raw="companies hiring an sdr", keywords=["sdr"], limit=5)
+        got = []
+        with mock.patch.object(engine.sources, "providers_available",
+                               lambda: {"apollo": False, "exa": True, "tavily": True}), \
+             mock.patch.object(engine.sources, "search_apollo",
+                               lambda *a, **k: (k.get("stats", {}).update(
+                                   {"state": "unavailable"}) or [])), \
+             mock.patch.object(engine.sources, "search_candidates",
+                               lambda *a, **k: []), \
+             mock.patch.object(engine.sources, "verify_hiring", lambda *a, **k: 0):
+            engine._search_until_good(
+                q, set(), 20, progress=lambda t, kind="step": got.append((kind, t)))
+        said = _text([t for _, t in got])
+        self.assertNotIn("searching apollo", said)
+        self.assertIn("apollo is not configured", said)
+
+
 class NamingPrecisionTests(unittest.TestCase):
     """A company is only NAMED when the reason given for dropping it is true.
 

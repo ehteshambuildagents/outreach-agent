@@ -75,6 +75,27 @@ def register(app) -> None:
         # address, and an admin view has no use for it.
         return {"entries": [{k: v for k, v in r.items() if k != "token"} for r in rows]}
 
+    # ── Provider configuration diagnostic ──────────────────────────────
+    @router.get("/providers")
+    def providers(request: Request):
+        """Which research providers this RUNNING PROCESS can actually use.
+
+        Booleans only, never key material (not a value, prefix, or length). It
+        answers the question that a silent degradation makes impossible to answer
+        from the outside: production served discovery on web search alone for a
+        whole deploy cycle because APOLLO_API_KEY was not set on the backend
+        service, and nothing surfaced it. `/api/health` deliberately stays public
+        and minimal, so this lives behind the admin token instead.
+
+        A ``true`` here means a non-empty key is visible to this process, which is
+        the thing that was actually wrong. It does NOT prove the key is valid;
+        run a discovery turn for that.
+        """
+        _require_admin(request)
+        from research.providers_common import provider_status
+        return {"providers": {f"{name}_configured": ok
+                              for name, ok in provider_status().items()}}
+
     # ── Proxy / client-IP diagnostic ───────────────────────────────────
     @router.get("/echo-ip")
     def echo_ip(request: Request):

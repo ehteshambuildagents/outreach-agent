@@ -38,6 +38,40 @@ def get_key(env_name: str) -> str:
     return (os.environ.get(env_name) or "").strip()
 
 
+# The environment variable each provider reads. Kept here so "is this configured"
+# can be answered WITHOUT importing the provider modules (they import this one).
+# tests/test_providers.py asserts these stay identical to each module's own _ENV,
+# so the two can never drift apart.
+PROVIDER_ENV = {
+    "apollo": "APOLLO_API_KEY",
+    "tavily": "TAVILY_API_KEY",
+    "exa": "EXA_API_KEY",
+    "x": "X_BEARER_TOKEN",
+    "firecrawl": "FIRECRAWL_API_KEY",
+    "jina": "JINA_API_KEY",
+}
+
+
+def provider_status() -> dict:
+    """``{provider: bool}`` — is a non-empty key visible to THIS process?
+
+    Booleans only. Nothing here returns, logs or derives anything from the key
+    material itself, not even a length or a prefix, so the result is safe to put
+    in a diagnostics response and a startup log.
+
+    This exists because a missing key degrades discovery SILENTLY: Apollo simply
+    contributes nothing and the run looks superficially normal. Production ran on
+    web search alone for a full deploy cycle before that was noticed.
+    """
+    return {name: bool(get_key(env)) for name, env in PROVIDER_ENV.items()}
+
+
+def provider_status_line() -> str:
+    """The status as one greppable log line: ``apollo=true tavily=false ...``."""
+    return " ".join(f"{name}={'true' if ok else 'false'}"
+                    for name, ok in provider_status().items())
+
+
 # ── Per-user usage caps (best-effort; never break a provider call) ─────
 def _cap_user():
     """The ambient user this call is serving, or None for a system call."""

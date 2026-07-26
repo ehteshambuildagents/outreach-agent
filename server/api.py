@@ -127,6 +127,32 @@ def _log_redis_configuration() -> None:
 
 
 @app.on_event("startup")
+def _log_discovery_providers() -> None:
+    """Make a missing provider key impossible to miss at boot.
+
+    A provider with no key does not error, it just contributes nothing: discovery
+    quietly falls back to whatever is left. Production ran on web search alone for
+    a full deploy cycle because APOLLO_API_KEY was never set on the backend
+    service, and the only symptom was slightly worse results. Apollo is the
+    PRIMARY company source (verified job postings, recruiter filtering), so losing
+    it is a quality regression, not a degraded extra.
+
+    Booleans only: no key, prefix or length is ever logged.
+    """
+    from config import settings
+    from research.providers_common import provider_status, provider_status_line
+    status = provider_status()
+    log.info("discovery providers: %s", provider_status_line())
+    missing = [name for name in ("apollo", "tavily", "exa") if not status.get(name)]
+    if missing and settings.is_production():
+        log.warning(
+            "DISCOVERY PROVIDER(S) NOT CONFIGURED IN PRODUCTION: %s. Discovery will "
+            "silently run without them (Apollo missing means no verified job "
+            "postings and no recruiter filtering). Set the matching *_API_KEY on the "
+            "BACKEND service, not the frontend.", ", ".join(missing))
+
+
+@app.on_event("startup")
 def _log_proxy_secret_configuration() -> None:
     """The frontend proxy proves its origin with SAQUA_PROXY_SECRET; without it the
     backend cannot tell our own proxy from any other caller, so it buckets proxied

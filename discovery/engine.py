@@ -231,7 +231,10 @@ def _search_until_good(query, seen, pool, plan=None, progress=None):
         batch = []
         if step["apollo"]:
             first = not searched_apollo
-            if first:
+            # Only claim the search when Apollo can actually run. Announcing a
+            # source we never reached would be exactly the false narration the
+            # grounding rule forbids; the gap line below says so instead.
+            if first and sources.providers_available().get("apollo"):
                 say.step("Searching Apollo's company database")
             found = sources.search_apollo(
                 query, plan=plan, keywords=step.get("apollo_tags"),
@@ -239,6 +242,7 @@ def _search_until_good(query, seen, pool, plan=None, progress=None):
                 stats=(stats := {}))
             batch += found
             if first:
+                say.thought(narration.provider_gap(apollo=stats.get("state")))
                 say.thought(narration.after_apollo(
                     total=stats.get("total"), kept=len(found),
                     staffing_dropped=stats.get("staffing_dropped", 0),
@@ -255,6 +259,7 @@ def _search_until_good(query, seen, pool, plan=None, progress=None):
                                               stats=(wstats := {}))
             batch += found
             if first:
+                say.thought(narration.provider_gap(web=wstats.get("web_state")))
                 say.thought(narration.after_web(
                     demoted=wstats.get("demoted"), rejected=wstats.get("rejected"),
                     kept=len(found)))
