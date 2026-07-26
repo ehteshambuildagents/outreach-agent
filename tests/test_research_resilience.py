@@ -168,3 +168,49 @@ class OrchestrationErrorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class BenchmarkSiteTests(unittest.TestCase):
+    """The five sites that exposed the weak-homepage problem.
+
+    Offline: the point is not to re-crawl the live web on every test run, it is
+    that a nav-heavy homepage must never be accepted as a finished run. Each case
+    feeds a homepage whose own text yields almost nothing and asserts the planner
+    keeps going after evidence rather than declaring victory.
+    """
+
+    SITES = ("apple.com", "stripe.com", "notion.so", "linear.app", "openai.com")
+
+    def test_a_nav_only_homepage_is_never_enough_on_its_own(self):
+        from research import gaps
+        from research.evidence import Evidence, ResearchGraph
+        for host in self.SITES:
+            graph = ResearchGraph()
+            graph.add("what_they_do", Evidence(value=f"{host} does something",
+                                               source_url=f"https://{host}",
+                                               quote="q", confidence=0.9))
+            ledger = gaps.assess(graph)
+            self.assertFalse(ledger.is_confident(), host)
+            self.assertLess(ledger.confidence, gaps.WEAK_PAGE_CONFIDENCE, host)
+            # ...and it must know where to look next, on the company's own site.
+            actions = gaps.plan(ledger, providers={"firecrawl": True, "apollo": True},
+                                candidate_urls=[f"https://{host}/about",
+                                                f"https://{host}/pricing"])
+            self.assertTrue(actions, host)
+            self.assertTrue(any(a.kind == "crawl" for a in actions), host)
+
+    def test_the_pipeline_reports_its_evidence_ledger(self):
+        """The ledger must reach the caller so uncertainty can be explained, and
+        must NOT collide with the per-field evidence map."""
+        from research import gaps
+        from research.evidence import Evidence, ResearchGraph
+        graph = ResearchGraph()
+        graph.add("what_they_do", Evidence(value="Payments", source_url="u",
+                                           quote="q", confidence=0.9))
+        out = pipeline._finalize("https://stripe.com", [("https://stripe.com", "text")],
+                                 graph, [], 40, {}, False, "done", {})
+        self.assertIn("evidence_ledger", out)
+        self.assertIn("confidence", out["evidence_ledger"])
+        self.assertIn("missing_labels", out["evidence_ledger"])
+        self.assertIn("evidence", out)          # the original provenance map survives
+        self.assertIsNot(out["evidence"], out["evidence_ledger"])

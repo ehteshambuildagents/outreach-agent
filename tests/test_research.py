@@ -1113,7 +1113,14 @@ class AdaptiveCrawlTests(unittest.TestCase):
 
         self.assertEqual(len(result["pages_crawled"]), 8)   # homepage + 7 subs
         self.assertIn("page budget of 8", result["stop_reason"])
-        for skipped in ("/docs", "/careers", "/news"):
+        # WHICH 7 is now decided by the evidence ledger (research/gaps.py): pages
+        # serving a MISSING slot outrank pages whose evidence we already have.
+        # People and proof still lead, and /news is now preferred over /services
+        # because a recent signal (weight .12) is worth more than more positioning
+        # copy. The budget itself is unchanged — three candidates stay unreached.
+        for reached in ("/about", "/team", "/customers", "/pricing", "/news"):
+            self.assertTrue(any(u.endswith(reached) for u in fetched), reached)
+        for skipped in ("/services", "/docs", "/careers"):
             self.assertFalse(any(u.endswith(skipped) for u in fetched), skipped)
 
     def test_stops_when_extra_pages_stop_adding_evidence(self):
@@ -1128,10 +1135,14 @@ class AdaptiveCrawlTests(unittest.TestCase):
             lambda n: (_thin_graph(), [], scores.get(n, max(scores.values())), {}),
             fetched)
 
-        # crawl order: home + [about,team] + [case-studies,services] -> pricing unreached
+        # Diminishing returns still ends the crawl at the same point: 5 pages, same
+        # reason. What changed is WHICH pages the budget bought — /pricing closes a
+        # real gap so it is now reached, and /services (more positioning copy we
+        # already have) is the one left behind. Stopping is unaffected.
         self.assertEqual(len(result["pages_crawled"]), 5)
         self.assertIn("no new evidence", result["stop_reason"])
-        self.assertFalse(any(u.endswith("/pricing") for u in fetched))
+        self.assertTrue(any(u.endswith("/pricing") for u in fetched))
+        self.assertFalse(any(u.endswith("/services") for u in fetched))
 
     def test_batches_pages_into_one_extraction_call_each(self):
         # The latency fix: extra pages are extracted in ONE call per batch of

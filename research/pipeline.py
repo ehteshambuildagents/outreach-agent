@@ -74,7 +74,7 @@ from research.fetcher import (
     validate_url,
 )
 from research.hooks import backfill_facts_from_hooks, rank_hooks, research_score
-from research import exa, firecrawl, jina, source_planner, tavily
+from research import exa, firecrawl, gaps, jina, source_planner, tavily
 from research.verifier import select_primary_contact, verify
 from services.claude_client import ClaudeClientError
 
@@ -148,6 +148,10 @@ def _adaptive_research(url, render_fetcher, sitemap_subs, find_founder=False) ->
         return {"status": "error", "error": "Unexpected error during analysis."}
 
     remaining = list(candidates)
+    # Facts the evidence ledger cannot read off the graph (hiring/funding come
+    # from Apollo/Tavily, not the site). Empty here; the discovery side supplies
+    # them when it already knows.
+    ledger_signals = {}
 
     def _person_sources_left():
         # PERF: only GENUINE people pages (about/team/leadership/people) can name a
@@ -175,6 +179,12 @@ def _adaptive_research(url, render_fetcher, sitemap_subs, find_founder=False) ->
                 stop_reason = ("company understood + recent signal; person sources "
                                "exhausted — No suitable public decision maker found.")
                 break
+            # EVIDENCE FIRST: crawl the page that closes the biggest remaining gap,
+            # rather than whatever the static keyword priority happened to rank
+            # highest. On a nav-heavy homepage (apple.com) the static order spends
+            # the budget on whatever was linked; this aims at what is missing.
+            if not person_hunt:
+                pool = _gap_ordered(pool, graph, ledger_signals)
             batch_urls = pool[:min(PAGE_BATCH_SIZE, budget - len(pages))]
             for u in batch_urls:
                 remaining.remove(u)
@@ -222,6 +232,15 @@ def _adaptive_research(url, render_fetcher, sitemap_subs, find_founder=False) ->
                 if delta < DIMINISHING_DELTA:
                     stall += 1
                     if stall >= DIMINISHING_STALLS:
+                        # ...unless the evidence ledger says we are still short AND
+                        # an uncrawled page targets a specific gap. A flat score
+                        # across two generic pages is not proof that the pricing
+                        # page would have added nothing.
+                        if _worth_continuing(graph, ledger_signals, remaining):
+                            stall = 0
+                            log.info("stall ignored: confidence still low and a "
+                                     "gap-filling page remains")
+                            continue
                         stop_reason = (f"no new evidence (score {score}; last {stall} "
                                        f"checkpoint(s) added < {DIMINISHING_DELTA})")
                         break
@@ -271,6 +290,13 @@ def _finalize(url, pages, graph, hooks, score, breakdown, used_render, stop_reas
     output = _build_output(graph, hooks, score, breakdown, pages_urls, page_types)
     output["fetch_method"] = "rendered" if used_render else "fast"
     output["stop_reason"] = stop_reason
+    # The evidence LEDGER behind the run: how confident, and what is still
+    # missing. Deliberately NOT "evidence", which is already the per-field
+    # provenance map that consumers read facts out of.
+    try:
+        output["evidence_ledger"] = gaps.assess(graph).public()
+    except Exception:  # noqa: BLE001 - reporting must never break a finished run
+        output["evidence_ledger"] = {}
 
     # ── Person-discovery report (Goal 3): the person phase always runs, so this
     #    is always completed; when nobody is found, say WHY and WHERE we looked.
@@ -576,6 +602,47 @@ def _recent_signal(graph) -> bool:
     return bool(graph.value("recent_focus")
                 or graph.value("metrics_or_traction")
                 or graph.values("notable_customers"))
+
+
+def _gap_ordered(pool, graph, signals):
+    """Move pages that serve a MISSING evidence slot ahead of ones that serve a
+    slot already filled.
+
+    Deliberately STABLE: within the promoted group and the rest, the existing
+    crawl order is preserved. That ordering is tuned (people and proof pages
+    first, bulk sections capped) and re-sorting it wholesale would trade one
+    known-good heuristic for an untested one. This only demotes pages whose
+    evidence we already have, which is the part the static order cannot know.
+    """
+    try:
+        ledger = gaps.assess(graph, signals)
+        if not ledger.missing:
+            return pool
+        hints = {h for name in ledger.missing
+                 for h in (gaps.slot_hints(name) or ())}
+    except Exception:  # noqa: BLE001 - planning must never break the crawl
+        return pool
+    if not hints:
+        return pool
+    serves_gap = [u for u in pool if any(h in str(u).lower() for h in hints)]
+    if not serves_gap or len(serves_gap) == len(pool):
+        return pool
+    rest = [u for u in pool if u not in serves_gap]
+    return serves_gap + rest
+
+
+def _worth_continuing(graph, signals, remaining) -> bool:
+    """True when confidence is below target AND some uncrawled page is aimed at a
+    real gap. Stopping on a flat score while the pricing page sits uncrawled is
+    how a run ends up 'understood' but unable to say anything specific."""
+    try:
+        ledger = gaps.assess(graph, signals)
+        if ledger.is_confident():
+            return False
+        return any(a.kind == "crawl"
+                   for a in gaps.plan(ledger, candidate_urls=remaining, limit=2))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _goals(graph):
