@@ -249,5 +249,74 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(client("user_alice").get(f"/api/conversations/{a_cid}").status_code, 200)
 
 
+class ProspectSerialisationTests(unittest.TestCase):
+    """A DISCOVERED card must survive the API unchanged.
+
+    Found in production: `_prospect_public` whitelisted only the RESEARCHED
+    fields, so a card streamed its verified hiring dates, its "why it matched"
+    list and its caveats, then lost every one of them as soon as the conversation
+    was reloaded from the store. The live stream sends the message directly, which
+    is why it looked fine right up until a refresh.
+    """
+
+    def _entry(self):
+        from chat.research_pipeline import discovery_entries
+        return discovery_entries([{
+            "company_name": "HackerRank", "website": "https://hackerrank.com",
+            "confidence": 0.68, "tier": "company", "kind": "company",
+            "industry_kind": "software", "is_public": False,
+            "annual_revenue": 221_000_000,
+            "match_reasons": ["Has a live posting for ai video creator"],
+            "why_it_matches": "Hiring the role",
+            "hiring": {"verified": True, "source": "apollo", "match": "role",
+                       "open_roles": 59, "summary": "Hiring: Video Editor (AI Native)",
+                       "postings": [{"title": "Video Editor (AI Native)",
+                                     "posted_at": "2026-05-02",
+                                     "url": "https://x.test/j"}]},
+            "growth": {"headcount_6mo": 0.14},
+            "score": {"total": 0.677, "icp_match": 0.8, "buying_signal": 0.55,
+                      "hiring_relevance": 1.0, "founder_access": 0.2},
+            "sources": [{"provider": "apollo", "url": ""}],
+        }])[0]
+
+    def test_discovery_evidence_survives_the_api_round_trip(self):
+        out = api._prospect_public(self._entry())
+        detail = out["detail"]
+        self.assertEqual(detail["hiring"]["match"], "role")
+        self.assertEqual(detail["hiring"]["source"], "apollo")
+        self.assertEqual(detail["hiring"]["postings"][0]["posted_at"], "2026-05-02")
+        self.assertTrue(detail["match_reasons"])
+        self.assertEqual(detail["growth"]["headcount_6mo"], 0.14)
+        self.assertEqual(detail["tier"], "company")
+        self.assertEqual(detail["score_breakdown"]["hiring_relevance"], 1.0)
+        self.assertEqual([s["domain"] for s in detail["sources"]], ["apollo"])
+        # The caveat inputs the card reads must survive too.
+        self.assertFalse(detail["is_public"])
+        self.assertEqual(detail["annual_revenue"], 221_000_000)
+        self.assertEqual(detail["industry_kind"], "software")
+
+    def test_the_researched_shape_is_still_carried(self):
+        out = api._prospect_public({
+            "company": "Acme", "preview": "p",
+            "detail": {"what_they_do": "widgets", "research_confidence": 0.8,
+                       "findings": [{"label": "l", "value": "v"}],
+                       "missing_information": ["m"], "disqualifiers": ["d"],
+                       "why_discovered": "w", "strongest_signals": ["s"]}})
+        d = out["detail"]
+        self.assertEqual(d["what_they_do"], "widgets")
+        self.assertEqual(d["research_confidence"], 0.8)
+        self.assertEqual(len(d["findings"]), 1)
+        self.assertEqual(d["missing_information"], ["m"])
+        self.assertEqual(d["disqualifiers"], ["d"])
+
+    def test_unknown_internals_are_still_dropped(self):
+        out = api._prospect_public({
+            "company": "Acme",
+            "detail": {"hiring": None, "system_prompt": "SECRET",
+                       "raw_llm_response": "internal"}})
+        self.assertNotIn("system_prompt", out["detail"])
+        self.assertNotIn("raw_llm_response", out["detail"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

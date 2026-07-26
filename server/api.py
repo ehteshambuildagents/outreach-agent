@@ -320,9 +320,28 @@ def _message_public(m) -> dict:
     return {"role": m.role, "kind": m.kind, "content": m.content or "", "data": safe}
 
 
+# The detail fields the browse card renders. TWO shapes share this card: a
+# RESEARCHED prospect (findings, confidence) and a DISCOVERED lead (hiring
+# evidence, why it matched, scale). The discovery half was missing here, so a
+# streamed card rendered its hiring dates, "why it matched" list and caveats, and
+# then lost all of them the moment the conversation was reloaded from the store.
+# Every key below is already curated public output (discovery.models.Prospect
+# .public() / research_pipeline.discovery_entries) — no prompts, no internals.
+_PROSPECT_DETAIL_FIELDS = (
+    # researched
+    "what_they_do", "research_confidence", "findings", "missing_information",
+    "disqualifiers", "why_discovered",
+    # shared
+    "sources", "score_breakdown", "strongest_signals",
+    # discovered
+    "match_reasons", "hiring", "growth", "recent_activity", "kind", "tier",
+    "is_public", "annual_revenue", "industry_kind",
+)
+
+
 def _prospect_public(p: dict) -> dict:
-    """One researched prospect for the browse card — the fields the UI renders
-    (preview shown collapsed; detail revealed on expand). No prompts/internals."""
+    """One prospect for the browse card — the fields the UI renders (preview shown
+    collapsed; detail revealed on expand). No prompts/internals."""
     p = p if isinstance(p, dict) else {}
     detail = p.get("detail") if isinstance(p.get("detail"), dict) else {}
     return {
@@ -337,10 +356,7 @@ def _prospect_public(p: dict) -> dict:
         "score_reason": p.get("score_reason"),
         "preview": p.get("preview"),
         "actions": p.get("actions") or [],
-        "detail": {k: detail.get(k) for k in
-                   ("what_they_do", "research_confidence", "findings", "sources",
-                    "score_breakdown", "strongest_signals", "missing_information",
-                    "disqualifiers", "why_discovered")},
+        "detail": {k: detail.get(k) for k in _PROSPECT_DETAIL_FIELDS},
     }
 
 
