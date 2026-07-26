@@ -1,0 +1,418 @@
+"""Execute the evidence plan: close the biggest gap, merge what comes back, stop.
+
+[research/gaps.py] decides WHICH fact is missing and which tool supplies it. That
+was only half a planner: the non-crawl actions it produced were computed and
+discarded, so Apollo, Tavily, Firecrawl and X were never actually reached by a
+gap. This is the loop that runs them.
+
+    run(graph, url=..., extract_fn=...) -> {"records": [...], "stop_reason": ...}
+
+One action per cycle, re-assessing in between, because the whole point is that
+the SECOND action depends on what the first returned. It ends when confidence is
+sufficient, the budget is spent, or nothing useful is left to try.
+
+SAFETY IS THE DESIGN CONSTRAINT HERE, not an afterthought. A loop that picks its
+own next paid call is exactly the shape that quietly runs up a bill, so:
+
+  * the whole loop is behind PLANNER_ESCALATION_ENABLED (default OFF);
+  * Apollo people enrichment additionally needs APOLLO_ENRICH_ENABLED;
+  * at most EVIDENCE_MAX_ACTIONS per run, EVIDENCE_MAX_PER_PROVIDER per provider;
+  * the same (company, slot, provider, target) is never tried twice;
+  * a gap worth less than EVIDENCE_MIN_GAIN is not worth a paid call;
+  * every provider call still goes through providers_common (spend caps, retries).
+
+Every decision — executed, skipped, failed, and WHY — is recorded, so the stream
+can narrate only what genuinely happened and a run can be audited afterwards.
+"""
+
+import logging
+from dataclasses import dataclass, field
+from urllib.parse import urlparse
+
+from config.settings import (
+    APOLLO_ENRICH_ENABLED,
+    EVIDENCE_MAX_ACTIONS,
+    EVIDENCE_MAX_PER_PROVIDER,
+    EVIDENCE_MIN_GAIN,
+    PLANNER_ESCALATION_ENABLED,
+)
+from research import gaps
+from research.evidence import Evidence
+
+log = logging.getLogger("research.evidence_loop")
+
+# Which graph node each slot's evidence lands in, and a rough per-call cost used
+# only for the run's cost report (the real meter is providers_common).
+_SLOT_NODE = {
+    "pricing": "pricing_model",
+    "customers": "notable_customers",
+    "product_depth": "integrations",
+    "recent_signal": "recent_focus",
+    "funding": "company_stage",
+    "founder": "founder_name",
+    "target_customer": "target_customer",
+    "positioning": "product_category",
+    "what_they_do": "what_they_do",
+}
+_COST_USD = {"firecrawl": 0.002, "tavily": 0.004, "x": 0.005, "apollo": 0.010}
+
+# Providers this loop can actually RUN. gaps.plan legitimately suggests others
+# (Exa is a semantic-discovery tool, useful for finding companies, not for
+# extracting a fact about one), and planning something unrunnable used to burn a
+# budget slot and record a failure. Anything not here is skipped without cost.
+_EXECUTABLE = frozenset({"firecrawl", "tavily", "x", "apollo"})
+
+
+@dataclass
+class ActionRecord:
+    """One decision, whether or not it ran. This is the audit trail."""
+    slot: str
+    provider: str
+    target: str = ""
+    status: str = "skipped"          # executed | skipped | failed
+    reason: str = ""
+    value: str = ""
+    source_url: str = ""
+    confidence_before: float = 0.0
+    confidence_after: float = 0.0
+    cost_usd: float = 0.0
+
+    @property
+    def gain(self) -> float:
+        return round(self.confidence_after - self.confidence_before, 3)
+
+    def public(self) -> dict:
+        return {"slot": self.slot, "provider": self.provider, "target": self.target,
+                "status": self.status, "reason": self.reason, "value": self.value,
+                "source_url": self.source_url,
+                "confidence_before": round(self.confidence_before, 3),
+                "confidence_after": round(self.confidence_after, 3),
+                "gain": self.gain, "cost_usd": round(self.cost_usd, 4)}
+
+
+@dataclass
+class _Budget:
+    """What is left to spend on this run."""
+    actions: int = EVIDENCE_MAX_ACTIONS
+    per_provider: dict = field(default_factory=dict)
+    tried: set = field(default_factory=set)     # (company, slot, provider, target)
+    calls: set = field(default_factory=set)     # (provider, resolved request)
+
+    def may_use(self, provider: str) -> bool:
+        return self.per_provider.get(provider, 0) < EVIDENCE_MAX_PER_PROVIDER
+
+    def spend(self, provider: str) -> None:
+        self.actions -= 1
+        self.per_provider[provider] = self.per_provider.get(provider, 0) + 1
+
+
+def run(graph, *, url: str, company: str = "", signals: dict = None,
+        extract_fn=None, narrate=None, providers=None) -> dict:
+    """Close evidence gaps with real provider calls. Never raises.
+
+    ``extract_fn(pages) -> None`` folds fetched page text into ``graph`` using the
+    pipeline's own extractor, so a Firecrawl page becomes evidence by exactly the
+    same route as a crawled one. ``narrate(text)`` receives a short line ONLY when
+    an action genuinely runs.
+    """
+    signals = dict(signals or {})
+    say = narrate if callable(narrate) else (lambda *a, **k: None)
+    records, budget = [], _Budget()
+    company = company or (urlparse(url).hostname or "").replace("www.", "")
+
+    if not PLANNER_ESCALATION_ENABLED:
+        # Silent by default: a disabled cost guard is our business, not the user's.
+        return _result(records, "escalation_disabled",
+                       "evidence-gap execution is off (PLANNER_ESCALATION_ENABLED)")
+
+    avail = providers if providers is not None else _available()
+    while budget.actions > 0:
+        ledger = gaps.assess(graph, signals)
+        before = ledger.confidence
+        if ledger.is_confident():
+            return _result(records, "confidence_reached",
+                           f"confidence {before:.0%} met the bar")
+
+        chosen = _choose(ledger, avail, budget, company, records, url)
+        if chosen is None:
+            return _result(records, "no_useful_actions",
+                           "nothing left worth a paid call")
+        action, resolved = chosen
+
+        budget.tried.add(_key(company, action.slot, action.kind, resolved))
+        # Also remember the CONCRETE call. Two different gaps can resolve to the
+        # very same request (a customers gap and a recent-signal gap both asking
+        # Tavily the same question), and paying twice for one answer is waste.
+        budget.calls.add((action.kind, resolved))
+        budget.spend(action.kind)
+        rec = ActionRecord(slot=action.slot, provider=action.kind,
+                           target=str(resolved or ""),
+                           confidence_before=before, confidence_after=before)
+        say(_narration(action))
+        try:
+            filled = _execute(action, graph, url=url, company=company,
+                              signals=signals, extract_fn=extract_fn, rec=rec,
+                              resolved=resolved)
+        except Exception:  # noqa: BLE001 - one provider must never end the run
+            log.info("evidence action %s/%s errored", action.kind, action.slot,
+                     exc_info=True)
+            rec.status, rec.reason = "failed", "the provider errored"
+            filled = False
+        if filled and rec.status != "failed":
+            rec.status = rec.status if rec.status == "failed" else "executed"
+            rec.cost_usd = _COST_USD.get(action.kind, 0.0)
+        elif rec.status != "failed":
+            rec.status = "failed"
+            rec.reason = rec.reason or "the provider returned nothing usable"
+            rec.cost_usd = _COST_USD.get(action.kind, 0.0)
+        rec.confidence_after = gaps.assess(graph, signals).confidence
+        records.append(rec)
+
+    return _result(records, "budget_exhausted",
+                   f"used the {EVIDENCE_MAX_ACTIONS}-action budget for this run")
+
+
+# ── choosing ───────────────────────────────────────────────────────────────
+def _choose(ledger, avail, budget, company, records, url):
+    """The best (action, resolved_target) we are actually allowed to run, or None."""
+    seen_note = set()
+    for action in gaps.plan(ledger, providers=avail, limit=12):
+        if action.kind == "crawl":
+            continue                                   # the crawl loop owns those
+        if action.kind not in _EXECUTABLE:
+            continue                                   # nothing here can run it
+        if not avail.get(action.kind):
+            continue                                   # unconfigured -> never claimed
+        if action.kind == "apollo" and not APOLLO_ENRICH_ENABLED:
+            if "apollo" not in seen_note:
+                seen_note.add("apollo")
+                _note(records, action, "Apollo people enrichment is off "
+                                       "(APOLLO_ENRICH_ENABLED)", ledger.confidence)
+            continue
+        resolved = _resolve_target(action, url, company)
+        if _key(company, action.slot, action.kind, resolved) in budget.tried:
+            continue                                   # never the same call twice
+        if (action.kind, resolved) in budget.calls:
+            continue                                   # identical request already made
+        if not budget.may_use(action.kind):
+            if action.kind not in seen_note:
+                seen_note.add(action.kind)
+                _note(records, action, f"{action.kind} already used its per-run cap",
+                      ledger.confidence)
+            continue
+        if gaps.gain_if_filled(action.slot) < EVIDENCE_MIN_GAIN:
+            _note(records, action, "worth less than the cost of the call",
+                  ledger.confidence)
+            continue
+        return action, resolved
+    return None
+
+
+def _resolve_target(action, url, company) -> str:
+    """The CONCRETE request this action will make — a URL for Firecrawl, a query
+    for the search providers. Resolving before the budget check is what lets two
+    different gaps that would ask the identical question be deduplicated."""
+    if action.kind == "firecrawl":
+        return _page_url(url, action.target)
+    if action.kind == "tavily":
+        topic = "funding round" if action.slot == "funding" else "news announcement launch"
+        return f"{company} {topic}"
+    if action.kind == "x":
+        return f"{company} launch OR announcement OR hiring"
+    if action.kind == "apollo":
+        return (urlparse(url).hostname or "").replace("www.", "")
+    return str(action.target or "")
+
+
+def _note(records, action, reason, confidence) -> None:
+    """Record a skip, so 'why didn't it check X' is answerable."""
+    records.append(ActionRecord(
+        slot=action.slot, provider=action.kind, target=str(action.target or ""),
+        status="skipped", reason=reason,
+        confidence_before=confidence, confidence_after=confidence))
+
+
+def _key(company, slot, provider, target) -> tuple:
+    return (company.lower(), slot, provider, str(target or "").lower())
+
+
+# ── executing ──────────────────────────────────────────────────────────────
+def _execute(action, graph, *, url, company, signals, extract_fn, rec,
+             resolved) -> bool:
+    if action.kind == "firecrawl":
+        return _run_firecrawl(action, graph, target=resolved,
+                              extract_fn=extract_fn, rec=rec)
+    if action.kind == "tavily":
+        return _run_tavily(action, graph, query=resolved, rec=rec)
+    if action.kind == "x":
+        return _run_x(action, graph, query=resolved, rec=rec)
+    if action.kind == "apollo":
+        return _run_apollo(action, graph, domain=resolved, company=company, rec=rec)
+    rec.reason = f"no executor for {action.kind}"
+    return False
+
+
+def _run_firecrawl(action, graph, *, target, extract_fn, rec) -> bool:
+    """Intentionally fetch the page that carries this evidence (a pricing page for
+    a pricing gap), not merely as a fallback for a blocked fetch."""
+    from research import firecrawl
+    page = firecrawl.scrape(target)
+    if not page or not (page.get("markdown") or "").strip():
+        rec.reason = f"no {action.target} page found"
+        return False
+    text = page["markdown"]
+    rec.source_url = page.get("url") or target
+    if not callable(extract_fn):
+        rec.reason = "no extractor available"
+        return False
+    before = _snapshot(graph)
+    extract_fn([(rec.source_url, text)])
+    added = _snapshot(graph) - before
+    if not added:
+        rec.reason = "the page held no new evidence"
+        return False
+    rec.value = ", ".join(sorted(added))[:120]
+    return True
+
+
+def _run_tavily(action, graph, *, query, rec) -> bool:
+    from research import tavily
+    results = tavily.search(query, max_results=4) or []
+    best = next((r for r in results if (r or {}).get("title")), None)
+    if not best:
+        rec.reason = "no recent coverage found"
+        return False
+    dated = str(best.get("published_date") or "")[:10]
+    value = best.get("title").strip()
+    if dated:
+        value = f"{value} ({dated})"
+    _merge(graph, _SLOT_NODE.get(action.slot, "recent_focus"), value,
+           source_url=best.get("url") or "", provider="tavily",
+           quote=str(best.get("content") or "")[:300], confidence=0.6)
+    rec.value, rec.source_url = value, best.get("url") or ""
+    return True
+
+
+def _run_x(action, graph, *, query, rec) -> bool:
+    from research import x_search
+    result = x_search.search_recent_posts(query) or {}
+    posts = result.get("posts") or []
+    if result.get("status") != "ok" or not posts:
+        rec.reason = "no recent posts found"
+        return False
+    post = posts[0]
+    value = str(post.get("text") or "").strip()[:160]
+    if not value:
+        rec.reason = "no usable post text"
+        return False
+    _merge(graph, "recent_focus", value, source_url=post.get("url") or "",
+           provider="x", quote=value, confidence=0.5)
+    rec.value, rec.source_url = value, post.get("url") or ""
+    return True
+
+
+def _run_apollo(action, graph, *, domain, company, rec) -> bool:
+    """Apollo PEOPLE Match for a missing decision maker. Reached only when
+    APOLLO_ENRICH_ENABLED is on as well (checked in _choose)."""
+    from research import apollo
+    result = apollo.enrich_person(name=graph.value("founder_name") or None,
+                                  domain=domain, organization_name=company,
+                                  linkedin_url=None) or {}
+    person = result.get("person") if result.get("status") == "ok" else None
+    if not person or not person.get("name"):
+        rec.reason = f"no match ({result.get('status', 'no_match')})"
+        return False
+    _merge(graph, "founder_name", person["name"],
+           source_url=person.get("linkedin_url") or f"https://{domain}",
+           provider="apollo", quote=f"{person.get('title') or 'contact'} at {company}",
+           confidence=float(person.get("confidence") or 0.7))
+    if person.get("title"):
+        _merge(graph, "founder_role", person["title"],
+               source_url=person.get("linkedin_url") or f"https://{domain}",
+               provider="apollo", quote=person["title"], confidence=0.6)
+    rec.value = person["name"]
+    rec.source_url = person.get("linkedin_url") or f"https://{domain}"
+    return True
+
+
+# ── merging into the REAL graph ────────────────────────────────────────────
+def _merge(graph, node, value, *, source_url, provider, quote, confidence) -> None:
+    """Fold a provider value into the existing ResearchGraph.
+
+    Uses gaps.merge_value to reconcile it against what is already there, so
+    agreement across independent sources raises confidence and disagreement
+    lowers it and is MARKED rather than silently resolved. There is no parallel
+    ledger: Evidence in the ResearchGraph stays the single source of truth, and a
+    weaker new value never overwrites a stronger existing one.
+    """
+    existing = list(graph.nodes.get(node) or [])
+    candidates = [(e.value, e.source_url or "existing", e.confidence) for e in existing]
+    candidates.append((value, provider, confidence))
+    verdict = gaps.merge_value(candidates)
+
+    same = [e for e in existing
+            if e.value.strip().lower() == str(value).strip().lower()]
+    if same:
+        # Corroboration: strengthen what we already had rather than duplicating it.
+        for e in same:
+            e.corroborations += 1
+            e.confidence = max(e.confidence, verdict["confidence"])
+        return
+
+    conflict = bool(verdict.get("conflict"))
+    if conflict:
+        for e in existing:                     # both sides stay visible
+            e.conflict = True
+    graph.add(node, Evidence(
+        value=str(value), source_url=source_url, quote=quote,
+        confidence=min(float(confidence), verdict["confidence"]) if conflict
+        else float(confidence),
+        corroborations=1, conflict=conflict))
+
+
+def _snapshot(graph) -> set:
+    """Which nodes currently hold a value — used to tell whether a fetched page
+    actually added anything."""
+    return {n for n, items in (graph.nodes or {}).items() if items}
+
+
+# ── plumbing ───────────────────────────────────────────────────────────────
+def _page_url(base: str, hint: str) -> str:
+    parsed = urlparse(base if "://" in base else "https://" + base)
+    return f"{parsed.scheme}://{parsed.netloc}/{str(hint or '').strip('/')}"
+
+
+def _narration(action) -> str:
+    """A short, honest line for the stream. Emitted only as an action RUNS."""
+    slot = gaps.slot_label(action.slot)
+    if action.kind == "firecrawl":
+        return f"{slot.capitalize()} is still unclear, so I'm checking their {action.target} page."
+    if action.kind == "tavily":
+        return f"I still need {slot}, so I'm checking recent public coverage."
+    if action.kind == "x":
+        return f"I still need {slot}, so I'm checking their recent posts."
+    if action.kind == "apollo":
+        return f"The website doesn't name {slot}, so I'm checking Apollo."
+    return f"Looking for {slot}."
+
+
+def _available() -> dict:
+    from research import firecrawl, tavily, x_search
+    from research.providers_common import provider_status
+    status = provider_status()
+    return {"firecrawl": firecrawl.available(), "tavily": tavily.available(),
+            "x": x_search.available(), "apollo": bool(status.get("apollo")),
+            "exa": bool(status.get("exa"))}
+
+
+def _result(records, stop_reason, detail) -> dict:
+    executed = [r for r in records if r.status == "executed"]
+    return {
+        "records": [r.public() for r in records],
+        "stop_reason": stop_reason,
+        "detail": detail,
+        "actions_executed": len(executed),
+        "actions_skipped": sum(1 for r in records if r.status == "skipped"),
+        "actions_failed": sum(1 for r in records if r.status == "failed"),
+        "estimated_cost_usd": round(sum(r.cost_usd for r in records), 4),
+    }

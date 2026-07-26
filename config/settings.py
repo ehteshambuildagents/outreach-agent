@@ -248,6 +248,28 @@ APOLLO_ENRICH_ENABLED = (os.getenv("APOLLO_ENRICH_ENABLED", "0").strip().lower()
 PLANNER_ESCALATION_ENABLED = (os.getenv("PLANNER_ESCALATION_ENABLED", "0")
                               .strip().lower() in ("1", "true", "yes", "on"))
 
+# ── Evidence-gap execution (research/evidence_loop.py) ─────────────────────
+# The evidence ledger (research/gaps.py) decides WHICH fact is missing and which
+# tool supplies it; this is the loop that actually runs those actions. Exactly
+# what each flag controls, because two paid paths are easy to confuse:
+#
+#   PLANNER_ESCALATION_ENABLED  gates ALL evidence-gap provider execution here
+#                               (Firecrawl page hunts, Tavily news, X posts) AND
+#                               the older source_planner news/X escalation.
+#   APOLLO_ENRICH_ENABLED       gates ONLY paid Apollo PEOPLE Match (contact
+#                               enrichment). An Apollo action for a founder gap
+#                               needs BOTH flags: escalation on, and this on.
+#
+# Discovery's own Apollo ORGANIZATION search is separate again and stays on
+# (APOLLO_ORG_SEARCH_ENABLED); nothing here changes it.
+#
+# Every call is additionally bounded, because a per-prospect loop that decides
+# its own next move is exactly the shape that quietly runs up a bill.
+EVIDENCE_MAX_ACTIONS = int(os.getenv("EVIDENCE_MAX_ACTIONS", "3"))
+EVIDENCE_MAX_PER_PROVIDER = int(os.getenv("EVIDENCE_MAX_PER_PROVIDER", "2"))
+# Do not spend a paid call on a gap worth less than this much confidence.
+EVIDENCE_MIN_GAIN = float(os.getenv("EVIDENCE_MIN_GAIN", "0.05"))
+
 
 # ── Automation Agent (the conductor: scheduling, sending, recovery) ────
 # All tunable; nothing about timing is hard-coded in the engine.

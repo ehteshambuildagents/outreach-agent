@@ -74,14 +74,22 @@ from research.fetcher import (
     validate_url,
 )
 from research.hooks import backfill_facts_from_hooks, rank_hooks, research_score
-from research import exa, firecrawl, gaps, jina, source_planner, tavily
+from research import (
+    evidence_loop,
+    exa,
+    firecrawl,
+    gaps,
+    jina,
+    source_planner,
+    tavily,
+)
 from research.verifier import select_primary_contact, verify
 from services.claude_client import ClaudeClientError
 
 log = logging.getLogger("research.pipeline")
 
 
-def research_company(url: str, *, find_founder: bool = False) -> dict:
+def research_company(url: str, *, find_founder: bool = False, narrate=None) -> dict:
     """Research a company end-to-end. Never raises for normal failures.
 
     find_founder: when True, run the focused founder/team name-hunt (extra
@@ -101,7 +109,8 @@ def research_company(url: str, *, find_founder: bool = False) -> dict:
 
     render_fetcher = RenderFetcher()
     try:
-        return _adaptive_research(url, render_fetcher, sitemap_subs, find_founder)
+        return _adaptive_research(url, render_fetcher, sitemap_subs, find_founder,
+                                  narrate=narrate)
     finally:
         render_fetcher.close()
 
@@ -109,7 +118,8 @@ def research_company(url: str, *, find_founder: bool = False) -> dict:
 # ──────────────────────────────────────────────────────────────────────
 #  Adaptive crawl loop
 # ──────────────────────────────────────────────────────────────────────
-def _adaptive_research(url, render_fetcher, sitemap_subs, find_founder=False) -> dict:
+def _adaptive_research(url, render_fetcher, sitemap_subs, find_founder=False,
+                       narrate=None) -> dict:
     # The homepage is worth the paid tail of the fetch chain: without it there is
     # no run at all.
     ok, html, method = _fetch_page(url, render_fetcher, prefer_render=False,
@@ -278,9 +288,33 @@ def _adaptive_research(url, render_fetcher, sitemap_subs, find_founder=False) ->
             except Exception:
                 pass
 
+    # ── Evidence-gap execution. The crawl has taken the site as far as it goes;
+    #    anything still missing now needs a different KIND of source, chosen per
+    #    gap (research/evidence_loop.py). Off unless PLANNER_ESCALATION_ENABLED,
+    #    bounded when on, and it mutates THIS graph so there is no second ledger.
+    def _extract_into(new_pages):
+        """Fold provider-fetched pages in by the same route as crawled ones,
+        keeping the graph object identity the loop holds."""
+        nonlocal hooks, score, breakdown
+        _merge_raw(raw_accum, _extract_pages_raw(new_pages))
+        pages.extend(new_pages)
+        rebuilt, hooks, score, breakdown = _score_from_raw(raw_accum, pages)
+        graph.nodes.clear()
+        graph.nodes.update(rebuilt.nodes)
+        graph.team[:] = rebuilt.team
+
+    evidence_run = evidence_loop.run(
+        graph, url=url, company=graph.value("company_name") or "",
+        extract_fn=_extract_into, narrate=narrate)
+    if evidence_run.get("actions_executed"):
+        stop_reason += (f"; closed {evidence_run['actions_executed']} evidence "
+                        "gap(s) with provider calls")
+
     log.info("STOP %s: %s", url, stop_reason)
-    return _finalize(url, pages, graph, hooks, score, breakdown,
-                     used_render, stop_reason, contact_routes)
+    out = _finalize(url, pages, graph, hooks, score, breakdown,
+                    used_render, stop_reason, contact_routes)
+    out["evidence_actions"] = evidence_run
+    return out
 
 
 def _finalize(url, pages, graph, hooks, score, breakdown, used_render, stop_reason,

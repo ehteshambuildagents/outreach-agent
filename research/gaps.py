@@ -221,6 +221,12 @@ def _best_page(slot: Slot, candidate_urls, used) -> Optional[str]:
     return None
 
 
+def slot_label(slot_name: str) -> str:
+    """The human phrasing for a slot, for narration."""
+    slot = _BY_NAME.get(slot_name)
+    return slot.label if slot else slot_name.replace("_", " ")
+
+
 def slot_hints(slot_name: str) -> tuple:
     """The path keywords that usually carry this evidence."""
     slot = _BY_NAME.get(slot_name)
