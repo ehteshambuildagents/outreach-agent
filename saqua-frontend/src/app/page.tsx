@@ -6,7 +6,7 @@ import {
   Briefcase,
   Sparkles,
   Waves,
-  Layers,
+  ShieldCheck,
   Check,
   X,
 } from "lucide-react";
@@ -15,56 +15,57 @@ import { SiteNav } from "@/components/marketing/site-nav";
 import { SiteFooter } from "@/components/marketing/site-footer";
 import { HeroForm } from "@/components/marketing/hero-form";
 import { FeatureTabs } from "@/components/marketing/feature-tabs";
+import { PipelineStory } from "@/components/marketing/pipeline-story";
 
 const AUDIENCES = [
   {
     icon: Rocket,
-    title: "Founders",
-    body: "You sell best in your own voice. Saqua does the research and the first draft, so every intro sounds like you wrote it, at far more than one-at-a-time speed.",
+    title: "Founders selling their own product",
+    body: "Nobody pitches it like you do. Saqua does the research and the first draft, so every intro still sounds like you wrote it without you writing each one.",
   },
   {
     icon: Users,
-    title: "Lean GTM teams",
-    body: "Replace the sequence tool and the enrichment tab. Research, drafting, follow-ups, and reply detection live in one workspace your whole team works out of.",
+    title: "Small teams without an SDR",
+    body: "Drop the sequence tool, the enrichment tab, and the shared template doc. Research, drafts, follow-ups, and replies all sit where the whole team can see them.",
   },
   {
     icon: Briefcase,
-    title: "Agencies",
-    body: "Run personal outbound for every client without cloning yourself. Saqua keeps each account's voice, offer, and ICP straight.",
+    title: "Agencies running client outbound",
+    body: "Personal outbound for every client without cloning yourself. Saqua keeps each account's voice, offer, and target customer straight.",
   },
 ];
 
 // The before/after worksheet. Kept to four beats a side so the two columns stay
 // the same height without hand-tuning.
 const PAIN = [
-  "Spend hours hunting for companies actually worth contacting",
-  "Send templates that read automated and get quietly ignored",
-  "Lose deals to follow-ups you meant to send and never did",
-  "Ride the feast or famine revenue roller coaster",
+  "Hours spent deciding which companies are even worth contacting",
+  "Templates that read automated and get quietly ignored",
+  "Deals lost to follow-ups you meant to send and never did",
+  "Good months after quiet ones, and no idea what made the difference",
 ];
 
 const GAIN = [
-  "Fresh, high fit prospects scored and waiting every morning",
-  "Every opener grounded in a real signal, with the quote behind it",
-  "Follow-ups that run on real days and stop the moment someone replies",
-  "A repeatable research to reply system you can run every week",
+  "Companies worth contacting, scored and waiting each morning",
+  "Every opener built on a real detail, with the quote behind it",
+  "Follow-ups that go out on real days and stop when someone replies",
+  "One hour a week that actually moves the pipeline",
 ];
 
 const DIFFERENTIATORS = [
   {
     icon: Sparkles,
-    title: "Grounded, never guessed",
-    body: "Every claim carries the exact quote it came from. Generic AI invents facts; one wrong detail and the trust is gone. Saqua leaves it out instead.",
+    title: "It only says what it can prove",
+    body: "Every claim carries the exact quote it came from. Generic AI fills the gap with something invented, and one wrong detail costs you the reply. Saqua leaves it out instead.",
   },
   {
     icon: Waves,
-    title: "Your voice, kept",
-    body: "Short, specific, human. Written to sound like a founder, not a sequence. It refuses to send anything that reads automated.",
+    title: "It sounds like you, not a sequence",
+    body: "Short, specific, human. Written the way a founder writes when they only have one shot, and rewritten by Saqua itself if a draft reads automated.",
   },
   {
-    icon: Layers,
-    title: "One workspace",
-    body: "Research, discovery, drafting, pipeline, inbox, and follow-ups in one place. Replace the enrichment tab, the template doc, and the sequence tool.",
+    icon: ShieldCheck,
+    title: "Nothing sends unchecked",
+    body: "Every draft clears a deliverability and spend check first. If something looks risky, Saqua blocks it and tells you why instead of quietly sending it anyway.",
   },
 ];
 
@@ -90,19 +91,21 @@ export default function LandingPage() {
       <section className="px-6 pb-20 pt-36 text-center lg:px-12">
         <Reveal>
           <span className="inline-flex h-8 items-center gap-2 rounded-full border border-border bg-white px-4 text-xs font-medium shadow-[0_1px_2px_rgba(17,17,17,.04)]">
-            <Zap className="size-3.5 text-accent" /> Research to reply, run by you
+            <Zap className="size-3.5 text-accent" /> Outbound that shows its work
           </span>
         </Reveal>
         <Reveal delay={0.05}>
-          <h1 className="mx-auto mt-7 max-w-[18ch] font-display text-5xl font-medium leading-[1.03] tracking-[-0.03em] md:text-7xl">
-            The whole outbound pipeline,<br />without the <span className="grad-text-anim">headcount</span>.
+          {/* 20ch, not 18: at md the first line measures ~1005px, so the old cap
+              broke it mid-phrase and stranded the last word on its own line. */}
+          <h1 className="mx-auto mt-7 max-w-[20ch] font-display text-5xl font-medium leading-[1.03] tracking-[-0.03em] md:text-7xl">
+            Find, research, write, send.<br />Without the <span className="grad-text-anim">headcount</span>.
           </h1>
         </Reveal>
         <Reveal delay={0.1}>
           <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-muted">
-            Saqua is the AI SDR a founder runs instead of hiring one. It finds the right companies,
-            researches real signals, writes the opener around the evidence, follows up over real
-            days, and stops the instant someone replies.
+            For founders doing their own sales. Saqua finds companies worth contacting, reads what
+            each one has actually published, and writes the first email around a real detail it
+            found. You approve every send, and follow-ups stop the moment someone replies.
           </p>
         </Reveal>
 
@@ -125,7 +128,8 @@ export default function LandingPage() {
             </a>
           </div>
           <p className="mt-4 text-xs text-muted">
-            The demo runs the real pipeline on live data. No account, just a personal Gmail.{" "}
+            It runs the real pipeline on a real company you choose. No account, just a Gmail
+            address.{" "}
             <a href="https://cal.com/saqua/demo-call" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
               Or book a call
             </a>
@@ -137,7 +141,7 @@ export default function LandingPage() {
             condition (be on the waitlist before launch) is stated plainly. */}
         <Reveal delay={0.2} className="mx-auto mt-10 max-w-sm">
           <div className="grad-text font-display text-lg font-semibold">
-            Start free with founding pricing, locked for life
+            Founding pricing, locked for life
           </div>
           <div className="mt-3 rounded-2xl border border-border bg-card p-6 text-center shadow-card">
             <div className="mx-auto mb-3 grid size-10 place-items-center rounded-full bg-indigo-soft text-accent">
@@ -148,22 +152,18 @@ export default function LandingPage() {
               <span className="text-muted">for life</span>
             </div>
             <p className="mt-4 text-xs leading-5 text-muted">
-              For everyone on the waitlist before launch day. Early access stays
-              limited while Gmail verification is in progress.
+              Yours if you join the waitlist before launch day. Early access stays limited
+              while Google reviews our Gmail access.
             </p>
           </div>
         </Reveal>
 
-        {/* Trust — 30 countries */}
+        {/* Honest pre-launch proof: waitlist reach, not customers. No stock faces. */}
         <Reveal delay={0.25}>
-          <div className="mt-8 flex items-center justify-center gap-3 text-sm text-muted">
-            <div className="flex -space-x-2">
-              {["from-accent to-[#8b93ff]", "from-[#6b74ff] to-[#c3c8ff]", "from-[#8b93ff] to-accent", "from-[#4453e8] to-[#6b74ff]"].map((g, i) => (
-                <span key={i} className={`size-7 rounded-full border-2 border-bg bg-gradient-to-br ${g}`} />
-              ))}
-            </div>
-            Trusted by founders in <span className="font-medium text-text">30 countries</span>
-          </div>
+          <p className="mt-8 text-sm text-muted">
+            Founders from <span className="font-medium text-text">30 countries</span> have joined
+            the waitlist
+          </p>
         </Reveal>
       </section>
 
@@ -194,8 +194,9 @@ export default function LandingPage() {
             is not a <span className="grad-text">sales system</span>.
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-muted">
-            Fragmented tools push you between a lead list, an enrichment tab, a template
-            doc, and your inbox, so follow-ups get missed and revenue stays lumpy.
+            A lead list in one tab, an enrichment tool in another, a template doc, your inbox.
+            Nothing talks to anything, so outbound only happens on the afternoons you have
+            spare.
           </p>
         </Reveal>
 
@@ -245,16 +246,44 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── How it works ─────────────────────────────────────────────── */}
+      {/* id="pipeline" is what the nav and footer "How it works" links point at.
+          Until this section existed, both of those links went nowhere. */}
+      <section id="pipeline" className="scroll-mt-24 px-6 py-16 lg:px-12">
+        <Reveal className="mx-auto mb-12 max-w-2xl text-center">
+          <span className="text-sm font-semibold text-accent">How it works</span>
+          <h2 className="mt-3 font-display text-3xl font-semibold tracking-tight md:text-5xl">
+            Four steps, and you only do one of them.
+          </h2>
+          <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-muted">
+            From one sentence about your customer to a reply in your inbox. The only step that
+            needs you is the yes.
+          </p>
+        </Reveal>
+        <PipelineStory />
+        {/* The demo offer lands here, where a reader has just understood the
+            pipeline and the obvious next thought is "show me". */}
+        <Reveal className="mt-14 text-center">
+          <p className="text-sm text-muted">
+            Rather see it than read it?{" "}
+            <a href="/demo" className="font-medium text-accent hover:underline">
+              Run these four steps on a company you pick
+            </a>
+            .
+          </p>
+        </Reveal>
+      </section>
+
       {/* ── Feature dashboard (tab switcher) ─────────────────────────── */}
       <section className="px-6 py-16 lg:px-12">
         <Reveal className="mx-auto mb-10 max-w-2xl text-center">
           <span className="text-sm font-semibold text-accent">One workspace</span>
           <h2 className="mt-3 font-display text-3xl font-semibold tracking-tight md:text-5xl">
-            Everything the reply needs.
+            One tab instead of five.
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-muted">
-            The whole outbound machine: discovery, research, deal help, pipeline, inbox, and
-            follow-ups in one place, each showing its work.
+            Discovery, research, deal help, pipeline, inbox, and follow-ups in a single
+            workspace. Every one of them shows the evidence behind what it did.
           </p>
         </Reveal>
         <div className="mx-auto max-w-6xl">
@@ -266,7 +295,7 @@ export default function LandingPage() {
       <section className="px-6 py-16 lg:px-12">
         <Reveal className="mx-auto mb-10 max-w-2xl text-center">
           <h2 className="font-display text-3xl font-semibold tracking-tight md:text-5xl">
-            Replaces the whole SDR,<br />not just the <span className="grad-text">writing</span>.
+            It does the whole job,<br />not just the <span className="grad-text">wording</span>.
           </h2>
         </Reveal>
         <div className="mx-auto grid max-w-6xl gap-5 md:grid-cols-3">
@@ -339,10 +368,11 @@ export default function LandingPage() {
             </svg>
             <div className="relative">
               <h2 className="mx-auto max-w-2xl font-display text-3xl font-semibold tracking-tight text-white md:text-5xl">
-                Your next customer is out there. Go find them.
+                Get in before launch day.
               </h2>
               <p className="mx-auto mt-4 max-w-xl text-base leading-7 text-white/85">
-                Join founders in 30 countries building predictable revenue with Saqua.
+                Founding pricing is 40% off for life, and it only applies to the waitlist. One
+                email when Saqua opens. Nothing else.
               </p>
               <HeroForm className="mt-8" tone="onGradient" label="Join the waitlist" source="cta" />
             </div>

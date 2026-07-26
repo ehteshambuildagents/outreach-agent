@@ -96,7 +96,15 @@ class DiscoveryQuery:
 
 @dataclass
 class Prospect:
-    """One discovered company (a lead, not a researched profile)."""
+    """One discovered company (a lead, not a researched profile).
+
+    Beyond the coarse firmographics, a Prospect now carries the EVIDENCE behind
+    its ranking, because "why was this picked" is part of the result rather than
+    a debugging aid: ``match_reasons`` (itemised, human-readable), ``sources``
+    (which providers found it, so corroboration is visible), ``hiring``
+    (structurally verified postings, not a keyword guess), and ``tier``
+    (``company`` vs the demoted ``fallback`` used for intermediaries).
+    """
     company_name: str
     website: str
     domain: str = ""
@@ -108,6 +116,24 @@ class Prospect:
     why_it_matches: str = ""
     discovery_source: str = ""
     basic_signals: List[str] = field(default_factory=list)
+    # ── evidence / ranking transparency ──
+    tier: str = "company"             # company | fallback (demoted intermediary)
+    kind: str = "company"             # aggregators.classify verdict
+    match_reasons: List[str] = field(default_factory=list)
+    sources: List[dict] = field(default_factory=list)   # [{provider, url}]
+    hiring: Optional[dict] = None     # {verified, source, match, summary, postings[]}
+    growth: Optional[dict] = None     # {headcount_6mo, headcount_12mo}
+    recent_activity: Optional[dict] = None             # {summary, url, source}
+    apollo_id: str = ""
+    # ── customer-likelihood inputs (see discovery/scoring.py) ──
+    industry_kind: str = ""           # software | services | "" (unknown)
+    employee_count: Optional[int] = None
+    founded_year: Optional[int] = None
+    is_public: bool = False           # publicly traded => not founder-accessible
+    annual_revenue: Optional[float] = None    # USD; a scale proxy when headcount is absent
+    has_intent: bool = False
+    contact_route: str = ""           # a known way to reach a decision maker
+    score: Optional[dict] = None      # the Score breakdown that produced the rank
     # bookkeeping (not part of the public discovery shape but stored):
     id: str = field(default_factory=lambda: "prs_" + uuid.uuid4().hex[:16])
     owner: str = ""
@@ -118,6 +144,19 @@ class Prospect:
     def __post_init__(self):
         if not self.domain:
             self.domain = registrable_domain(self.website)
+
+    def add_source(self, provider: str, url: str = "") -> None:
+        """Record a provider that found this company. Corroboration across
+        sources is a ranking signal, so the list is deduped by provider."""
+        if not provider:
+            return
+        if any(s.get("provider") == provider for s in self.sources):
+            return
+        self.sources.append({"provider": provider, "url": url or ""})
+
+    @property
+    def source_count(self) -> int:
+        return len(self.sources) or (1 if self.discovery_source else 0)
 
     def public(self) -> dict:
         """The structured JSON the spec asks for (no internal bookkeeping)."""
@@ -132,6 +171,20 @@ class Prospect:
             "why_it_matches": self.why_it_matches,
             "discovery_source": self.discovery_source,
             "basic_signals": self.basic_signals,
+            "tier": self.tier,
+            "kind": self.kind,
+            "match_reasons": self.match_reasons,
+            "sources": self.sources,
+            "hiring": self.hiring,
+            "growth": self.growth,
+            "recent_activity": self.recent_activity,
+            "industry_kind": self.industry_kind,
+            "employee_count": self.employee_count,
+            "founded_year": self.founded_year,
+            "is_public": self.is_public,
+            "annual_revenue": self.annual_revenue,
+            "has_intent": self.has_intent,
+            "score": self.score,
         }
 
     def to_dict(self) -> dict:

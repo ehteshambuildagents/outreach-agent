@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, Loader2, AlertTriangle, User, Search } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, Loader2, AlertTriangle, User, Check } from "lucide-react";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Logo } from "@/components/ui/logo";
@@ -38,6 +38,8 @@ const EXAMPLES = [
 ];
 
 const ACTION_PROMPT: Record<string, (company: string) => string> = {
+  // Discovered leads are not researched yet, so their one action is to research.
+  research_prospect: (c) => `Research ${c} properly and score it as a prospect.`,
   draft_email: (c) => `Draft a cold email for ${c}.`,
   draft_x_reply: (c) => `Draft an X (Twitter) reply for ${c} (I'll paste the post).`,
   draft_reddit_comment: (c) => `Draft a Reddit comment for ${c} (I'll paste the thread).`,
@@ -57,9 +59,22 @@ export default function AIChatPage() {
   const [pending, setPending] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const [streamAt, setStreamAt] = useState(-1); // index of the message to reveal progressively
+  // The in-flight turn's live trace, streamed from the backend: `step` is WHAT it
+  // is doing, `thought` is WHY (grounded in the run's real state, never canned).
+  const [steps, setSteps] = useState<TraceLine[]>([]);
   const [artifact, setArtifact] = useState<{ idx: number; data: EmailCardData } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // The assistant text that should type itself out: the newest assistant prose in
+  // the transcript, but only while a turn is streaming. History renders in full.
+  const typingIdx = useMemo(() => {
+    if (!sending) return -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role === "assistant" && (m.kind === "text" || m.kind === "notice")) return i;
+    }
+    return -1;
+  }, [messages, sending]);
 
   // Load whichever conversation the sidebar selected (or reset for a new chat).
   useEffect(() => {
@@ -68,13 +83,13 @@ export default function AIChatPage() {
       setConvId(null);
       setMessages([]);
       setArtifact(null);
-      setStreamAt(-1);
+      setSteps([]);
       setError("");
       return;
     }
     let cancelled = false;
     setArtifact(null);
-    setStreamAt(-1);
+    setSteps([]);
     setError("");
     void api.conversation(activeId).then((res) => {
       if (cancelled) return;
@@ -102,6 +117,7 @@ export default function AIChatPage() {
       setError("");
       setInput("");
       setPending(trimmed);
+      setSteps([]);
       setSending(true);
 
       let id = convId;
@@ -118,17 +134,30 @@ export default function AIChatPage() {
         setActive(id); // highlight in the sidebar without triggering a reload
       }
 
-      const res = await api.sendMessage(id, trimmed);
-      setSending(false);
+      // Commit the user's message into the transcript, then stream the reply. The
+      // pending bubble hands off to this so there is no flicker between the two.
+      setMessages((prev) => [...prev, { role: "user", kind: "text", content: trimmed, data: null }]);
       setPending(null);
-      if (!res.ok) {
-        setError(reachError(res.error));
-        return;
-      }
-      const next = res.data.messages || [];
-      setMessages(next);
-      // Reveal the last assistant message's narration progressively.
-      setStreamAt(next.length && next[next.length - 1].role === "assistant" ? next.length - 1 : -1);
+
+      const append = (kind: TraceLine["kind"]) => (text: string) =>
+        setSteps((prev) =>
+          prev[prev.length - 1]?.text === text ? prev : [...prev, { kind, text }],
+        );
+
+      const res = await api.sendMessageStream(id, trimmed, {
+        // Real pipeline stages, in order — the "AI doing work" checklist.
+        onStep: append("step"),
+        // The reasoning between stages ("Most of these are recruiters, dropping them").
+        onThought: append("thought"),
+        // Each assistant message (narration, a card, the reply) as it is produced.
+        onMessage: (m) => setMessages((prev) => [...prev, m]),
+        onError: (msg) => setError(reachError(msg)),
+        onDone: () => setSteps([]),
+      });
+
+      setSending(false);
+      setSteps([]);
+      if (!res.ok && res.error) setError(reachError(res.error));
       refresh(); // sidebar Recents — the title may have been auto-generated this turn
       refreshDemo(); // demo only: turns used just changed
     },
@@ -159,7 +188,7 @@ export default function AIChatPage() {
                 <MessageView
                   key={i}
                   message={m}
-                  streaming={i === streamAt}
+                  streaming={i === typingIdx}
                   onAction={onAction}
                   busy={sending}
                   activeDraftIdx={artifact?.idx ?? null}
@@ -169,7 +198,7 @@ export default function AIChatPage() {
               ))
             )}
             {pending && <Bubble role="user">{pending}</Bubble>}
-            {sending && <Thinking />}
+            {sending && <LiveSteps steps={steps} />}
             {error && (
               <Card className="border-[color:var(--danger-soft)]">
                 <div className="flex items-center gap-2.5 px-5 py-3 text-sm text-danger">
@@ -326,7 +355,7 @@ function Bubble({
           isUser ? "bg-accent-soft text-text" : "border border-border-faint bg-black/[0.02] text-text-2",
         )}
       >
-        {text ? shown : children}
+        {text ? <Emphasized text={shown} /> : children}
       </div>
       {isUser && (
         <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-black/[0.03] text-muted">
@@ -334,6 +363,29 @@ function Bubble({
         </div>
       )}
     </motion.div>
+  );
+}
+
+/** Renders the one piece of markdown the assistant actually uses in prose: **bold**
+ *  for a company name it is calling out. The bubble is plain text otherwise, so
+ *  without this the user reads literal asterisks around every recommendation.
+ *  Deliberately NOT a markdown renderer: this builds React nodes by splitting the
+ *  string, so no HTML is ever interpreted and there is nothing to inject. */
+function Emphasized({ text }: { text: string }) {
+  if (!text.includes("**")) return <>{text}</>;
+  const parts = text.split(/\*\*(.+?)\*\*/gs); // odd indexes are the bolded runs
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <strong key={i} className="font-medium text-text">
+            {part}
+          </strong>
+        ) : (
+          <span key={i}>{part}</span>
+        ),
+      )}
+    </>
   );
 }
 
@@ -355,25 +407,87 @@ function ResearchCard({ data }: { data: ResearchCardData }) {
   );
 }
 
-const STAGES = ["Researching the web", "Scoring fit", "Writing the draft"];
+/** One line of the live trace: a `step` (what the agent is doing) or a `thought`
+ *  (why, derived from the run's real state). */
+type TraceLine = { kind: "step" | "thought"; text: string };
 
-function Thinking() {
-  const [i, setI] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setI((v) => (v + 1) % STAGES.length), 1400);
-    return () => clearInterval(id);
-  }, []);
+/** The agent working, streamed from the backend. Steps are the spine, each with a
+ *  spinner while live and a check once passed. Thoughts sit under them as the
+ *  reasoning that produced the next decision ("Most of these are recruiters, they
+ *  post other companies' roles"), which is what makes this read as a colleague
+ *  thinking rather than a pipeline executing. Reduced-motion gets a static list. */
+function LiveSteps({ steps }: { steps: TraceLine[] }) {
+  const reduced = useReducedMotion();
+  // Reasoning lines are longer than stage labels, so keep a slightly deeper tail.
+  const visible = steps.slice(-7);
+  const lastIdx = visible.length - 1;
+  // Keys must be stable as the window scrolls. Keying on the position WITHIN the
+  // slice renumbers every row once the tail starts moving, so AnimatePresence sees
+  // the whole block exit and re-enter and the trace visibly duplicates mid-run.
+  const firstAbs = steps.length - visible.length;
   return (
-    <div className="flex items-center gap-3">
-      <div className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-black/[0.03]">
+    <motion.div
+      initial={reduced ? false : { opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="flex gap-3"
+    >
+      <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border border-border bg-black/[0.03]">
         <Logo className="w-4 animate-pulse-soft" />
       </div>
-      <div className="inline-flex items-center gap-2.5 rounded-lg border border-border-faint bg-black/[0.02] px-4 py-2.5 text-sm text-text-2">
-        <Search className="size-3.5 animate-pulse-soft text-accent" />
-        <span>{STAGES[i]}…</span>
-        <span className="text-xs text-muted">research runs live, so this can take a minute</span>
+      <div className="min-w-0 max-w-[68ch] space-y-1 rounded-lg border border-border-faint bg-black/[0.02] px-4 py-3">
+        {visible.length === 0 ? (
+          <TraceRow line={{ kind: "step", text: "Thinking" }} active />
+        ) : (
+          <AnimatePresence initial={false} mode="popLayout">
+            {visible.map((line, i) => (
+              <TraceRow
+                key={firstAbs + i}
+                line={line}
+                active={i === lastIdx}
+                reduced={!!reduced}
+              />
+            ))}
+          </AnimatePresence>
+        )}
       </div>
-    </div>
+    </motion.div>
+  );
+}
+
+function TraceRow({
+  line,
+  active,
+  reduced,
+}: {
+  line: TraceLine;
+  active?: boolean;
+  reduced?: boolean;
+}) {
+  const isThought = line.kind === "thought";
+  return (
+    <motion.div
+      layout={!reduced}
+      initial={reduced ? false : { opacity: 0, y: 3 }}
+      // Reasoning stays legible after it scrolls past; stage labels recede once done.
+      animate={{ opacity: active || isThought ? 1 : 0.5, y: 0 }}
+      exit={reduced ? undefined : { opacity: 0, height: 0 }}
+      transition={{ duration: 0.2 }}
+      className={cn(
+        "flex gap-2 text-sm leading-5",
+        isThought ? "items-start pl-[1.375rem]" : "items-center",
+      )}
+    >
+      {!isThought &&
+        (active ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-accent" />
+        ) : (
+          <Check className="size-3.5 shrink-0 text-muted" />
+        ))}
+      <span className={isThought ? "text-text-2" : active ? "text-text" : "text-muted"}>
+        {line.text}
+      </span>
+    </motion.div>
   );
 }
 

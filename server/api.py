@@ -17,6 +17,7 @@ Security posture:
   * OpenAPI/docs are disabled so the schema isn't exposed.
 """
 
+import json
 import logging
 import os
 import re
@@ -35,11 +36,11 @@ load_env()
 
 from fastapi import Depends, FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, field_validator  # noqa: E402
 
-from chat.agent import respond  # noqa: E402
+from chat.agent import respond, respond_stream  # noqa: E402
 from chat.models import Conversation, new_id  # noqa: E402
 from chat.store import ConversationStore  # noqa: E402
 from server.auth import auth_enabled, publishable_key, require_user  # noqa: E402
@@ -556,6 +557,61 @@ def send_message(cid: str, body: SendMessage, request: Request,
         raise HTTPException(status_code=502,
                             detail="The assistant couldn't respond just now. Please try again.")
     return _conversation_public(conv)
+
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",          # tell any nginx/Vercel edge not to buffer
+    "Connection": "keep-alive",
+}
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+@app.post("/api/conversations/{cid}/messages/stream")
+def send_message_stream(cid: str, body: SendMessage, request: Request,
+                        _=Depends(_rl_agent),
+                        user: str = Depends(require_member_or_demo)):
+    """Run one agent turn and STREAM it as Server-Sent Events, so the real pipeline
+    stages, each card, and the reply surface live instead of after a blocking wait.
+
+    Same auth, rate limit and demo-budget gate as the blocking sibling above; the
+    turn itself is identical (both share chat.agent._run_turn). Event frames:
+    ``step`` (a real stage), ``message`` (a transcript message), ``error``, ``done``.
+    """
+    if demo_session.is_demo_id(user):
+        allowed, message = demo_api.reserve_demo_turn(user)
+        if not allowed:
+            raise HTTPException(status_code=429, detail=message)
+    store = _store_for(user)
+    conv = store.load(_valid_id(cid))
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+
+    def stream():
+        # The whole conversation, once, so a reconnecting client can reconcile the
+        # optimistic user bubble with the persisted transcript.
+        yield _sse("open", {"conversation_id": conv.id})
+        try:
+            for event, data in respond_stream(conv, body.text, store, user_id=user):
+                yield _sse(event, data)
+        except Exception as exc:  # noqa: BLE001 - a crash becomes a clean terminal event
+            log.exception("streaming agent turn failed for %s", cid)
+            error_log.record_error(
+                path=str(request.url.path), method=request.method, status=502,
+                user_id=user, error_type=type(exc).__name__, message=str(exc),
+                tb="".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+            yield _sse("error", {"message": "The assistant couldn't respond just now. "
+                                 "Please try again."})
+            yield _sse("done", {})
+        # Title may have been auto-generated this turn; hand the client the final
+        # canonical state so the sidebar and transcript are exactly what's stored.
+        yield _sse("final", _conversation_public(conv))
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers=_SSE_HEADERS)
 
 
 # ── Company profile (the sender's own details, remembered in every chat) ─

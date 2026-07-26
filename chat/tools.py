@@ -50,6 +50,7 @@ from chat.models import (
 )
 from agents import channels
 from discovery import engine as discovery_engine
+from discovery import intent
 from discovery.models import DiscoveryQuery
 from research import orchestrator
 from research import x_search
@@ -1027,29 +1028,74 @@ def _coming_soon(capability: str):
 # ──────────────────────────────────────────────────────────────────────
 #  Tool: find prospects (Prospect Discovery Agent — discovers companies)
 # ──────────────────────────────────────────────────────────────────────
+def _last_user_text(conversation) -> str:
+    """The user's most recent message. The planner works off the ask itself, so it
+    needs the real words even when the model paraphrased them into filters."""
+    for msg in reversed(getattr(conversation, "messages", None) or []):
+        if getattr(msg, "role", "") == "user" and getattr(msg, "content", ""):
+            return str(msg.content).strip()
+    return ""
+
+
 def _tool_find_prospects(inp: dict, conversation) -> ToolResult:
     """Discover companies matching an ICP. Deterministic (Tavily+Exa); it does
     NOT research, qualify, or write — it hands leads to the rest of the pipeline.
     Per-user dedupe means "find another N" naturally returns new companies."""
     owner = getattr(conversation, "_user_id", None) or conversation.id
+    # The user's OWN WORDS drive the plan. The model's structured fields are hints
+    # only: letting them decide the search made quality swing turn to turn (one
+    # turn's keywords found HeyGen and Runway, the next drifted into video
+    # surveillance). intent.parse is deterministic, so the same ask plans the same
+    # way every time. `last_user_text` is the fallback when the model paraphrases
+    # the ask away entirely.
+    raw_ask = (str(inp.get("query") or "").strip()
+               or _last_user_text(conversation))
+    # Conversation memory: when the user is REFINING the previous search ("only
+    # under 200 employees", "now in Europe") rather than starting a new one, inherit
+    # the prior ICP so the role/industry anchor carries over instead of being lost.
+    # A refinement is: a prior search exists, this turn adds at least one filter, and
+    # its words do NOT name a fresh role/industry (which would be a new search).
+    last = conversation.workspace.get("discovery_last") or {}
+    probe = intent.parse(raw_ask, industry=str(inp.get("industry") or ""),
+                         keywords=inp.get("keywords") or [])
+    adds_filter = any(inp.get(f) for f in
+                      ("location", "employee_range", "funding_stage", "exclude_keywords"))
+    fresh_icp = bool(probe.roles or probe.industry or inp.get("keywords")
+                     or inp.get("industry"))
+    refining = bool(last) and adds_filter and not fresh_icp
+
+    def _field(name):
+        return str(inp.get(name) or (last.get(name) if refining else "") or "")
+
     q = DiscoveryQuery(
-        industry=str(inp.get("industry") or ""),
-        location=str(inp.get("location") or ""),
-        employee_range=str(inp.get("employee_range") or ""),
-        funding_stage=str(inp.get("funding_stage") or ""),
-        keywords=inp.get("keywords") or [],
-        exclude_keywords=inp.get("exclude_keywords") or [],
-        raw=str(inp.get("query") or ""),
+        industry=_field("industry"),
+        location=_field("location"),
+        employee_range=_field("employee_range"),
+        funding_stage=_field("funding_stage"),
+        keywords=inp.get("keywords") or (last.get("keywords") if refining else []) or [],
+        exclude_keywords=((list(last.get("exclude_keywords") or []) if refining else [])
+                          + (inp.get("exclude_keywords") or [])),
+        # Keep the PRIOR wording on a refinement so the role stays the anchor.
+        raw=(last.get("raw") or raw_ask) if refining else raw_ask,
         limit=inp.get("limit") or 20,
     )
+    plan = intent.parse(
+        q.raw, industry=q.industry, keywords=q.keywords,
+        employee_range=q.employee_range, funding_stage=q.funding_stage,
+        location=q.location, exclude_keywords=q.exclude_keywords, limit=q.limit)
     # Skip the company currently being worked on in this thread (already researched).
     exclude = []
     url = conversation.workspace.get("company_url")
     if url:
         exclude.append(url)
 
+    # A streaming turn attaches a progress sink so the engine's REAL stages
+    # ("Searching Apollo", "Filtered 9 recruiters", "Confirmed 2 hiring the role")
+    # surface live. Absent (blocking path), discovery runs exactly as before.
+    progress = getattr(conversation, "_progress", None)
     try:
-        result = discovery_engine.discover(owner, q, exclude_domains=exclude)
+        result = discovery_engine.discover(owner, q, exclude_domains=exclude,
+                                           plan=plan, progress=progress)
     except Exception:  # noqa: BLE001 - discovery is designed not to raise
         return ToolResult(summary="Prospect discovery couldn't run just now.")
 
@@ -1059,20 +1105,73 @@ def _tool_find_prospects(inp: dict, conversation) -> ToolResult:
         return ToolResult(summary=result.reason + " Tell the user plainly.",
                           workspace_updates={"prospects_last": []})
 
+    public = [p.public() for p in result.prospects]
+    entries = research_pipeline.discovery_entries(public)
+    quality = result.quality or {}
+
+    # The list is a CARD, so the reply must not repeat it. The old instruction
+    # here asked for "a clean numbered list", which is exactly the mechanical
+    # markdown dump we were trying to get away from.
     lines = []
     for p in result.prospects:
-        bits = [p.company_name, p.website]
-        meta = [x for x in (p.industry, p.location, p.estimated_stage) if x and x != "unknown"]
-        if meta:
-            bits.append(", ".join(meta))
-        lines.append(f"  - {' — '.join(bits)}  ({p.why_it_matches})")
-    more = " There are more available if they ask for another batch." if result.has_more else ""
+        hiring = (p.hiring or {}).get("summary") or ""
+        lines.append(
+            f"  - {p.company_name} ({p.domain}) match {round(p.confidence * 100)}%"
+            + (f" — {hiring}" if hiring else "")
+            + (f" — {p.why_it_matches}" if p.why_it_matches else ""))
+
+    top = result.prospects[0] if result.prospects else None
+    verified = quality.get("hiring_verified") or 0
+    role = quality.get("role_terms") or []
+    notes = []
+    if role and not verified:
+        notes.append(
+            f"NOTE: none of these currently has an open posting matching "
+            f"\"{role[0]}\" (checked against Apollo's live job postings). They match "
+            "the category, not that specific role. Say this plainly rather than "
+            "implying they are hiring for it.")
+    if quality.get("returned_fallback"):
+        notes.append(f"{quality['returned_fallback']} of these are job boards or "
+                     "marketplaces included only because there were not enough real "
+                     "companies. Flag them as such.")
+    more = " More are available if they ask for another batch." if result.has_more else ""
+
     return ToolResult(
-        summary=(f"Discovered {result.returned} companies matching the ICP. Present "
-                 "them to the user as a clean numbered list (company — website — a "
-                 "few words on why it matches). Then offer to research any of them, "
-                 "or find more." + more + "\n" + "\n".join(lines)),
-        workspace_updates={"prospects_last": [p.public() for p in result.prospects]})
+        summary=(
+            f"Found {result.returned} companies ({quality.get('candidates_considered', 0)} "
+            f"considered, {quality.get('demoted_intermediaries', 0)} job boards/"
+            f"aggregators demoted, stopped because {quality.get('stopped_because', 'n/a')}).\n"
+            "They are ALREADY SHOWN to the user as interactive cards with the website, "
+            "match confidence, sources, and hiring signal. So DO NOT restate them as a "
+            "numbered list or a table.\n"
+            "Reply conversationally, the way you would talk to a colleague: lead with "
+            f"the single best one ({top.company_name if top else 'the top match'}) and "
+            "WHY it stands out, then mention two or three you would prioritise next in "
+            "prose, then say what you can do next (research one properly, draft an "
+            "opener, or widen the search). Two short paragraphs at most."
+            + (" " + " ".join(notes) if notes else "") + more
+            + "\n\nThe candidates (for your reasoning, not for pasting):\n"
+            + "\n".join(lines)),
+        message=Message(role="assistant", kind=PROSPECTS,
+                        content=f"Found {result.returned} companies matching that.",
+                        data={"prospects": entries,
+                              "summary": {"total": result.returned,
+                                          "discovered": result.returned,
+                                          "considered": quality.get("candidates_considered"),
+                                          "demoted": quality.get("demoted_intermediaries"),
+                                          "top": (f"{top.company_name} "
+                                                  f"({round(top.confidence * 100)}% match)"
+                                                  if top else None)},
+                              "quality": quality}),
+        workspace_updates={
+            "prospects_last": public,
+            # Remember this search so the next turn can REFINE it ("only under 200
+            # employees") instead of starting over. See the refinement block above.
+            "discovery_last": {
+                "raw": q.raw, "industry": q.industry, "location": q.location,
+                "employee_range": q.employee_range, "funding_stage": q.funding_stage,
+                "keywords": q.keywords, "exclude_keywords": q.exclude_keywords},
+        })
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -1083,6 +1182,7 @@ def _tool_find_prospects(inp: dict, conversation) -> ToolResult:
 def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
     user_id = getattr(conversation, "_user_id", None)
     owner = user_id or conversation.id
+    progress = getattr(conversation, "_progress", None)
     companies = [c for c in (inp.get("companies") or []) if str(c).strip()]
     query = str(inp.get("query") or "").strip()
     limit = inp.get("limit")
@@ -1092,7 +1192,7 @@ def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
         leads = companies
     elif query:
         status, leads, reason, has_more = research_pipeline.discover_leads(
-            owner, query, limit=limit)
+            owner, query, limit=limit, progress=progress)
         if status == "error":
             return ToolResult(summary="Couldn't find prospects: " + reason)
         if status == "empty" or not leads:
@@ -1113,7 +1213,7 @@ def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
 
     icp = conversation.workspace.get("icp")
     result = research_pipeline.research_and_qualify(
-        leads, icp=icp, limit=limit, user_id=user_id)
+        leads, icp=icp, limit=limit, user_id=user_id, progress=progress)
     if result.get("status") != "ok" or not result.get("prospects"):
         return ToolResult(summary=(result.get("reason")
                           or "Couldn't research those prospects just now."))
@@ -1711,12 +1811,18 @@ register(Tool(
         "DISCOVER companies that match an ideal-customer profile (ICP), when the "
         "user doesn't have a specific company yet — e.g. 'find B2B SaaS companies "
         "in Canada', 'find Series A fintech startups', 'find Shopify apps under 50 "
-        "people', 'find another 20', 'only SaaS ones'. Extract the filters from "
-        "their request and pass them. It finds companies only — it does NOT "
-        "research, qualify, or write; offer those as next steps. Calling again "
-        "returns NEW companies (already-shown ones are skipped automatically), so "
-        "'find another 20' just calls this again. Use `query` for the raw phrasing "
-        "if filters are hard to separate."),
+        "people', 'find another 20', 'only SaaS ones'. "
+        "THIS IS ALSO THE TOOL FOR HIRING-SIGNAL ASKS: any 'find companies/founders "
+        "hiring [for] a <role>' request — e.g. 'find B2B founders hiring an AI video "
+        "creator', 'companies hiring an SDR', 'startups hiring a growth marketer' — "
+        "is ALWAYS this tool, because it searches LIVE JOB POSTINGS in a company "
+        "database. Do NOT use search_recent_posts for these: 'founders hiring X' "
+        "means companies with an open role, not tweets. "
+        "Extract the filters from their request and pass them. It finds companies "
+        "only — it does NOT research, qualify, or write; offer those as next steps. "
+        "Calling again returns NEW companies (already-shown ones are skipped "
+        "automatically), so 'find another 20' just calls this again. Use `query` "
+        "for the raw phrasing if filters are hard to separate."),
     input_schema={
         "type": "object",
         "properties": {
@@ -1752,9 +1858,12 @@ register(Tool(
         "companies, OR `companies` (names/websites) to evaluate a list the user "
         "already has. It runs Discovery -> Research -> Qualification (reusing those "
         "agents) and returns a card; it does NOT write or send anything. Bounded per "
-        "run — offer to run more if they want a bigger batch. Prefer this over "
-        "find_prospects when the user wants the companies SCORED/evaluated, not just "
-        "listed."),
+        "run — offer to run more if they want a bigger batch. "
+        "PREFER find_prospects for a plain 'find/discover companies' ask (it is much "
+        "faster and returns discovery cards that already carry a match score and the "
+        "reasons for it). Use THIS tool only when the user explicitly wants each "
+        "company DEEPLY researched and fit-scored, or hands you a list of companies "
+        "to evaluate."),
     input_schema={
         "type": "object",
         "properties": {
@@ -1814,7 +1923,10 @@ register(Tool(
         "'who tweeted about Y', 'recent posts/tweets about Z', 'what are people "
         "posting about X', 'find founders complaining about Y on X/Twitter', 'who's "
         "talking about Z recently'. If the user mentions a tweet, a post, X, or "
-        "Twitter, prefer THIS tool. Do NOT use it for ordinary company research and "
+        "Twitter, prefer THIS tool. Do NOT use it for ordinary company research, "
+        "and do NOT use it to find companies HIRING for a role or to discover an "
+        "ICP ('find founders hiring an SDR' is find_prospects, not this) — this "
+        "tool only reads social chatter. "
         "NEVER call it by default — this endpoint costs money per read, so it must "
         "be justified by an explicit need for recent social chatter. Pass the X "
         "search `query` (X search operators are allowed) and optionally "

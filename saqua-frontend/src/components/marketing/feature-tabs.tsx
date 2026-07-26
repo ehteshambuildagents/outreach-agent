@@ -12,6 +12,7 @@ import {
   Check,
   Mail,
 } from "lucide-react";
+import { CountUp } from "@/components/ui/count-up";
 import { cn } from "@/lib/utils";
 
 /* ── Mock chrome ───────────────────────────────────────────────────── */
@@ -29,10 +30,14 @@ function Mock({ title, icon: Icon, children }: { title: string; icon: LucideIcon
   );
 }
 
-function FitBadge({ n = 92 }: { n?: number }) {
+/** `count` is for the one badge that is the subject of its panel: a score that
+ *  lands reads as something worked out, rather than a number that was typed. */
+function FitBadge({ n = 92, count = false }: { n?: number; count?: boolean }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-md border border-accent-line bg-accent-soft px-2 py-0.5 text-accent">
-      <span className="font-mono text-sm font-semibold leading-none">{n}</span>
+      <span className="font-mono text-sm font-semibold leading-none">
+        {count ? <CountUp to={n} /> : n}
+      </span>
       <span className="text-[10px] uppercase tracking-wide">fit</span>
     </span>
   );
@@ -50,7 +55,7 @@ const ResearchMock = () => (
         <div className="text-sm font-medium text-text">Linear</div>
         <div className="text-xs text-muted">linear.app · issue tracking for software teams</div>
       </div>
-      <FitBadge n={92} />
+      <FitBadge n={92} count />
     </div>
     <div className="space-y-2">
       <Row><span className="text-accent">“</span> Posted 2 GTM roles in the last 30 days</Row>
@@ -172,54 +177,50 @@ const AutomationMock = () => (
   </Mock>
 );
 
-/* ── Tab definitions ───────────────────────────────────────────────── */
+/* ── Tab definitions ───────────────────────────────────────────────────
+   The bodies describe what each SURFACE gives you. How the pipeline itself
+   works is the job of the "How it works" section above, and saying it twice
+   made both halves weaker. */
 const TABS: {
   label: string;
-  eyebrow: string;
   title: string;
   body: string;
   mock: React.ReactNode;
 }[] = [
   {
     label: "Research",
-    eyebrow: "Adaptive research",
     title: "It reads the company, not a database row.",
-    body: "Saqua reads the actual site, funding news, and hiring signals, then extracts verified facts with the quote that backs each one. If it isn't on the page, it never reaches the email.",
+    body: "Open any prospect and the work is already done: what is true about them, where each fact came from, and how well they fit. Nothing to take on faith, nothing to go and check yourself.",
     mock: <ResearchMock />,
   },
   {
     label: "Discovery",
-    eyebrow: "Prospect discovery",
-    title: "Find the companies actually worth reaching out to.",
-    body: "Describe your ICP once. Saqua surfaces matching companies, scores each for fit, and filters out the low-fit noise before you spend a single send on it.",
+    title: "A list that keeps refilling itself.",
+    body: "Describe your customer once. Saqua scores every match for fit, and it remembers what it has already shown you, so the same near-miss never comes back around.",
     mock: <DiscoveryMock />,
   },
   {
-    label: "AI Sales Assistant",
-    eyebrow: "AI sales assistant",
-    title: "An assistant that knows your live deals.",
-    body: "Grounded in your pipeline, your offer, and how the best sellers actually work, not generic AI. Ask how to open a CTO or unstick a cold deal and get an answer tied to the actual account.",
+    label: "Assistant",
+    title: "It already knows your live deals.",
+    body: "Ask how to open a CTO or restart a cold thread. The answer is about that account, drawn from your pipeline and your offer, not outbound advice in general.",
     mock: <CoachMock />,
   },
   {
-    label: "Pipeline CRM",
-    eyebrow: "Solo-founder CRM",
+    label: "Pipeline",
     title: "Every deal on one board.",
-    body: "A lightweight pipeline built for outbound: new, contacted, replied, won. No enterprise CRM bloat, just the columns a founder actually moves cards between.",
+    body: "New, contacted, replied, won. The four columns a founder actually moves cards between, without an enterprise CRM built around them.",
     mock: <PipelineMock />,
   },
   {
     label: "Inbox",
-    eyebrow: "Unified inbox",
     title: "Replies land here, and the sequence stops.",
-    body: "Every thread in one place, with reply detection wired in. The moment someone answers, remaining follow-ups cancel automatically. No one ever gets a “just following up” after they replied.",
+    body: "Every thread in one place with reply detection wired in. Nobody gets a “just following up” from you after they have already answered.",
     mock: <InboxMock />,
   },
   {
-    label: "Automation",
-    eyebrow: "Follow-up automation",
-    title: "Follow-ups that run themselves.",
-    body: "Approve once and Saqua runs a multi-touch cadence over real days, each touch a new angle, with timing re-anchored to the actual send so it never compresses into something that looks automated.",
+    label: "Follow-ups",
+    title: "Approve the cadence once.",
+    body: "Each touch takes a new angle, and timing re-anchors to when the email actually went out, so a cadence never compresses into something that looks automated.",
     mock: <AutomationMock />,
   },
 ];
@@ -267,8 +268,7 @@ export function FeatureTabs() {
         className="mt-10 grid animate-fade-up items-center gap-10 text-left lg:grid-cols-2"
       >
         <div>
-          <span className="text-sm font-semibold text-accent">{tab.eyebrow}</span>
-          <h3 className="mt-3 font-display text-2xl font-semibold tracking-tight md:text-3xl">{tab.title}</h3>
+          <h3 className="font-display text-2xl font-semibold tracking-tight md:text-3xl">{tab.title}</h3>
           <p className="mt-4 text-base leading-7 text-muted">{tab.body}</p>
         </div>
         <div

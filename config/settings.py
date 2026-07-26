@@ -371,6 +371,40 @@ RESEARCH_LIST_MAX = 10                 # max companies researched+qualified per 
 DISCOVERY_PROVIDER_POOL = 30           # results pulled from EACH provider per query
 DISCOVERY_MIN_CONFIDENCE = 0.15        # drop candidates below this match confidence
 
+# ── Candidate QUALITY (stricter selection) ─────────────────────────────
+# Discovery used to stop at the first search pass and return whatever was valid,
+# which is how job boards ended up outranking real companies. It now searches in
+# bounded PASSES and stops on quality, not on count (see discovery/engine.py).
+DISCOVERY_MAX_PASSES = int(os.getenv("DISCOVERY_MAX_PASSES", "3"))
+# A pass that adds fewer than this many NEW strong candidates means more
+# searching is unlikely to improve the result, so stop.
+DISCOVERY_PASS_MIN_GAIN = int(os.getenv("DISCOVERY_PASS_MIN_GAIN", "2"))
+# Confidence at or above which a candidate counts as "strong". Filling the page
+# with strong candidates is what ends the search early.
+DISCOVERY_STRONG_CONFIDENCE = float(os.getenv("DISCOVERY_STRONG_CONFIDENCE", "0.55"))
+# Intermediaries (job boards, ATS, marketplaces, directories) are demoted to a
+# fallback tier. With this ON they are only ever appended after real companies,
+# and only when the page could not be filled. OFF drops them entirely.
+DISCOVERY_ALLOW_FALLBACK_TIER = (
+    os.getenv("DISCOVERY_ALLOW_FALLBACK_TIER", "1").strip().lower()
+    not in ("0", "false", "no", ""))
+
+# ── Apollo COMPANY-side provider (organization search + job postings) ──
+# Apollo's company database is the primary candidate source: it cannot return a
+# job board as a "company", which web search happily does. Job-posting lookups
+# are per-company and paid, so they run on finalists only.
+APOLLO_ORG_SEARCH_ENABLED = (
+    os.getenv("APOLLO_ORG_SEARCH_ENABLED", "1").strip().lower()
+    not in ("0", "false", "no", ""))
+APOLLO_ORG_SEARCH_PER_PAGE = int(os.getenv("APOLLO_ORG_SEARCH_PER_PAGE", "25"))
+# How many finalists get a verified-job-postings lookup per discovery run.
+APOLLO_JOB_POSTING_LOOKUPS = int(os.getenv("APOLLO_JOB_POSTING_LOOKUPS", "12"))
+# Those lookups run concurrently: a dozen sequential calls added MINUTES to a
+# single chat turn, which is not a latency a conversation can absorb.
+APOLLO_LOOKUP_CONCURRENCY = int(os.getenv("APOLLO_LOOKUP_CONCURRENCY", "6"))
+# Apollo responses are cached by exact request so pagination/repeats are free.
+APOLLO_CACHE_TTL_SECONDS = int(os.getenv("APOLLO_CACHE_TTL_SECONDS", str(24 * 3600)))
+
 # ── Public live demo (no-login; runs the REAL discovery→research→qualify→write
 # pipeline for a visitor). Because it spends real API money on an anonymous public
 # endpoint, it carries LAYERED caps: per-IP + per-email (abuse), plus a GLOBAL daily

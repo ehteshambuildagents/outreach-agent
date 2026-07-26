@@ -364,16 +364,58 @@ export interface ProspectEntry {
     research_confidence?: number | null;
     findings?: ProspectFinding[];
     sources?: { domain: string; url: string }[];
-    score_breakdown?: Record<string, unknown>;
+    /** Customer-likelihood factor breakdown (0..1 each), used to render the
+     *  plain-language "Why this ranked here" checklist on a discovered card. */
+    score_breakdown?: {
+      total?: number;
+      icp_match?: number;
+      buying_signal?: number;
+      hiring_relevance?: number;
+      founder_access?: number;
+      corroboration?: number;
+    } | null;
+    is_public?: boolean;
+    /** USD, from Apollo. Used to caveat very large PRIVATE companies, which are
+     *  demoted as buyers just like listed ones. */
+    annual_revenue?: number | null;
+    industry_kind?: string;
     strongest_signals?: string[];
     missing_information?: string[];
     disqualifiers?: string[];
     why_discovered?: string | null;
+    /** Present on DISCOVERED entries (status "discovered"), which are leads that
+     *  have not been researched yet: the itemised reasons they were selected, the
+     *  structurally verified hiring signal, and headcount growth. */
+    match_reasons?: string[];
+    hiring?: {
+      verified?: boolean;
+      source?: string;
+      /** "role" = a live posting matching the role asked for; "any" = open roles
+       *  but none matching; "page" = only a careers page. */
+      match?: "role" | "any" | "page";
+      summary?: string;
+      url?: string;
+      postings?: { title?: string; url?: string; posted_at?: string }[];
+    } | null;
+    recent_activity?: { summary?: string; url?: string; source?: string } | null;
+    growth?: { headcount_6mo?: number | null; headcount_12mo?: number | null } | null;
+    kind?: string;
+    tier?: string;
   };
 }
 
 export interface ProspectsCardData {
-  summary?: { total?: number; researched?: number; top?: string | null; by_recommendation?: Record<string, number> };
+  summary?: {
+    total?: number;
+    researched?: number;
+    top?: string | null;
+    by_recommendation?: Record<string, number>;
+    /** Discovery runs only: how many candidates were weighed and how many
+     *  job boards / aggregators were demoted out of the results. */
+    discovered?: number;
+    considered?: number;
+    demoted?: number;
+  };
   prospects: ProspectEntry[];
 }
 
@@ -533,4 +575,129 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text }),
     }),
+  sendMessageStream,
 };
+
+/** Callbacks for a streamed agent turn. Every handler is optional so a caller can
+ *  subscribe to just what it renders. */
+export interface StreamHandlers {
+  /** A real pipeline stage: WHAT the agent is doing right now. */
+  onStep?: (label: string) => void;
+  /** WHY it is doing it, or what it just decided. Derived server-side from the
+   *  run's actual state (discovery/narration.py), never canned copy. */
+  onThought?: (label: string) => void;
+  onMessage?: (message: ChatMessage) => void;
+  onError?: (message: string) => void;
+  onDone?: () => void;
+  onFinal?: (conversation: Conversation) => void;
+}
+
+/**
+ * Run one agent turn over Server-Sent Events, invoking `handlers` as the real
+ * pipeline stages, each card, and the reply arrive. The transport is a POST whose
+ * body streams `text/event-stream`; the Next proxy passes it straight through.
+ *
+ * Returns when the stream closes. Never throws for normal failures — a transport
+ * error is delivered via `onError` and returned as `{ ok:false }`.
+ */
+export async function sendMessageStream(
+  id: string,
+  text: string,
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; error?: string }> {
+  let res: Response;
+  try {
+    const headers = new Headers({ "Content-Type": "application/json", Accept: "text/event-stream" });
+    const token = await authToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    res = await fetch(`/api/conversations/${encodeURIComponent(id)}/messages/stream`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text }),
+      cache: "no-store",
+      credentials: "same-origin",
+      signal,
+    });
+  } catch (e) {
+    if ((e as Error)?.name === "AbortError") return { ok: true };
+    const msg = e instanceof Error ? e.message : "network error";
+    handlers.onError?.(msg);
+    return { ok: false, error: msg };
+  }
+
+  if (!res.ok || !res.body) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const p = (await res.json()) as { detail?: string; error?: string };
+      msg = p.detail || p.error || msg;
+    } catch {
+      /* non-JSON error body */
+    }
+    handlers.onError?.(msg);
+    return { ok: false, error: msg };
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const handle = (frame: string) => {
+    let event = "message";
+    const dataLines: string[] = [];
+    for (const line of frame.split("\n")) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
+    }
+    if (!dataLines.length) return;
+    let data: unknown;
+    try {
+      data = JSON.parse(dataLines.join("\n"));
+    } catch {
+      return;
+    }
+    switch (event) {
+      case "step":
+        handlers.onStep?.((data as { label?: string }).label || "");
+        break;
+      case "thought":
+        handlers.onThought?.((data as { label?: string }).label || "");
+        break;
+      case "message":
+        handlers.onMessage?.((data as { message: ChatMessage }).message);
+        break;
+      case "error":
+        handlers.onError?.((data as { message?: string }).message || "Something went wrong.");
+        break;
+      case "done":
+        handlers.onDone?.();
+        break;
+      case "final":
+        handlers.onFinal?.(data as Conversation);
+        break;
+      default:
+        break; // "open" and any future events are ignored safely
+    }
+  };
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      // Frames are separated by a blank line (\n\n).
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        if (frame.trim()) handle(frame);
+      }
+    }
+  } catch (e) {
+    if ((e as Error)?.name === "AbortError") return { ok: true };
+    const msg = e instanceof Error ? e.message : "stream interrupted";
+    handlers.onError?.(msg);
+    return { ok: false, error: msg };
+  }
+  return { ok: true };
+}

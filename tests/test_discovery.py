@@ -247,8 +247,11 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(r.status, "ok")
 
     def test_error_when_no_provider(self):
+        # Apollo is now the primary company source, so "no provider" means all
+        # three are down, not just the two web providers.
         patches = [mock.patch("discovery.sources.exa.available", return_value=False),
-                   mock.patch("discovery.sources.tavily.available", return_value=False)]
+                   mock.patch("discovery.sources.tavily.available", return_value=False),
+                   mock.patch("discovery.sources.apollo_orgs.available", return_value=False)]
         for p in patches:
             p.start()
         try:

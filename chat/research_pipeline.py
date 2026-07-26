@@ -74,9 +74,10 @@ def _telemetry():
 
 
 # ── Entry point A: discover from a plain-language / structured ICP ─────────
-def discover_leads(owner: str, query, *, limit=None, exclude_domains=None):
+def discover_leads(owner: str, query, *, limit=None, exclude_domains=None, progress=None):
     """Run the existing Discovery agent -> a list of lead dicts (company+website).
-    Returns (status, leads, reason, has_more). Never raises."""
+    Returns (status, leads, reason, has_more). Never raises. ``progress`` streams
+    the real discovery stages to a caller (see discovery.engine.discover)."""
     if isinstance(query, DiscoveryQuery):
         q = query
     else:
@@ -86,7 +87,8 @@ def discover_leads(owner: str, query, *, limit=None, exclude_domains=None):
         q.limit = max(1, int(limit))
     try:
         result = discovery_engine.discover(owner or "anon", q,
-                                           exclude_domains=exclude_domains or [])
+                                           exclude_domains=exclude_domains or [],
+                                           progress=progress)
     except Exception:  # noqa: BLE001 - discovery is designed not to raise
         return "error", [], "Prospect discovery couldn't run just now.", False
     if result.status == "error":
@@ -98,9 +100,94 @@ def discover_leads(owner: str, query, *, limit=None, exclude_domains=None):
     return "ok", leads, "", bool(result.has_more)
 
 
+# ── Discovery results -> the same browsable card shape ─────────────────────
+def discovery_entries(prospects) -> list:
+    """Format DISCOVERED (not yet researched) companies as card entries.
+
+    Reuses the shape ``research_and_qualify`` already returns, so the existing
+    prospects card renders both without a second component. The difference is
+    honest and visible: ``status`` is ``"discovered"``, the number is a MATCH
+    confidence rather than a fit score, and the only offered action is to research
+    the company — nothing here has crawled a site or scored a lead yet.
+
+    ``prospects`` are discovery ``Prospect.public()`` dicts.
+    """
+    entries = []
+    for p in prospects or []:
+        if not isinstance(p, dict):
+            continue
+        confidence = float(p.get("confidence") or 0)
+        hiring = p.get("hiring") or None
+        reasons = [r for r in (p.get("match_reasons") or []) if r]
+        entries.append({
+            "company": p.get("company_name") or "",
+            "website": p.get("website") or "",
+            "status": "discovered",
+            "score": int(round(confidence * 100)),
+            "fit_level": p.get("tier") or "company",
+            "priority": "none",
+            "recommendation": "",
+            "recommended": confidence >= 0.55 and (p.get("tier") == "company"),
+            "score_reason": p.get("why_it_matches") or "",
+            "preview": _discovery_preview(p, hiring, reasons),
+            "actions": ["research_prospect"],
+            "detail": {
+                "what_they_do": None,
+                "match_reasons": reasons,
+                "hiring": hiring,
+                "recent_activity": p.get("recent_activity") or None,
+                "growth": p.get("growth") or None,
+                "kind": p.get("kind") or "company",
+                "tier": p.get("tier") or "company",
+                "strongest_signals": p.get("basic_signals") or [],
+                "sources": _discovery_sources(p),
+                # The customer-likelihood factor breakdown, so the card can show a
+                # plain "Why this ranked here" checklist instead of a bare number.
+                "score_breakdown": p.get("score") or None,
+                "is_public": bool(p.get("is_public")),
+                "annual_revenue": p.get("annual_revenue"),
+                "industry_kind": p.get("industry_kind") or "",
+            },
+        })
+    return entries
+
+
+def _discovery_preview(p, hiring, reasons) -> str:
+    """One plain sentence: what stood out, plus the verified hiring line if there
+    is one. Deliberately short — the card holds the rest."""
+    bits = []
+    if hiring and hiring.get("summary"):
+        bits.append(hiring["summary"].rstrip("."))
+    seen = {b.strip().lower() for b in bits}
+    # The hiring line is often also the lead match reason; don't print it twice.
+    lead = next((r for r in reasons if not r.startswith("In Apollo")
+                 and r.strip().lower() not in seen), "")
+    if lead:
+        bits.append(lead.rstrip("."))
+    elif not bits and p.get("why_it_matches"):
+        bits.append(str(p["why_it_matches"]).rstrip("."))
+    if not bits:
+        bits.append("Matched your search")
+    return ". ".join(bits) + "."
+
+
+def _discovery_sources(p) -> list:
+    """Which providers found this company, as the card's {domain,url} chips. The
+    provider name goes in ``domain`` so corroboration is visible at a glance."""
+    out = []
+    for src in p.get("sources") or []:
+        if not isinstance(src, dict):
+            continue
+        provider = src.get("provider") or ""
+        if provider and not any(o["domain"] == provider for o in out):
+            out.append({"domain": provider, "url": src.get("url") or p.get("website") or ""})
+    return out
+
+
 # ── Entry point B (and the core): research + qualify a list of companies ───
 def research_and_qualify(leads, *, icp=None, limit=None, user_id=None,
-                         research_fn=None, qualify_fn=None, resolve_fn=None) -> dict:
+                         research_fn=None, qualify_fn=None, resolve_fn=None,
+                         progress=None) -> dict:
     """Research + qualify each company in ``leads`` (list of dicts with a
     ``website`` and/or a ``company_name``, or bare name/URL strings) and return a
     scored, sorted, browsable list. Bounded by RESEARCH_LIST_MAX. Never raises.
@@ -115,6 +202,7 @@ def research_and_qualify(leads, *, icp=None, limit=None, user_id=None,
     research_fn = research_fn or research_company
     qualify_fn = qualify_fn or qualification.qualify
     resolve_fn = resolve_fn or _default_resolve
+    emit = progress if callable(progress) else (lambda *a, **k: None)
     cap = min(int(limit or RESEARCH_LIST_MAX), RESEARCH_LIST_MAX)
     leads = _normalize_leads(leads)[:cap]
     if not leads:
@@ -128,8 +216,10 @@ def research_and_qualify(leads, *, icp=None, limit=None, user_id=None,
     with scope(campaign_id=run_id, user_id=user_id or "chat", agent="research_prospects"):
         record_event("research", "prospect_run_start", user_id=user_id,
                      entity_id=run_id, detail=f"{len(leads)} companies")
-        for lead in leads:
+        for i, lead in enumerate(leads, 1):
+            emit(f"Researching {_lead_label(lead)} ({i} of {len(leads)})")
             entries.append(_research_one(lead, icp, research_fn, qualify_fn, resolve_fn))
+        emit("Scoring fit and ranking")
         record_event("research", "prospect_run_done", user_id=user_id,
                      entity_id=run_id,
                      detail=f"{sum(1 for e in entries if e['status'] == 'ok')}/"
@@ -141,6 +231,16 @@ def research_and_qualify(leads, *, icp=None, limit=None, user_id=None,
     return {"status": "ok", "run_id": run_id, "count": len(entries),
             "researched": ranked, "prospects": entries,
             "summary": _run_summary(entries)}
+
+
+def _lead_label(lead) -> str:
+    """A short, human name for a lead, for the streamed "Researching X" step."""
+    if isinstance(lead, dict):
+        name = lead.get("company_name") or lead.get("company") or lead.get("website") or ""
+    else:
+        name = str(lead or "")
+    name = name.replace("https://", "").replace("http://", "").split("/")[0]
+    return (name.strip() or "a company")[:40]
 
 
 def _research_one(lead, icp, research_fn, qualify_fn, resolve_fn) -> dict:

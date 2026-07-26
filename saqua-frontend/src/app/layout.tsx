@@ -5,9 +5,9 @@ import { VisibilityRepaint } from "@/components/shell/visibility-repaint";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Saqua - The AI SDR for founders",
+  title: "Saqua - researched outbound for founders",
   description:
-    "Saqua finds the right founders, writes personalized outreach, and automates follow-ups that actually get replies.",
+    "Saqua finds companies worth contacting, reads what each one has published, and writes the first email around a real detail it found. You approve every send.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

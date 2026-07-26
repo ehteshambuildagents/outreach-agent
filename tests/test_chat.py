@@ -816,5 +816,108 @@ class SendEmailToolTests(unittest.TestCase):
         self.assertNotIn("really sent", r.summary.lower())
 
 
+class StreamingTurnTests(unittest.TestCase):
+    """respond_stream must surface the SAME transcript as respond(), but as live
+    (event, data) tuples: real tool stages, each card, then a terminal done."""
+
+    def test_stream_emits_steps_cards_and_a_terminal_done(self):
+        from chat.tools import ToolResult
+        script = [
+            {"stop_reason": "tool_use", "text": "",
+             "tool_uses": [{"id": "t1", "name": "find_prospects", "input": {}}],
+             "assistant_content": [{"type": "text", "text": ""}]},
+            {"stop_reason": "end_turn", "text": "HackerRank is the strongest.",
+             "tool_uses": [], "assistant_content": [{"type": "text", "text": "x"}]},
+        ]
+
+        def fake_execute(name, inp, conv):
+            # A tool that streams a REAL stage plus its reasoning (as discovery
+            # does through discovery/narration.py) and returns a card.
+            prog = getattr(conv, "_progress", None)
+            if prog:
+                prog("Searching Apollo's company database")
+                prog("Most of these are recruiters, dropping them.", "thought")
+            return ToolResult(summary="ok", message=Message(
+                role="assistant", kind="prospects", content="Found 1.",
+                data={"prospects": []}))
+
+        conv = Conversation()
+        with mock.patch("chat.agent.claude_client.call_with_tools", side_effect=script), \
+             mock.patch("chat.agent.tools.execute", side_effect=fake_execute):
+            events = list(agent.respond_stream(conv, "find companies hiring an SDR"))
+
+        kinds = [e for e, _ in events]
+        self.assertIn("step", kinds)
+        self.assertIn("message", kinds)
+        self.assertEqual(kinds[-1], "done")            # always terminates cleanly
+        labels = [d.get("label") for e, d in events if e == "step"]
+        self.assertIn("Searching Apollo's company database", labels)  # tool stage streamed live
+        # The WHY streams as its own event kind, so the UI can render it as
+        # reasoning rather than as another checklist stage.
+        self.assertIn("thought", kinds)
+        self.assertIn("Most of these are recruiters, dropping them.",
+                      [d.get("label") for e, d in events if e == "thought"])
+        cards = [d["message"] for e, d in events
+                 if e == "message" and d["message"].get("kind") == "prospects"]
+        self.assertEqual(len(cards), 1)
+        # The streamed transcript is exactly the persisted one (no drift).
+        self.assertEqual([m.kind for m in conv.messages if m.role == "assistant"],
+                         ["prospects", "text"])
+
+    def test_stream_and_blocking_produce_the_same_messages(self):
+        fake = {"stop_reason": "end_turn", "text": "Two founders stood out.",
+                "tool_uses": [], "assistant_content": [{"type": "text", "text": "x"}]}
+        with mock.patch("chat.agent.claude_client.call_with_tools", return_value=fake):
+            a = Conversation()
+            agent.respond(a, "hi")
+            b = Conversation()
+            list(agent.respond_stream(b, "hi"))
+        self.assertEqual([(m.role, m.kind, m.content) for m in a.messages],
+                         [(m.role, m.kind, m.content) for m in b.messages])
+
+
+class DiscoveryRefinementTests(unittest.TestCase):
+    """Conversation memory: 'only under 200 employees' refines the LAST search
+    instead of starting a new one; a fresh named ICP does not inherit."""
+
+    _LAST = {"raw": "find b2b founders hiring an ai video creator", "industry": "",
+             "location": "", "employee_range": "", "funding_stage": "",
+             "keywords": [], "exclude_keywords": []}
+
+    def _capture(self, inp, workspace):
+        from discovery.engine import DiscoveryResult
+        captured = {}
+
+        def fake_discover(owner, q, **kw):
+            captured["raw"] = q.raw
+            captured["employee_range"] = q.employee_range
+            captured["location"] = q.location
+            return DiscoveryResult("empty", reason="none", limit=q.limit)
+
+        conv = Conversation()
+        conv.workspace.update(workspace)
+        conv.add_user(inp.get("query", ""))
+        with mock.patch("chat.tools.discovery_engine.discover", side_effect=fake_discover):
+            tools.execute("find_prospects", inp, conv)
+        return captured
+
+    def test_a_filter_only_turn_refines_the_prior_search(self):
+        c = self._capture({"query": "only companies under 200 employees",
+                           "employee_range": "<200"},
+                          {"discovery_last": self._LAST})
+        self.assertIn("ai video creator", c["raw"])     # inherited the role anchor
+        self.assertEqual(c["employee_range"], "<200")   # plus the new filter
+
+    def test_a_fresh_named_search_does_not_inherit(self):
+        c = self._capture({"query": "find fintech companies hiring an SDR"},
+                          {"discovery_last": self._LAST})
+        self.assertNotIn("ai video", c["raw"])
+        self.assertIn("sdr", c["raw"].lower())
+
+    def test_no_prior_search_means_no_refinement(self):
+        c = self._capture({"query": "companies in Europe", "location": "Europe"}, {})
+        self.assertNotIn("ai video", c["raw"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
