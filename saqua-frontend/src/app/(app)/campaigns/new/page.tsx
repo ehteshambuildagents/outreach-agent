@@ -95,7 +95,7 @@ export default function NewCampaignPage() {
       setError(
         unreachable
           ? `Couldn't reach the campaign service (${res.error}). Make sure the backend is running, then retry.`
-          : res.error || "Orchestration failed.",
+          : res.error || "The campaign wasn't created. Please retry.",
       );
       setPhase("error");
       return;
@@ -246,7 +246,10 @@ export default function NewCampaignPage() {
       {phase === "error" && (
         <EmptyState
           icon={AlertTriangle}
-          title="Orchestration failed"
+          // The backend now returns WHAT succeeded, WHAT broke and the next step
+          // (campaign_api.explain_failure), so the heading stays neutral and the
+          // explanation does the work. "Orchestration failed" told nobody anything.
+          title="Campaign wasn't created"
           body={error || "Saqua could not reach the campaign backend."}
           action={
             <Button variant="primary" onClick={runOrchestration}>

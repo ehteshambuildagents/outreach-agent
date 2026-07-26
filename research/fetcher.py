@@ -167,6 +167,87 @@ def fetch_static(url: str, session=None) -> tuple:
             session.close()
 
 
+def fetch_with_fallbacks(url: str, *, render_fetcher=None, prefer_render=False,
+                         pre_fetched=None, allow_paid=False, fetch_fn=None) -> tuple:
+    """Fetch one page through the whole escalation chain.
+
+    Returns ``(ok, content_or_error, method)`` where method is one of
+    ``fast`` | ``rendered`` | ``firecrawl`` | ``jina``.
+
+        requests  ->  headless browser  ->  Firecrawl  ->  Jina Reader
+
+    The first two are free and cover almost everything. The last two are PAID and
+    exist for the case that used to end a whole research run: a site that refuses
+    automated traffic outright (apple.com answers 403 to both requests and a
+    plain headless browser), where the old chain gave up and the user was told
+    only that research failed.
+
+    ``allow_paid`` gates the paid tail so it runs for the pages that decide
+    whether a run happens at all (the homepage), not for every candidate subpage
+    in a crawl loop. Every step is best-effort: a provider that is unconfigured or
+    throws simply hands on to the next one.
+
+    ``fetch_fn`` overrides the fast path. The caller owns that seam so a module
+    that already exposes (and tests substitute) its own ``fetch_static`` keeps
+    exactly one place to intercept.
+    """
+    fast = fetch_fn or fetch_static
+    ok, html = pre_fetched if pre_fetched is not None else fast(url)
+    if ok:
+        if prefer_render and render_fetcher is not None:
+            rendered = render_fetcher.render(url)
+            if rendered is not None and \
+                    len(clean_html_text(rendered)) > len(clean_html_text(html)):
+                return True, rendered, "rendered"
+        elif render_fetcher is not None and \
+                len(clean_html_text(html)) < JS_RENDER_TEXT_THRESHOLD:
+            rendered = render_fetcher.render(url)
+            if rendered is not None and \
+                    len(clean_html_text(rendered)) > len(clean_html_text(html)):
+                return True, rendered, "rendered"
+        return True, html, "fast"
+
+    first_error = html
+    if render_fetcher is not None:
+        rendered = render_fetcher.render(url)
+        if rendered is not None:
+            return True, rendered, "rendered"
+    if not allow_paid:
+        return False, first_error, "fast"
+
+    for method, reader in (("firecrawl", _firecrawl_text), ("jina", _jina_text)):
+        try:
+            text = reader(url)
+        except Exception:  # noqa: BLE001 - a fallback must never raise past here
+            log.info("%s fallback errored for %s", method, url, exc_info=True)
+            continue
+        if text and len(text.strip()) >= _MIN_FALLBACK_CHARS:
+            log.info("fetch recovered via %s: %s", method, url)
+            return True, text, method
+    return False, first_error, "fast"
+
+
+# Below this a "successful" fallback is really an error page or a cookie wall.
+_MIN_FALLBACK_CHARS = 200
+
+
+def _firecrawl_text(url: str) -> str:
+    """Firecrawl renders and de-bots pages the plain chain cannot reach."""
+    from research import firecrawl
+    if not firecrawl.available():
+        return ""
+    page = firecrawl.scrape(url) or {}
+    return str(page.get("text") or page.get("markdown") or "")
+
+
+def _jina_text(url: str) -> str:
+    """Jina Reader returns clean markdown for a URL; last resort before giving up."""
+    from research import jina
+    if not jina.available():
+        return ""
+    return jina.clean_url(url) or ""
+
+
 def _fetch_static_once(session, url: str) -> tuple:
     """One fetch attempt. Returns (ok, html_or_error, retryable: bool)."""
     current = url

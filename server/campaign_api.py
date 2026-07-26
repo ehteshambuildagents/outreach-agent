@@ -34,6 +34,43 @@ _prospects = None
 _workflows = None
 log = logging.getLogger("saqua.campaign_api")
 
+def explain_failure(exc: Exception, *, completed: str = "") -> str:
+    """Turn an unexpected orchestration fault into something the user can act on.
+
+    "Orchestration failed" tells a user nothing: not what worked, not what broke,
+    not what to do. This names the SUBSYSTEM from the exception, states what had
+    already succeeded, and gives the next step. It never leaks a stack trace or a
+    connection string, only the class of fault.
+    """
+    name = type(exc).__name__
+    text = f"{name} {exc}".lower()
+
+    if any(k in text for k in ("timeout", "timed out", "deadline")):
+        cause = ("the workflow service did not respond in time",
+                 "Please retry in a moment; nothing was half-sent.")
+    elif any(k in text for k in ("redis", "upstash")):
+        cause = ("the coordination service (Redis) is temporarily unavailable",
+                 "Scheduling needs it, so please retry shortly.")
+    elif any(k in text for k in ("psycopg", "operationalerror", "database", "sqlite",
+                                 "connection refused", "could not connect")):
+        cause = ("the database could not be reached, so the campaign was not saved",
+                 "Nothing was sent. Please retry in a moment.")
+    elif any(k in text for k in ("mailbox", "no provider", "not connected", "oauth",
+                                 "credentials", "token")):
+        cause = ("no connected mailbox was available to schedule from",
+                 "Connect a mailbox in Settings, then create the campaign again.")
+    elif any(k in text for k in ("rate limit", "429", "quota", "capacity")):
+        cause = ("a provider rate limit was hit",
+                 "Please wait a minute and retry.")
+    else:
+        cause = (f"of an unexpected fault in the campaign service ({name})",
+                 "It has been logged. Please retry; if it persists the campaign "
+                 "service may be degraded.")
+
+    done = (f"{completed} succeeded, but " if completed else "")
+    return f"{done}the campaign could not be created because {cause[0]}. {cause[1]}"
+
+
 _QUALIFIED = {qualification.CONTINUE, qualification.HIGH_PRIORITY}
 _SEND_READY = {strategy.DRAFT, strategy.SEQUENCE}
 _EMAIL_RE = __import__("re").compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -106,6 +143,9 @@ def register(app, rl_read=None, rl_write=None):
             "campaign_create_start trace_id=%s user_hash=%s name=%r limit=%s raw_len=%s",
             trace_id, user_hash, body.name, body.limit, len(body.icp.raw or ""),
         )
+        # What had demonstrably worked when a fault hit, so the error can say so
+        # instead of implying the whole run was wasted.
+        completed = ""
         try:
             campaigns = _campaign_store()
             existing = campaigns.get_by_idempotency_key(user, key)
@@ -114,6 +154,7 @@ def register(app, rl_read=None, rl_write=None):
                 return _campaign_public(existing, idempotent=True)
 
             result, status, events = _run_pipeline(user, body, trace_id=trace_id)
+            completed = "Research and drafting"
             log.info("campaign_stage_start trace_id=%s stage=persist status=%s", trace_id, status)
             campaign = campaigns.create(
                 owner=user, idempotency_key=key, name=body.name,
@@ -144,9 +185,8 @@ def register(app, rl_read=None, rl_write=None):
                           trace_id, user_hash, type(exc).__name__)
             raise HTTPException(
                 status_code=500,
-                detail=(f"Campaign orchestration failed unexpectedly (reference {trace_id}). "
-                        "This was logged server-side. Please retry; if it persists the "
-                        "campaign service or database may be unavailable."),
+                detail=(explain_failure(exc, completed=completed)
+                        + f" (reference {trace_id})"),
             ) from exc
 
     @app.get("/api/campaigns")

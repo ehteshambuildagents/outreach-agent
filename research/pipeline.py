@@ -67,9 +67,14 @@ from research.crawler import (
     ordered_candidates,
 )
 from research.extractor import extract_evidence, extract_names_only
-from research.fetcher import RenderFetcher, fetch_static, validate_url
+from research.fetcher import (
+    RenderFetcher,
+    fetch_static,
+    fetch_with_fallbacks,
+    validate_url,
+)
 from research.hooks import backfill_facts_from_hooks, rank_hooks, research_score
-from research import exa, source_planner, tavily
+from research import exa, firecrawl, jina, source_planner, tavily
 from research.verifier import select_primary_contact, verify
 from services.claude_client import ClaudeClientError
 
@@ -105,10 +110,27 @@ def research_company(url: str, *, find_founder: bool = False) -> dict:
 #  Adaptive crawl loop
 # ──────────────────────────────────────────────────────────────────────
 def _adaptive_research(url, render_fetcher, sitemap_subs, find_founder=False) -> dict:
-    ok, html, method = _fetch_page(url, render_fetcher, prefer_render=False)
+    # The homepage is worth the paid tail of the fetch chain: without it there is
+    # no run at all.
+    ok, html, method = _fetch_page(url, render_fetcher, prefer_render=False,
+                                   allow_paid=True)
+    blocked_note = ""
     if not ok:
-        log.info("homepage fetch failed: %s (%s)", url, html)
-        return {"status": "error", "error": html}
+        # The site refuses automated traffic. That is NOT the end of the research:
+        # what a company says about itself is only one source, and the public web
+        # still has plenty. Fall back to it and SAY SO, rather than reporting a
+        # bare failure the user cannot act on.
+        log.info("homepage unreachable: %s (%s) - falling back to public sources", url, html)
+        public_pages = _public_source_pages(url)
+        if not public_pages:
+            return {"status": "error",
+                    "error": _unreachable_reason(url, html),
+                    "site_unreachable": True}
+        host = (urlparse(url).hostname or url).lstrip("www.")
+        blocked_note = (f"{host} blocked automated crawling, so this is based on "
+                        "public sources and recent coverage rather than their own site.")
+        log.info("public-source fallback for %s: %d pages", url, len(public_pages))
+        return _research_from_public_sources(url, public_pages, blocked_note)
 
     pages = [(url, clean_html_text(html))]
     contact_routes = _extract_contact_routes(html, url)
@@ -336,6 +358,90 @@ def _attach_contact_routes(data: dict, pages_urls: list, routes: dict) -> None:
     )
 
 
+def _public_source_pages(url: str, limit: int = 8) -> list:
+    """What the public web says about this company, as (url, text) pages.
+
+    Used when the company's own site cannot be fetched. Tavily brings recent
+    coverage and funding/launch news, Exa brings semantically related pages; Jina
+    is then used to read the most promising result properly, because a search
+    snippet alone is usually too thin to extract anything from.
+    """
+    parsed = urlparse(url)
+    domain = (parsed.hostname or "").lower().lstrip("www.")
+    company = domain.split(".")[0] if domain else ""
+    if not company:
+        return []
+
+    results = []
+    for query in (f"{company} company what they do product",
+                  f"{company} news funding launch announcement"):
+        try:
+            results.extend(tavily.search(query, max_results=4))
+        except Exception:  # noqa: BLE001 - one provider must never end the fallback
+            log.info("tavily public-source lookup failed for %s", company, exc_info=True)
+    try:
+        results.extend(exa.search(f"{company} company overview product customers",
+                                  max_results=5, include_text=True))
+    except Exception:  # noqa: BLE001
+        log.info("exa public-source lookup failed for %s", company, exc_info=True)
+
+    pages, seen = [], set()
+    for item in results:
+        source = str((item or {}).get("url") or "").strip()
+        valid, _ = validate_url(source)
+        if not valid:
+            continue
+        key = source.rstrip("/").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        text = " ".join(str((item or {}).get(k) or "").strip()
+                        for k in ("title", "content") if (item or {}).get(k))
+        if len(text.strip()) < 80:
+            continue
+        pages.append((source, text[:4000]))
+        if len(pages) >= limit:
+            break
+    return pages
+
+
+def _research_from_public_sources(url: str, pages: list, note: str) -> dict:
+    """Run the normal extraction/scoring over public sources instead of the
+    company's own pages. Same output shape, with the caveat carried through so
+    every consumer can see the evidence is second-hand."""
+    try:
+        raw_accum = _extract_pages_raw(pages)
+        graph, hooks, score, breakdown = _score_from_raw(raw_accum, pages)
+    except (ClaudeClientError, RuntimeError) as exc:
+        return {"status": "error", "error": str(exc), "site_unreachable": True}
+    except Exception:  # noqa: BLE001
+        return {"status": "error", "error": "Unexpected error during analysis.",
+                "site_unreachable": True}
+
+    out = _finalize(url, pages, graph, hooks, score, breakdown, False,
+                    "site unreachable; researched from public sources", [])
+    out["site_unreachable"] = True
+    out["evidence_note"] = note
+    # Never let the generic low-confidence copy hide WHY the evidence is thin.
+    if out.get("status") == "skip":
+        out["reason"] = note + " " + str(out.get("reason") or "")
+    return out
+
+
+def _unreachable_reason(url: str, error: str) -> str:
+    """A failure the user can act on: what was tried, and what it means."""
+    host = (urlparse(url).hostname or url).lstrip("www.")
+    detail = str(error or "").strip().rstrip(".")
+    tried = "direct fetch, a headless browser"
+    if firecrawl.available():
+        tried += ", Firecrawl"
+    if jina.available():
+        tried += ", Jina Reader"
+    return (f"{host} could not be read ({detail}). Tried {tried}, and no public "
+            "sources had enough about them either. If the site is behind a login "
+            "or blocks automation, paste a page's text and I can work from that.")
+
+
 def _provider_person_pages(url: str, company_name: str = None) -> list:
     """Existing-provider fallback for missing people only."""
     parsed = urlparse(url)
@@ -384,23 +490,22 @@ def _provider_person_pages(url: str, company_name: str = None) -> list:
 # ──────────────────────────────────────────────────────────────────────
 #  Helpers
 # ──────────────────────────────────────────────────────────────────────
-def _fetch_page(url, render_fetcher, prefer_render, pre_fetched=None):
+def _fetch_page(url, render_fetcher, prefer_render, pre_fetched=None,
+                allow_paid=False):
     """Fetch one page fast (requests); escalate to a browser only if the page
     is a people page or looks JS-thin. Returns (ok, html_or_error, method).
 
     `pre_fetched` lets a batch pass in an already-fetched (ok, html) pair (the
     fast/requests step ran in parallel across the batch); only the render
-    escalation — rare, and Playwright is not thread-safe — happens here."""
-    ok, html = pre_fetched if pre_fetched is not None else fetch_static(url)
-    if not ok:
-        rendered = render_fetcher.render(url)
-        return (True, rendered, "rendered") if rendered is not None else (False, html, "fast")
-    if prefer_render or len(clean_html_text(html)) < JS_RENDER_TEXT_THRESHOLD:
-        rendered = render_fetcher.render(url)
-        if rendered is not None and \
-                len(clean_html_text(rendered)) > len(clean_html_text(html)):
-            return True, rendered, "rendered"
-    return True, html, "fast"
+    escalation — rare, and Playwright is not thread-safe — happens here.
+
+    `allow_paid` adds the Firecrawl/Jina tail of the chain, used for the homepage
+    where the alternative is abandoning the entire run."""
+    # fetch_static is passed explicitly (not looked up inside the fetcher) so this
+    # module stays the single seam the crawl tests substitute.
+    return fetch_with_fallbacks(
+        url, render_fetcher=render_fetcher, prefer_render=prefer_render,
+        pre_fetched=pre_fetched, allow_paid=allow_paid, fetch_fn=fetch_static)
 
 
 def _fetch_static_batch(urls):

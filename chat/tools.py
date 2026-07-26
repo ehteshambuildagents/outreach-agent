@@ -277,15 +277,27 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
     if status == "error":
         hint = (" I guessed that URL from the name — ask the user for the exact "
                 "company website." if guessed else "")
-        return ToolResult(summary=f"Could not research {url}: {result.get('error')}.{hint}")
+        # The error text already explains WHAT was tried and what the user can do
+        # (see research.pipeline._unreachable_reason). Pass it through rather than
+        # flattening it into "couldn't research", which tells them nothing.
+        return ToolResult(
+            summary=(f"Could not research {url}: {result.get('error')}{hint} "
+                     "Relay this reason to the user in your own words, including "
+                     "what was tried, and offer the next step. Do not just say it "
+                     "failed."))
 
     label = _company_label(result, url)
     updates = {"research": result, "company": label, "company_url": url}
 
+    # The site refused automation and this came from public sources instead. Say
+    # so plainly: the facts are second-hand and the user should know that.
+    note = result.get("evidence_note") or ""
     if status == "skip":
         return ToolResult(
             summary=(f"Researched {label} but found too little to personalize: "
-                     f"{result.get('reason')}. Tell the user honestly; do not invent."),
+                     f"{result.get('reason')}. Tell the user honestly; do not invent. "
+                     "Say what you DID establish and offer to work from a page they "
+                     "paste, or from a different URL."),
             workspace_updates=updates)
 
     # A usable prospect was researched — count it against the free-tier cap.
@@ -308,6 +320,8 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
         summary=(f"Researched {label} (score {result.get('research_score')}/100, "
                  f"{len(result.get('pages_crawled') or [])} pages). Facts now on "
                  "file:\n" + research_digest(result)
+                 + (f"\n\nNOTE: {note} Mention this once, plainly, so the user knows "
+                    "the evidence is second-hand." if note else "")
                  + "\n\nNow draft the email with write_email."),
         message=card, workspace_updates=updates)
 
@@ -350,7 +364,16 @@ def _tool_deep_research(inp: dict, conversation) -> ToolResult:
     try:
         intel = orchestrator.research(company, url=url, focus=focus)
     except Exception:  # noqa: BLE001 - orchestrator is designed not to raise
-        return ToolResult(summary="The research providers couldn't be reached just now.")
+        # Say WHICH sources were even available, so "it didn't work" becomes a
+        # fact the user can act on rather than a shrug.
+        from research.providers_common import provider_status
+        up = [n for n, ok in provider_status().items() if ok]
+        return ToolResult(
+            summary=("Deep research could not be completed just now. Sources "
+                     + ("configured: " + ", ".join(up) if up
+                        else "NONE are configured, which is why it failed")
+                     + ". Tell the user plainly what happened and offer to try the "
+                       "single-site research instead (research_company)."))
 
     status = intel.get("status")
     if status == "error":
