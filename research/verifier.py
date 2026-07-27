@@ -13,6 +13,7 @@ ResearchGraph:
 """
 
 from config.settings import QUOTE_MAX_CHARS
+from research.classifier import is_customer_story
 from research.cleaner import contains_phrase, normalize_for_match, strip_emails
 from research.crawler import normalize_url
 from research.evidence import Evidence, ResearchGraph, TeamMember
@@ -29,6 +30,18 @@ _FOUNDER_HINTS = ("founder", "co-founder", "cofounder")
 # ONLY inside an email address (hakan@company.com) is NOT accepted as real.
 _PERSON_FIELDS = ("founder_name",)
 
+# A customer story is mostly ABOUT THE CUSTOMER, so almost nothing on it
+# describes the company we are researching. These are the exceptions — the facts
+# such a page carries about the VENDOR: who they landed, which of their products
+# that customer runs, and the problem it solved. Everything else (identity,
+# mission, market, people, funding, recency) belongs to the customer and is
+# dropped. An allowlist rather than a blocklist, so a field added later is
+# quarantined by default instead of silently inheriting the bug.
+_CUSTOMER_STORY_SAFE_FIELDS = frozenset({
+    "notable_customers", "tech_stack", "integrations",
+    "product_differentiators", "pain_points",
+})
+
 
 def verify(raw: dict, pages: dict) -> tuple:
     """Return (ResearchGraph, raw_hooks). `pages` is {url: cleaned_text}."""
@@ -38,13 +51,17 @@ def verify(raw: dict, pages: dict) -> tuple:
         normalize_url(u): normalize_for_match(strip_emails(t)) for u, t in pages.items()
     }
     url_lookup = {normalize_url(u): u for u in pages}
+    # Pages that profile somebody else. Grounding proves a fact was ON the page;
+    # it cannot tell whose fact it is, and on these pages it usually isn't ours.
+    story_pages = {normalize_url(u) for u in pages if is_customer_story(u)}
 
     graph = ResearchGraph()
     for field in _EVIDENCE_FIELDS:
         pages_for_field = norm_pages_noemail if field in _PERSON_FIELDS else norm_pages
+        quarantined = story_pages if field not in _CUSTOMER_STORY_SAFE_FIELDS else set()
         grounded = []
         for item in raw.get(field) or []:
-            ev = _ground(item, pages_for_field, url_lookup)
+            ev = _ground(item, pages_for_field, url_lookup, exclude=quarantined)
             if ev is not None:
                 grounded.append(ev)
         merged = _corroborate(grounded)
@@ -53,7 +70,11 @@ def verify(raw: dict, pages: dict) -> tuple:
         graph.nodes[field] = merged
 
     raw_team = raw.get("team_members") or []
-    graph.team = _verify_team(raw_team, norm_pages_noemail, url_lookup)
+    # People named in a customer story work for the CUSTOMER. Their titles rarely
+    # say so ("COO", "Head of Support Ops"), which is why the role-text backstop
+    # below misses them and the page they came from has to be the signal.
+    graph.team = _verify_team(raw_team, norm_pages_noemail, url_lookup,
+                              exclude=story_pages)
     # Names the model proposed but that are NOT this company's staff.
     excluded = {
         str(m.get("name") or "").strip().lower()
@@ -101,7 +122,7 @@ def _reconcile_founder(graph, excluded_names: set):
 
 
 # ──────────────────────────────────────────────────────────────────────
-def _ground(item, norm_pages, url_lookup):
+def _ground(item, norm_pages, url_lookup, exclude=()):
     """Return a grounded Evidence, or None if it can't be verified.
 
     Grounding = the cited page is one we crawled AND the fact is really on it,
@@ -110,6 +131,10 @@ def _ground(item, norm_pages, url_lookup):
     model paraphrases its quote, while still blocking fabrications — an invented
     name/number appears in neither the quote nor the page. If only the value
     grounded (quote not verbatim), confidence is reduced to reflect that.
+
+    ``exclude`` names pages this particular fact may not be sourced from, which
+    is how a customer story is stopped from describing the company we are
+    researching. Grounded-but-not-ours is still a drop.
     """
     if not isinstance(item, dict):
         return None
@@ -118,6 +143,8 @@ def _ground(item, norm_pages, url_lookup):
         return None
     # source must be a page we crawled
     src_key = normalize_url(str(item.get("source_url") or ""))
+    if src_key in exclude:
+        return None
     page_norm = norm_pages.get(src_key)
     if page_norm is None:
         return None
@@ -178,7 +205,7 @@ def _flag_conflicts(merged):
         merged.sort(key=lambda e: -e.confidence)
 
 
-def _verify_team(members, norm_pages, url_lookup):
+def _verify_team(members, norm_pages, url_lookup, exclude=()):
     cleaned, seen = [], set()
     for member in members:
         if not claude_client.is_company_member(member):
@@ -190,7 +217,7 @@ def _verify_team(members, norm_pages, url_lookup):
         ev = _ground(
             {"value": name, "source_url": member.get("source_url"),
              "quote": member.get("quote"), "confidence": member.get("confidence")},
-            norm_pages, url_lookup,
+            norm_pages, url_lookup, exclude=exclude,
         )
         if ev is None:
             continue  # unverifiable person -> drop (never assert an ungrounded name)

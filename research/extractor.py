@@ -135,6 +135,16 @@ ABSOLUTE RULES:
    When unsure whether someone actually works at THIS company, omit them.
 4. founder_name evidence: include only if the page states a founding/CEO role
    for a real named person; the quote must show that.
+4b. A page marked [CUSTOMER STORY] describes a CUSTOMER of this company, not
+   this company. Most of its text — that customer's mission, market, size,
+   history, news and staff — is about THEM. From such a page extract ONLY:
+   notable_customers (the profiled company's name), and any tech_stack /
+   integrations / product_differentiators / pain_points that describe THIS
+   company's product as used by them. Never take company_name, what_they_do,
+   target_customer, their_mission_or_why, recent_focus, metrics_or_traction or
+   team_members from it. Example: on stripe.com/customers/mindbody, "transform
+   wellness experiences" is Mindbody's mission, not Stripe's, and a "Lead
+   Product Manager" quoted there works at Mindbody.
 5. hooks: 4-6 ranked personalization angles, each with a "category" (one of
    founder, mission, launch, pricing, hiring, customers, technology, product),
    "text" (a specific angle), plus source_url + quote + confidence.
@@ -156,6 +166,9 @@ Return JSON {"team_members": [...]} where each item is the company's own staff
 EXCLUDE anyone whose title names a DIFFERENT company (e.g. "CEO, Growably"),
 anyone quoted in a testimonial/review (they are customers), investors, backers,
 advisors, board members, partners, and any fictional/mascot/AI-character names.
+EXCLUDE everyone named on a page marked [CUSTOMER STORY] — that page profiles a
+CUSTOMER, so the people on it work for the customer, whatever their title says
+(a bare "COO" or "Head of Support Ops" there is still not our staff).
 An email address is not proof of a founder. Only names literally written in the
 text whose role makes clear they work at THIS company. If genuinely none, return
 an empty list.

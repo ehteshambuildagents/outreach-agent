@@ -407,6 +407,49 @@ class VerifierTests(unittest.TestCase):
         ), page)
         self.assertEqual([m.name for m in graph.team], ["Sam Lee"])
 
+    # ── Customer stories describe the CUSTOMER, not the site owner ──────
+    # Both cases below are real production output from before the fix: Notion's
+    # "team" was five OpenAI executives, and Stripe's mission was Mindbody's.
+    def test_customer_story_people_are_not_our_team(self):
+        story = "https://notion.so/customers/openai"
+        pages = {story: "Brad Lightcap, COO, uses Notion across the company."}
+        graph, _ = verifier.verify(raw(team_members=[
+            tm("Brad Lightcap", "COO", "Brad Lightcap, COO", source=story),
+        ]), pages)
+        # Grounded on the page, plausible title, and still not Notion's staff.
+        self.assertEqual(graph.team, [])
+        self.assertIsNone(graph.value("founder_name"))
+
+    def test_customer_story_identity_does_not_become_ours(self):
+        story = "https://stripe.com/customers/mindbody"
+        pages = {story: ("Mindbody's mission is to transform wellness "
+                         "experiences. They serve gyms and spas. "
+                         "Mindbody Payments is built on Stripe Connect.")}
+        graph, _ = verifier.verify(raw(
+            company_name=[ev("Mindbody", "Mindbody's mission", source=story)],
+            their_mission_or_why=[ev("Transform wellness experiences",
+                                     "transform wellness experiences", source=story)],
+            target_customer=[ev("Gyms and spas", "serve gyms and spas", source=story)],
+            notable_customers=[ev("Mindbody", "Mindbody's mission", source=story)],
+            tech_stack=[ev("Stripe Connect", "built on Stripe Connect", source=story)],
+        ), pages)
+        self.assertIsNone(graph.value("company_name"))
+        self.assertIsNone(graph.value("their_mission_or_why"))
+        self.assertIsNone(graph.value("target_customer"))
+        # ...but what the page legitimately proves about the VENDOR survives.
+        self.assertEqual(graph.values("notable_customers"), ["Mindbody"])
+        self.assertEqual(graph.values("tech_stack"), ["Stripe Connect"])
+
+    def test_customer_index_page_is_not_quarantined(self):
+        # /customers (the logo wall) is still the company talking about itself.
+        index = "https://linear.app/customers"
+        pages = {index: "Linear is used by fast-moving software teams."}
+        graph, _ = verifier.verify(raw(
+            target_customer=[ev("Software teams", "fast-moving software teams",
+                                source=index)],
+        ), pages)
+        self.assertEqual(graph.value("target_customer"), "Software teams")
+
     def test_team_name_only_in_email_is_dropped(self):
         # "Hakan" appears ONLY inside an email address -> not a real mention.
         page = {URL: "Questions? Email hakan@kodwai.com. Acme builds robots."}
@@ -1411,6 +1454,33 @@ class PersonDiscoveryOutputTests(unittest.TestCase):
         self.assertEqual(data["goals"],
                          {"company_understood": True, "recent_signal": True,
                           "person_found": False})
+
+
+class ContactRouteTests(unittest.TestCase):
+    """Who we would actually email. Every address here was harvested from a real
+    stripe.com crawl, where the send target came out as a docs placeholder."""
+
+    HTML = ('<p>Send invoices to jane.diaz@stripe.com or '
+            'taro.yamada@example.com.</p>'
+            '<a href="mailto:sales@stripe.com">Sales</a>'
+            '<img src="logo@2x.png"> billing@example.com '
+            'o123@o45.ingest.sentry.io test@foo.invalid')
+
+    def routes(self):
+        return pipeline._extract_contact_routes(self.HTML, "https://stripe.com/docs")
+
+    def test_undeliverable_addresses_are_refused(self):
+        emails = self.routes()["emails"]
+        for fake in ("example.com", "sentry.io", ".invalid"):
+            self.assertFalse([e for e in emails if fake in e],
+                             f"{fake} address must never become a recipient")
+
+    def test_published_mailto_outranks_prose(self):
+        # A mailto: is the only address a site publishes AS contactable.
+        self.assertEqual(self.routes()["emails"][0], "sales@stripe.com")
+
+    def test_prose_address_kept_as_fallback(self):
+        self.assertIn("jane.diaz@stripe.com", self.routes()["emails"])
 
 
 if __name__ == "__main__":

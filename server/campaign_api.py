@@ -926,7 +926,19 @@ def _cadence_steps(item: dict) -> list:
 
 
 def _valid_email(value: str) -> bool:
-    return bool(value and _EMAIL_RE.match(value))
+    """Well-formed AND capable of receiving mail.
+
+    The domain check is deliberately applied to DISCOVERED addresses too, not
+    just hand-typed ones: research/pipeline.py filters these at the source, but
+    Apollo enrichment writes public_contact_email directly, so the send boundary
+    must not assume every upstream did the same. Placeholder LOCAL parts stay a
+    manual-entry concern only — a typed "founder@acme.com" is a guess, whereas a
+    discovered one was actually published on the site and is often genuine.
+    """
+    if not (value and _EMAIL_RE.match(value)):
+        return False
+    domain = value.strip().lower().rpartition("@")[2]
+    return not (domain in _PLACEHOLDER_DOMAINS or domain.endswith(".example"))
 
 
 def _campaign_summary(row: dict) -> dict:

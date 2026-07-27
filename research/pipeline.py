@@ -58,7 +58,7 @@ from config.settings import (
     SITE_MEDIUM_MAX_CANDIDATES,
     SITE_SMALL_MAX_CANDIDATES,
 )
-from research.classifier import classify_page
+from research.classifier import classify_page, is_customer_story
 from research.cleaner import clean_html_text
 from research.crawler import (
     discover_from_sitemap,
@@ -367,15 +367,53 @@ def _finalize(url, pages, graph, hooks, score, breakdown, used_render, stop_reas
 
 _EMAIL_RE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 _HREF_RE = re.compile(r"""(?is)<a\b[^>]*\bhref=["']([^"']+)["']""")
+_MAILTO_RE = re.compile(r"""(?is)<a\b[^>]*\bhref=["']\s*mailto:([^"'?]+)""")
 _BAD_EMAIL_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg")
+# Domains that can never reach a person: those reserved by RFC 2606/6761 for
+# documentation, the placeholders docs use in their place, and telemetry hosts
+# whose "addresses" are really API keys. Treating one as a contact guarantees a
+# bounce, and bounces are what the deliverability guard exists to prevent —
+# stripe.com's docs alone yielded taro.yamada@example.com and billing@example.com.
+_UNREACHABLE_EMAIL_DOMAINS = ("example.com", "example.org", "example.net",
+                              "example.edu", "domain.com", "email.com",
+                              "yourcompany.com", "company.com",
+                              "sentry.io", "ingest.sentry.io")
+_UNREACHABLE_EMAIL_TLDS = (".example", ".invalid", ".test", ".localhost")
+
+
+def _usable_email(email: str) -> bool:
+    """Whether an address could plausibly reach a real person.
+
+    Deliberately conservative: this decides who gets a cold email, and a fake
+    recipient costs sender reputation, so anything provably undeliverable or
+    obviously a documentation sample is refused. Matching covers subdomains, so
+    an ingest host like o45.ingest.sentry.io is caught by its parent.
+    """
+    if not email or email.endswith(_BAD_EMAIL_EXTENSIONS):
+        return False
+    domain = email.rpartition("@")[2]
+    if not domain or domain.endswith(_UNREACHABLE_EMAIL_TLDS):
+        return False
+    return not any(domain == d or domain.endswith("." + d)
+                   for d in _UNREACHABLE_EMAIL_DOMAINS)
 
 
 def _extract_contact_routes(html: str, page_url: str) -> dict:
-    """Deterministic public contact routes from fetched page HTML."""
+    """Deterministic public contact routes from fetched page HTML.
+
+    ``mailto:`` links come FIRST because they are the only addresses a site
+    actually publishes as contactable. Addresses merely printed in the body are
+    kept as a fallback but ranked below, since on a docs-heavy site most of them
+    are sample data (stripe.com printed jane.diaz@stripe.com in an invoice
+    example, which then became the send target).
+    """
     routes = {"emails": [], "linkedin_urls": []}
-    for email in _EMAIL_RE.findall(html or ""):
-        email = email.strip().strip(".,;:()[]{}<>").lower()
-        if email.endswith(_BAD_EMAIL_EXTENSIONS):
+    linked = [m.strip().strip(".,;:()[]{}<>").lower()
+              for m in _MAILTO_RE.findall(html or "")]
+    printed = [m.strip().strip(".,;:()[]{}<>").lower()
+               for m in _EMAIL_RE.findall(html or "")]
+    for email in linked + [p for p in printed if p not in linked]:
+        if not _usable_email(email):
             continue
         if email not in routes["emails"]:
             routes["emails"].append(email)
@@ -711,7 +749,18 @@ def _stop_decision(graph, person_sources_left: bool):
 
 
 def _combine(pages) -> str:
-    parts = [f"===== PAGE: {u} =====\n{t}" for u, t in pages if t and t.strip()]
+    """Join page texts for the extractor, flagging the ones that are about
+    somebody else. The verifier drops mis-attributed facts either way; telling
+    the model up front means it spends the call describing the right company
+    instead."""
+    parts = []
+    for url, text in pages:
+        if not (text and text.strip()):
+            continue
+        marker = f"===== PAGE: {url}"
+        if is_customer_story(url):
+            marker += " [CUSTOMER STORY: about a CUSTOMER, not the site owner]"
+        parts.append(f"{marker} =====\n{text}")
     return "\n\n".join(parts)[:MAX_TEXT_CHARS]
 
 
