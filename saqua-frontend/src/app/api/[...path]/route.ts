@@ -3,7 +3,9 @@ import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+// Not exported: a route module may only export Next's own reserved names.
+const MAX_DURATION_SECONDS = 300;
+export const maxDuration = MAX_DURATION_SECONDS;
 
 const RAW_API_ORIGIN = process.env.SAQUA_API_ORIGIN?.trim();
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
@@ -34,7 +36,12 @@ if (IS_PRODUCTION && !API_ORIGIN) {
   );
 }
 
-const PROXY_TIMEOUT_MS = 10 * 60 * 1000;
+// Must fire BEFORE the platform kills the function, or the abort below is dead
+// code: at 10 minutes against a 5-minute maxDuration the host always won, and a
+// slow campaign returned an opaque platform timeout instead of the explained
+// 502 with a trace id that this handler is built to return. Derived from
+// MAX_DURATION_SECONDS so the two cannot drift apart again.
+const PROXY_TIMEOUT_MS = (MAX_DURATION_SECONDS - 10) * 1000;
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "content-encoding",

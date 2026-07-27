@@ -2,25 +2,21 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "saqua",
-      "autoPort": false,
-      "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "set AUTOMATION_FORCE_SQLITE=1&& .venv\\Scripts\\python.exe -m uvicorn server.api:app --host 127.0.0.1 --port 8613"],
-      "port": 8613
+      "name": "saqua-backend",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "server.api:app", "--port", "8613"],
+      "port": 8613,
+      "env": {
+        "AUTOMATION_FORCE_SQLITE": "1",
+        "AUTOMATION_PROVIDER": "dryrun"
+      }
     },
     {
-      "name": "frontend",
-      "autoPort": false,
-      "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "cd saqua-frontend && npx next dev -p 3200"],
-      "port": 3200
-    },
-    {
-      "name": "frontend-alt",
-      "autoPort": false,
-      "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "cd saqua-frontend && npx next dev -p 3201"],
-      "port": 3201
+      "name": "saqua-frontend",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "dev", "-p", "3200"],
+      "port": 3200,
+      "cwd": "saqua-frontend"
     }
   ]
 }
