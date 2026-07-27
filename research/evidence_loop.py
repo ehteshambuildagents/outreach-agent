@@ -74,6 +74,7 @@ _COST_USD = {"firecrawl": 0.002, "tavily": 0.004, "x": 0.005}
 _EXECUTABLE = frozenset({"firecrawl", "tavily", "x"})
 
 
+
 @dataclass
 class ActionRecord:
     """One decision, whether or not it ran. This is the audit trail."""
@@ -109,6 +110,7 @@ class _Budget:
     tried: set = field(default_factory=set)     # (company, slot, provider, target)
     calls: set = field(default_factory=set)     # (provider, resolved request)
     barren: set = field(default_factory=set)    # slots that already yielded nothing
+    refusing: set = field(default_factory=set)  # providers shut off at the account
 
     def may_use(self, provider: str) -> bool:
         return self.per_provider.get(provider, 0) < EVIDENCE_MAX_PER_PROVIDER
@@ -183,6 +185,14 @@ def run(graph, *, url: str, company: str = "", signals: dict = None,
                 rec.status = "failed" if refusal else "no_evidence"
                 rec.reason = (f"{action.kind} {refusal}" if refusal
                               else rec.reason or "the response held no usable evidence")
+                if refusal:
+                    # Say WHICH sources carry on, so the user never reads an
+                    # account problem as "there is no recent news about them".
+                    say(_fallback_note(action.kind, avail))
+                    # ...and do not ask this provider anything else this run. It
+                    # is refusing at the account level, so every further call is
+                    # a wasted attempt and a duplicate line in the stream.
+                    budget.refusing.add(action.kind)
         except Exception:  # noqa: BLE001 - one provider must never end the run
             log.info("evidence action %s/%s errored", action.kind, action.slot,
                      exc_info=True)
@@ -209,6 +219,8 @@ def _choose(ledger, avail, budget, company, records, url, known_urls=()):
             continue                                   # the crawl loop owns those
         if action.kind not in _EXECUTABLE:
             continue                                   # nothing here can run it
+        if action.kind in budget.refusing:
+            continue                       # already refused once; do not re-ask
         if not avail.get(action.kind):
             continue                                   # unconfigured -> never claimed
         if action.slot in budget.barren:
@@ -336,6 +348,8 @@ def _run_tavily(action, graph, *, query, rec) -> bool:
     results = tavily.search(query, max_results=4) or []
     best = next((r for r in results if (r or {}).get("title")), None)
     if not best:
+        # The caller classifies refusal-vs-nothing via _provider_refusal; this
+        # only supplies the fallback wording for a genuine absence of coverage.
         rec.reason = "no recent coverage found"
         return False
     dated = str(best.get("published_date") or "")[:10]
@@ -409,6 +423,19 @@ def _snapshot(graph) -> set:
 
 
 # ── plumbing ───────────────────────────────────────────────────────────────
+def _fallback_note(down: str, avail: dict) -> str:
+    """Name the provider that is unavailable and the ones still working, so the
+    stream never implies the absence of a fact when the real problem is ours."""
+    others = [n.capitalize() for n in ("firecrawl", "exa", "tavily", "x")
+              if n != down and avail.get(n)]
+    carry_on = (" and ".join([", ".join(others[:-1]), others[-1]])
+                if len(others) > 1 else (others[0] if others else ""))
+    if not carry_on:
+        return (f"{down.capitalize()} is unavailable, and no other source can "
+                "fill that gap, so I'm working from the site alone.")
+    return f"{down.capitalize()} is unavailable, so I'm continuing with {carry_on}."
+
+
 def _provider_refusal(kind: str) -> str:
     """Whether this provider REFUSED the last request (quota/auth), rather than
     answering with nothing. Returns a short reason, or "" if it answered fine."""

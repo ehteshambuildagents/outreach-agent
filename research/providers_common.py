@@ -46,8 +46,37 @@ def get_key(env_name: str) -> str:
 _LAST_ERROR = {}
 
 
+# A provider that has refused on QUOTA or AUTH will refuse the next call too, so
+# there is nothing to gain by asking again — only latency, and on a metered plan,
+# wasted credits. The latch short-circuits further calls for a while rather than
+# forever, so a plan top-up or key swap recovers on its own without a restart.
+_REFUSAL_LATCH_SECONDS = 600
+_REFUSED_UNTIL = {}
+# Refusals worth latching on: the provider is telling us the ACCOUNT is the
+# problem. A one-off bad request is not.
+_LATCHING_REFUSALS = ("plan or usage limit", "auth")
+
+
 def note_error(provider: str, reason: str) -> None:
     _LAST_ERROR[provider] = reason
+    if any(marker in reason for marker in _LATCHING_REFUSALS):
+        _REFUSED_UNTIL[provider] = time.time() + _REFUSAL_LATCH_SECONDS
+        log.info("%s: latched off for %ds (%s)", provider,
+                 _REFUSAL_LATCH_SECONDS, reason)
+
+
+def refused(provider: str) -> str:
+    """The standing refusal for this provider, or "" if it is worth calling.
+
+    Lets a caller distinguish "this provider is shut off at the account" from
+    "this provider looked and found nothing" WITHOUT making another doomed call.
+    """
+    until = _REFUSED_UNTIL.get(provider, 0)
+    if until and time.time() < until:
+        return _LAST_ERROR.get(provider, "refused")
+    if until:
+        _REFUSED_UNTIL.pop(provider, None)          # latch expired; try again
+    return ""
 
 
 def last_error(provider: str) -> str:
@@ -58,6 +87,7 @@ def last_error(provider: str) -> str:
 
 def clear_error(provider: str) -> None:
     _LAST_ERROR.pop(provider, None)
+    _REFUSED_UNTIL.pop(provider, None)      # a good response ends the latch
 
 
 # The environment variable each provider reads. Kept here so "is this configured"
@@ -141,6 +171,14 @@ def request_json(method: str, url: str, *, provider: str,
             log.info("%s: usage cap reached for user — skipping paid call (%s)",
                      provider, decision.reason)
             return None
+
+    # Standing account-level refusal: asking again cannot succeed and costs both
+    # latency and, on a metered plan, credits. Tavily answered HTTP 432 to every
+    # query for days while each caller kept trying.
+    standing = refused(provider)
+    if standing:
+        log.info("%s: skipping call, provider is refusing (%s)", provider, standing)
+        return None
 
     last_reason = "request failed"
     for attempt in range(PROVIDER_MAX_RETRIES + 1):

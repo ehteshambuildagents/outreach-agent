@@ -464,17 +464,30 @@ def search_candidates(query, pool_size: int = None, *, search_text: str = None,
     web_state = {}
 
     def _run(name, provider):
+        from research.providers_common import last_error, refused
         if not provider.available():
+            web_state[name] = "unavailable"
+            return []
+        if refused(name):
+            # Already shut off at the account; do not spend another call on it.
             web_state[name] = "unavailable"
             return []
         try:
             results = [(name, r) for r in provider.search(q, max_results=pool)]
-            web_state[name] = "ok"
-            return results
         except Exception:  # noqa: BLE001
             log.info("%s discovery search failed", name)
             web_state[name] = "failed"
             return []
+        # An empty list means one of two very different things. A provider that
+        # REFUSED (quota, bad key) must not be reported as "looked and found
+        # nothing" — that is how Tavily being over its plan limit was invisible
+        # for days while the stream said there was no recent coverage.
+        if not results and last_error(name):
+            log.info("%s refused: %s", name, last_error(name))
+            web_state[name] = "unavailable"
+            return []
+        web_state[name] = "ok"
+        return results
 
     raws = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool_ex:
