@@ -3,8 +3,8 @@
 The research loop used to think in PROVIDERS ("try requests, then a browser, then
 Firecrawl") and in PAGES ("crawl up to N"). Both are the wrong objective. A human
 researcher thinks in EVIDENCE: I still don't know what they charge, so I'll look
-for a pricing page; I still don't have a name, so I'll check the about page or
-Apollo. The provider is a means, chosen per gap.
+for a pricing page; I still don't have a name, so I'll check the about page.
+The provider is a means, chosen per gap.
 
 This module is that reasoning, kept pure so it is fully testable:
 
@@ -64,10 +64,17 @@ SLOTS = (
          lambda l: _has(l.graph, "product_category", "competitive_positioning",
                         "product_differentiators"),
          ("product", "features", "solutions"), ()),
+    # NOTE: Apollo is deliberately NOT a provider for this slot. Apollo People
+    # Match ENRICHES a known contact (it needs a name or LinkedIn URL and rejects
+    # a domain-only request outright, verified against the live API), so it cannot
+    # DISCOVER a decision maker — and by the time we have a name this slot is
+    # already satisfied. Enriching a known contact's email/title is real work, but
+    # it belongs to research/source_planner.py, which already does it. Listing
+    # Apollo here only produced an action that could never succeed.
     Slot("founder", 0.14, "a named decision maker",
          lambda l: bool(l.graph.value("founder_name") or l.graph.team),
          ("about", "team", "leadership", "founders", "people"),
-         ("apollo", "tavily")),
+         ("tavily",)),
     Slot("pricing", 0.08, "how they charge",
          lambda l: _has(l.graph, "pricing_model", "business_model"),
          ("pricing", "plans"), ()),
@@ -84,9 +91,13 @@ SLOTS = (
     Slot("funding", 0.06, "funding or stage",
          lambda l: _has(l.graph, "company_stage") or bool(l.signals.get("funding")),
          ("investors", "press", "news"), ("tavily",)),
+    # Apollo is not listed here either: hiring intent comes from Apollo's
+    # ORGANIZATION search + dated job postings, which the DISCOVERY engine
+    # already runs and passes in via ``signals``. This loop's job is the
+    # company's own careers page.
     Slot("hiring", 0.06, "hiring intent",
          lambda l: bool(l.signals.get("hiring")),
-         ("careers", "jobs"), ("apollo",)),
+         ("careers", "jobs"), ()),
 )
 
 _BY_NAME = {s.name: s for s in SLOTS}
@@ -158,7 +169,7 @@ def _conflicting_nodes(graph) -> List[str]:
 @dataclass(frozen=True)
 class Action:
     """One thing worth doing next, and the gap that justifies it."""
-    kind: str                 # crawl | firecrawl | apollo | tavily | exa | x
+    kind: str                 # crawl | firecrawl | tavily | exa | x
     target: Optional[str]     # url or query hint
     slot: str                 # the evidence this is meant to fill
     why: str                  # human phrasing, for the stream

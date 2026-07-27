@@ -104,9 +104,12 @@ class ProviderSelectionTests(unittest.TestCase):
         actions = gaps.plan(gaps.assess(need_founder, {"hiring": True}),
                             providers=ALL)
         # One gap can justify two complementary moves (hunt the about page AND
-        # ask Apollo); what matters is that they all serve the SAME gap.
+        # ask a search provider); what matters is that they serve the SAME gap.
         self.assertEqual({a.slot for a in actions}, {"founder"})
-        self.assertIn("apollo", _kinds(actions))
+        # Apollo People Match cannot DISCOVER an unknown person (it rejects a
+        # domain-only request), so it must never be offered for this gap.
+        self.assertNotIn("apollo", _kinds(actions))
+        self.assertIn("firecrawl", _kinds(actions))
 
         need_recent = _graph(what_they_do="A", target_customer="B",
                              product_category="C", founder_name="D",

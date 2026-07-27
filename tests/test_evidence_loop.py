@@ -197,38 +197,22 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(out["estimated_cost_usd"], 0.0)
         self.assertEqual(called, [])
 
-    def test_apollo_people_enrichment_needs_its_own_flag(self):
+    def test_apollo_is_never_called_by_this_loop(self):
+        """People Match ENRICHES a known contact and rejects a domain-only
+        request (verified live), so it cannot discover an unknown founder. Its
+        real jobs live in the discovery engine and source_planner instead."""
         called = []
-        with _on(_avail(apollo=True),
-                 mock.patch.object(evidence_loop, "APOLLO_ENRICH_ENABLED", False),
+        with _on(_avail(apollo=True, firecrawl=True),
+                 mock.patch("research.firecrawl.scrape", return_value=None),
                  mock.patch("research.apollo.enrich_person",
                             side_effect=lambda **k: called.append(k))):
             out = evidence_loop.run(graph_with("what_they_do"),
-                                    url="https://acme.com", company="Acme")
-        self.assertEqual(called, [])                       # never called
-        self.assertEqual(out["succeeded"], 0)
-        self.assertEqual(out["estimated_cost_usd"], 0.0)   # no budget consumed
-        skips = [r for r in out["records"] if r["status"] == "skipped"]
-        self.assertTrue(skips)
-        self.assertIn("APOLLO_ENRICH_ENABLED", skips[0]["reason"])
+                                    url="https://acme.com", company="Acme",
+                                    extract_fn=lambda pages: None,
+                                    known_urls=["https://acme.com/about"])
+        self.assertEqual(called, [])
+        self.assertFalse(any(r["provider"] == "apollo" for r in out["records"]))
 
-    def test_apollo_runs_and_merges_when_both_flags_are_on(self):
-        graph = graph_with("what_they_do", "product_category", "target_customer",
-                           "pricing_model", "recent_focus")
-        with _on(_avail(apollo=True),
-                 mock.patch.object(evidence_loop, "APOLLO_ENRICH_ENABLED", True),
-                 mock.patch("research.apollo.enrich_person",
-                            return_value={"status": "ok", "person": {
-                                "name": "Jane Doe", "title": "CEO",
-                                "linkedin_url": "https://li/jane", "confidence": 0.8}})):
-            out = evidence_loop.run(graph, url="https://acme.com", company="Acme")
-        done = _executed(out)
-        self.assertTrue(done)
-        self.assertEqual(done[0]["provider"], "apollo")
-        self.assertEqual(done[0]["slot"], "founder")
-        self.assertEqual(graph.best("founder_name").value, "Jane Doe")
-        self.assertEqual(graph.best("founder_name").source_url, "https://li/jane")
-        self.assertGreater(done[0]["gain"], 0)
 
     def test_an_unconfigured_provider_is_never_called_or_claimed(self):
         called = []
@@ -289,8 +273,8 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(called, [])          # nothing spent when already confident
 
     def test_every_decision_is_recorded_for_audit(self):
-        with _on(_avail(apollo=True),
-                 mock.patch.object(evidence_loop, "APOLLO_ENRICH_ENABLED", False)):
+        with _on(_avail(firecrawl=True),
+                 mock.patch.object(evidence_loop, "_page_exists", return_value=False)):
             out = evidence_loop.run(graph_with("what_they_do"), url="https://acme.com")
         for rec in out["records"]:
             self.assertIn(rec["status"],
@@ -315,13 +299,13 @@ class NarrationTests(unittest.TestCase):
         self.assertTrue(lines)
         self.assertIn("recent", " ".join(lines).lower())
 
-    def test_a_disabled_provider_is_never_narrated_as_used(self):
+    def test_a_provider_that_never_ran_is_never_narrated_as_used(self):
         lines = []
-        with _on(_avail(apollo=True),
-                 mock.patch.object(evidence_loop, "APOLLO_ENRICH_ENABLED", False)):
+        with _on(_avail(firecrawl=True),
+                 mock.patch.object(evidence_loop, "_page_exists", return_value=False)):
             evidence_loop.run(graph_with("what_they_do"), url="https://acme.com",
                               narrate=lines.append)
-        self.assertNotIn("apollo", " ".join(lines).lower())
+        self.assertEqual(lines, [])          # nothing ran, so nothing is claimed
 
     def test_the_flag_being_off_narrates_nothing_at_all(self):
         lines = []
@@ -404,8 +388,8 @@ class MetricSemanticsTests(unittest.TestCase):
         self.assertEqual(out["no_evidence"], 0)
 
     def test_a_skipped_action_costs_nothing_and_is_not_attempted(self):
-        with _on(_avail(apollo=True),
-                 mock.patch.object(evidence_loop, "APOLLO_ENRICH_ENABLED", False)):
+        with _on(_avail(firecrawl=True),
+                 mock.patch.object(evidence_loop, "_page_exists", return_value=False)):
             out = evidence_loop.run(graph_with("what_they_do"), url="https://acme.com")
         self.assertEqual(out["attempted"], 0)
         self.assertGreater(out["skipped"], 0)

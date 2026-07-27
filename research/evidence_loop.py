@@ -2,8 +2,15 @@
 
 [research/gaps.py] decides WHICH fact is missing and which tool supplies it. That
 was only half a planner: the non-crawl actions it produced were computed and
-discarded, so Apollo, Tavily, Firecrawl and X were never actually reached by a
-gap. This is the loop that runs them.
+discarded, so Firecrawl, Tavily and X were never actually reached by a gap. This
+is the loop that runs them.
+
+Apollo is deliberately NOT an executor here. Its two real jobs already live
+elsewhere and neither fits this loop: ORGANIZATION search + dated job postings
+belong to the discovery engine (and arrive as ``signals``), and People Match
+ENRICHES a contact we can already name, which research/source_planner.py does.
+People Match rejects a domain-only request outright, so routing a founder GAP to
+it produced an action that could never succeed.
 
     run(graph, url=..., extract_fn=...) -> {"records": [...], "stop_reason": ...}
 
@@ -15,7 +22,6 @@ SAFETY IS THE DESIGN CONSTRAINT HERE, not an afterthought. A loop that picks its
 own next paid call is exactly the shape that quietly runs up a bill, so:
 
   * the whole loop is behind PLANNER_ESCALATION_ENABLED (default OFF);
-  * Apollo people enrichment additionally needs APOLLO_ENRICH_ENABLED;
   * at most EVIDENCE_MAX_ACTIONS per run, EVIDENCE_MAX_PER_PROVIDER per provider;
   * the same (company, slot, provider, target) is never tried twice, and neither
     is the same RESOLVED request;
@@ -36,7 +42,6 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from config.settings import (
-    APOLLO_ENRICH_ENABLED,
     EVIDENCE_MAX_ACTIONS,
     EVIDENCE_MAX_PER_PROVIDER,
     EVIDENCE_MIN_GAIN,
@@ -60,13 +65,13 @@ _SLOT_NODE = {
     "positioning": "product_category",
     "what_they_do": "what_they_do",
 }
-_COST_USD = {"firecrawl": 0.002, "tavily": 0.004, "x": 0.005, "apollo": 0.010}
+_COST_USD = {"firecrawl": 0.002, "tavily": 0.004, "x": 0.005}
 
 # Providers this loop can actually RUN. gaps.plan legitimately suggests others
 # (Exa is a semantic-discovery tool, useful for finding companies, not for
 # extracting a fact about one), and planning something unrunnable used to burn a
 # budget slot and record a failure. Anything not here is skipped without cost.
-_EXECUTABLE = frozenset({"firecrawl", "tavily", "x", "apollo"})
+_EXECUTABLE = frozenset({"firecrawl", "tavily", "x"})
 
 
 @dataclass
@@ -206,12 +211,6 @@ def _choose(ledger, avail, budget, company, records, url, known_urls=()):
             continue                                   # nothing here can run it
         if not avail.get(action.kind):
             continue                                   # unconfigured -> never claimed
-        if action.kind == "apollo" and not APOLLO_ENRICH_ENABLED:
-            if "apollo" not in seen_note:
-                seen_note.add("apollo")
-                _note(records, action, "Apollo people enrichment is off "
-                                       "(APOLLO_ENRICH_ENABLED)", ledger.confidence)
-            continue
         if action.slot in budget.barren:
             continue        # already asked about this fact and got nothing back
         if gaps.gain_if_filled(action.slot) < _reachable_gain(ledger, budget):
@@ -280,8 +279,6 @@ def _resolve_target(action, url, company, known_urls=()):
         return f"{company} {topic}"
     if action.kind == "x":
         return f"{company} launch OR announcement OR hiring"
-    if action.kind == "apollo":
-        return (urlparse(url).hostname or "").replace("www.", "")
     return str(action.target or "")
 
 
@@ -307,8 +304,6 @@ def _execute(action, graph, *, url, company, signals, extract_fn, rec,
         return _run_tavily(action, graph, query=resolved, rec=rec)
     if action.kind == "x":
         return _run_x(action, graph, query=resolved, rec=rec)
-    if action.kind == "apollo":
-        return _run_apollo(action, graph, domain=resolved, company=company, rec=rec)
     rec.reason = f"no executor for {action.kind}"
     return False
 
@@ -369,30 +364,6 @@ def _run_x(action, graph, *, query, rec) -> bool:
     _merge(graph, "recent_focus", value, source_url=post.get("url") or "",
            provider="x", quote=value, confidence=0.5)
     rec.value, rec.source_url = value, post.get("url") or ""
-    return True
-
-
-def _run_apollo(action, graph, *, domain, company, rec) -> bool:
-    """Apollo PEOPLE Match for a missing decision maker. Reached only when
-    APOLLO_ENRICH_ENABLED is on as well (checked in _choose)."""
-    from research import apollo
-    result = apollo.enrich_person(name=graph.value("founder_name") or None,
-                                  domain=domain, organization_name=company,
-                                  linkedin_url=None) or {}
-    person = result.get("person") if result.get("status") == "ok" else None
-    if not person or not person.get("name"):
-        rec.reason = f"no match ({result.get('status', 'no_match')})"
-        return False
-    _merge(graph, "founder_name", person["name"],
-           source_url=person.get("linkedin_url") or f"https://{domain}",
-           provider="apollo", quote=f"{person.get('title') or 'contact'} at {company}",
-           confidence=float(person.get("confidence") or 0.7))
-    if person.get("title"):
-        _merge(graph, "founder_role", person["title"],
-               source_url=person.get("linkedin_url") or f"https://{domain}",
-               provider="apollo", quote=person["title"], confidence=0.6)
-    rec.value = person["name"]
-    rec.source_url = person.get("linkedin_url") or f"https://{domain}"
     return True
 
 
@@ -475,8 +446,6 @@ def _narration(action) -> str:
         return f"I still need {slot}, so I'm checking recent public coverage."
     if action.kind == "x":
         return f"I still need {slot}, so I'm checking their recent posts."
-    if action.kind == "apollo":
-        return f"The website doesn't name {slot}, so I'm checking Apollo."
     return f"Looking for {slot}."
 
 
@@ -485,8 +454,7 @@ def _available() -> dict:
     from research.providers_common import provider_status
     status = provider_status()
     return {"firecrawl": firecrawl.available(), "tavily": tavily.available(),
-            "x": x_search.available(), "apollo": bool(status.get("apollo")),
-            "exa": bool(status.get("exa"))}
+            "x": x_search.available(), "exa": bool(status.get("exa"))}
 
 
 def _result(records, stop_reason, detail) -> dict:
