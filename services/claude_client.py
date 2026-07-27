@@ -23,6 +23,7 @@ from config.settings import (
     API_BACKOFF_BASE_SECONDS,
     API_BACKOFF_MAX_SECONDS,
     API_MAX_RETRIES,
+    EMPTY_RESPONSE_RETRIES,
     CHAT_MAX_TOKENS,
     FAST_MODEL,
     QUALITY_MODEL,
@@ -170,7 +171,29 @@ def _select_model(stage: str = "model") -> str:
 def _call_model(system_prompt: str, schema: dict, user_content: str,
                 max_tokens: int = REQUEST_MAX_TOKENS,
                 stage: str = "model") -> dict:
-    """One structured-output call. Returns parsed JSON dict or raises ClaudeClientError."""
+    """One structured-output call. Returns parsed JSON dict or raises ClaudeClientError.
+
+    An EMPTY completion is retried here rather than raised. _with_retry wraps
+    only the SDK create(), so a response that arrived fine but carried no text
+    was the single transient fault that never got a second attempt: one flaky
+    empty answer permanently failed a campaign prospect we had already paid to
+    research and qualify (observed live on openai.com, where the identical
+    input then succeeded three times out of three).
+    """
+    last_empty = None
+    for _ in range(1 + EMPTY_RESPONSE_RETRIES):
+        text = _one_structured_call(system_prompt, schema, user_content,
+                                    max_tokens, stage)
+        if text.strip():
+            return _parse_json(text)
+        last_empty = text
+        log.info("empty completion at stage=%s; retrying", stage)
+    return _parse_json(last_empty or "")     # raises the empty-response error
+
+
+def _one_structured_call(system_prompt: str, schema: dict, user_content: str,
+                         max_tokens: int, stage: str) -> str:
+    """One metered attempt. Returns the response text (possibly empty)."""
     selected_model = _select_model(stage)
     _enforce_anthropic_cap()                        # per-user usage cap (never breaks a system call)
     token_estimate = _estimate_tokens(system_prompt, user_content, json.dumps(schema, ensure_ascii=False))
@@ -202,7 +225,7 @@ def _call_model(system_prompt: str, schema: dict, user_content: str,
         latency_ms=_elapsed_ms(started),
         success=True,
     )
-    return _parse_json(_first_text(response))
+    return _first_text(response)
 
 
 def _create_structured(span, system_prompt, schema, user_content, max_tokens,

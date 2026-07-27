@@ -1238,8 +1238,13 @@ def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
     result = research_pipeline.research_and_qualify(
         leads, icp=icp, limit=limit, user_id=user_id, progress=progress)
     if result.get("status") != "ok" or not result.get("prospects"):
+        # research_and_qualify always explains itself; the fallback covers only
+        # the unreachable case of an ok run with no entries, and must still say
+        # something the user can act on rather than shrug.
         return ToolResult(summary=(result.get("reason")
-                          or "Couldn't research those prospects just now."))
+                          or f"The research run finished but returned no companies "
+                             f"for these {len(leads)} leads. Ask the user to "
+                             f"confirm the company names or websites, then retry."))
 
     prospects = result["prospects"]
     usage = _record_prospect(

@@ -218,6 +218,31 @@ def _card(index: int, prospect, research, q) -> dict:
     }
 
 
+def _nothing_scored_reason(candidates: int, timed_out: int, unreadable: int) -> str:
+    """Say what actually stopped the run.
+
+    "Couldn't research those candidates deeply enough" is not an explanation —
+    it leaves the reader unsure whether the companies were bad, the product is
+    broken, or they should retry. We know which of the two things happened, so
+    the message names it and points at the one action that would help.
+    """
+    if timed_out and not unreadable:
+        return (f"{timed_out} of {candidates} sites were still loading when this "
+                f"run hit its time limit. Nothing was scored. Running it again "
+                f"usually clears it, since the pages are cached by then.")
+    if unreadable and not timed_out:
+        return (f"All {unreadable} of the sites found refused automated reading, "
+                f"so there was nothing solid to score them on. A different ICP "
+                f"tends to surface companies with more readable sites.")
+    if timed_out or unreadable:
+        return (f"Of {candidates} candidates, {timed_out} ran out of time and "
+                f"{unreadable} could not be read, so none could be scored. "
+                f"Trying again, or narrowing the ICP, usually helps.")
+    return (f"The {candidates} companies found were read successfully but none "
+            f"had enough on their sites to score honestly. Try a more specific "
+            f"description of who you sell to.")
+
+
 def _rank_key(item):
     """Highest score first; a 'pursue' recommendation outranks the same score."""
     prospect, research, q = item
@@ -279,6 +304,9 @@ def run_demo(*, icp_text: str = "", website: str = "",
         return prospect, research, q
 
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
+    # Why each candidate produced nothing, so an empty run can say what happened
+    # rather than shrugging at the user.
+    timed_out = unreadable = 0
     try:
         futures = {pool.submit(_one, p): i for i, p in enumerate(prospects)}
         pending = set(futures)
@@ -288,6 +316,7 @@ def run_demo(*, icp_text: str = "", website: str = "",
                 for fut in pending:
                     idx = futures[fut]
                     fut.cancel()
+                    timed_out += 1
                     yield "scored", {"index": idx, "company": _display_name(prospects[idx]),
                                      "domain": prospects[idx].domain,
                                      "website": prospects[idx].website,
@@ -304,6 +333,7 @@ def run_demo(*, icp_text: str = "", website: str = "",
                 except Exception:  # noqa: BLE001 - a single failure never aborts
                     log.info("demo: research/qualify failed for %s",
                              prospects[idx].domain, exc_info=True)
+                    unreadable += 1
                     continue
                 card = _card(idx, prospect, research, q)
                 scored.append((prospect, research, q))
@@ -317,8 +347,8 @@ def run_demo(*, icp_text: str = "", website: str = "",
         pool.shutdown(wait=False, cancel_futures=True)
 
     if not scored:
-        yield "empty", {"reason": "Couldn't research those candidates deeply enough "
-                        "this run. Please try again."}
+        yield "empty", {"reason": _nothing_scored_reason(
+            len(prospects), timed_out, unreadable)}
         return
 
     # ── 4. Best fit + its real signal ─────────────────────────────────────

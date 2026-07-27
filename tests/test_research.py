@@ -21,6 +21,7 @@ from research import (  # noqa: E402
     fetcher, hooks as hooks_mod, pipeline, verifier,
 )
 from services import claude_client  # noqa: E402
+from config import settings  # noqa: E402
 
 URL = "https://acme.example.com"
 
@@ -736,6 +737,35 @@ class ApiRetryTests(unittest.TestCase):
     def test_is_retryable_classification(self):
         self.assertTrue(claude_client._is_retryable(self._conn_error()))
         self.assertFalse(claude_client._is_retryable(ValueError("x")))
+
+    # ── Empty completions ───────────────────────────────────────────────
+    # _with_retry wraps only the SDK create(), so a response that arrived fine
+    # but carried no text was the one transient fault never retried. In a live
+    # campaign that permanently failed openai.com after research had been paid
+    # for; the same input then succeeded 3/3.
+    @staticmethod
+    def _response(text):
+        block = mock.Mock(type="text", text=text)
+        return mock.Mock(content=[block], stop_reason="end_turn", usage=None)
+
+    def test_empty_completion_is_retried(self):
+        responses = [self._response(""), self._response('{"ok": 1}')]
+        with mock.patch.object(claude_client, "_create_structured",
+                               side_effect=lambda *a, **k: responses.pop(0)):
+            self.assertEqual(claude_client._call_model("s", {}, "u"), {"ok": 1})
+
+    def test_persistently_empty_completion_still_raises_and_is_bounded(self):
+        calls = []
+
+        def always_empty(*a, **k):
+            calls.append(1)
+            return self._response("")
+
+        with mock.patch.object(claude_client, "_create_structured",
+                               side_effect=always_empty):
+            with self.assertRaises(claude_client.ClaudeClientError):
+                claude_client._call_model("s", {}, "u")
+        self.assertEqual(len(calls), 1 + settings.EMPTY_RESPONSE_RETRIES)
 
     def test_anthropic_400_body_is_logged_and_safe_reason_returned(self):
         import anthropic

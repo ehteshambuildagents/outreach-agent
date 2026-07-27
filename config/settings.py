@@ -64,6 +64,10 @@ READ_DEADLINE_SECONDS = 25              # total wall-clock cap on one body read
 API_MAX_RETRIES = 3                     # retries AFTER the first attempt (bounded)
 API_BACKOFF_BASE_SECONDS = 0.5          # exponential base
 API_BACKOFF_MAX_SECONDS = 8.0           # per-attempt delay ceiling
+# A response that arrives fine but carries no text. Separate from the transport
+# retries above because it is not an SDK error and never reached _with_retry.
+# Small on purpose: it is a rare flake, and each attempt is a paid call.
+EMPTY_RESPONSE_RETRIES = 2
 
 # ── Multi-page crawl limits ───────────────────────────────────────────
 MAX_EXTRA_PAGES = 18                    # candidate-pool cap (adaptive loop stops earlier)
