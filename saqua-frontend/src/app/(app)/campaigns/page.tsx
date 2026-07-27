@@ -335,6 +335,7 @@ function ReasonBreakdown({ prospects }: { prospects: CampaignDetail["result"]["p
     route_only: "no valid recipient",
     writer_failed: "draft failed",
     research_failed: "research failed",
+    timed_out: "ran out of time",
   };
   const parts = Object.entries(counts)
     .filter(([k]) => k !== "sendable")

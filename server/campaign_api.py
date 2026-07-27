@@ -6,9 +6,11 @@ Qualification -> Strategy -> Writer -> Guard, persists a preview, and only
 launches automation workflows after an explicit user action.
 """
 
+import concurrent.futures
 import hashlib
 import json
 import logging
+import threading
 import time
 from typing import Literal
 
@@ -18,7 +20,12 @@ from pydantic import BaseModel, Field, field_validator
 from agents import qualification, strategy, writer
 from automation import engine
 from automation.store import WorkflowStore
-from config.settings import AUTOMATION_MAX_FOLLOWUPS, AUTOMATION_REPLY_WAIT_DAYS
+from config.settings import (
+    AUTOMATION_MAX_FOLLOWUPS,
+    AUTOMATION_REPLY_WAIT_DAYS,
+    CAMPAIGN_PROSPECT_CONCURRENCY,
+    CAMPAIGN_PROSPECT_DEADLINE_SECONDS,
+)
 from discovery.engine import discover
 from discovery.models import DiscoveryQuery
 from discovery.store import ProspectStore
@@ -298,9 +305,12 @@ def register(app, rl_read=None, rl_write=None):
 
 def _run_pipeline(user: str, body: CampaignCreate, trace_id: str = "") -> tuple[dict, str, list[dict]]:
     events = []
+    events_lock = threading.Lock()
 
     def event(type_: str, detail: str) -> None:
-        events.append({"type": type_, "detail": detail})
+        # Prospects now run concurrently, so this is called from several threads.
+        with events_lock:
+            events.append({"type": type_, "detail": detail})
 
     started = time.time()
     event("started", f"Campaign preview started for {body.name}")
@@ -328,7 +338,6 @@ def _run_pipeline(user: str, body: CampaignCreate, trace_id: str = "") -> tuple[
     )
     event("discovery", f"{discovery.status}: {discovery.returned} prospect(s)")
 
-    prospects = []
     if discovery.status != "ok":
         result_status = "no_valid_prospects" if discovery.status == "empty" else "discovery_error"
         reason = discovery.reason or "Prospect discovery did not return usable companies."
@@ -345,8 +354,8 @@ def _run_pipeline(user: str, body: CampaignCreate, trace_id: str = "") -> tuple[
         )
         return result, "blocked", events
 
-    for prospect in discovery.prospects:
-        prospects.append(_process_prospect(user, prospect, body.icp.model_dump(), event, trace_id=trace_id))
+    prospects = _process_prospects(user, discovery.prospects, body.icp.model_dump(),
+                                   event, trace_id=trace_id)
 
     summary = _summary(prospects, started)
     if summary["launchable"] > 0:
@@ -375,6 +384,97 @@ def _run_pipeline(user: str, body: CampaignCreate, trace_id: str = "") -> tuple[
     )
     event("completed", f"{summary['launchable']} launchable prospect(s), {summary['guard_blocked']} blocked")
     return result, status, events
+
+
+def _process_prospects(user: str, discovered: list, icp: dict, event,
+                       *, trace_id: str = "") -> list[dict]:
+    """Research, qualify, write and guard every prospect, several at a time.
+
+    Sequential processing was the whole cost of a campaign: each prospect is a
+    separate site and a separate draft, sharing nothing but the stores (which
+    already open one connection per thread), and nearly all of the time is spent
+    waiting on someone else's network. So the run was idle almost end to end.
+
+    Two guarantees make this safe to keep inside the HTTP request:
+
+    * ORDER is preserved. Results are placed by index, so the response still
+      reads in discovery's ranked order no matter what finishes first.
+    * The phase is BOUNDED. One unreachable host can exhaust every fetch retry;
+      previously that spent the request's whole budget and the platform killed
+      it with nothing saved. Now the campaign keeps whatever finished and says
+      plainly which prospects ran out of time, which is strictly more than a
+      dead request returned.
+    """
+    if not discovered:
+        return []
+    workers = max(1, min(CAMPAIGN_PROSPECT_CONCURRENCY, len(discovered)))
+    results: list = [None] * len(discovered)
+    deadline = time.time() + CAMPAIGN_PROSPECT_DEADLINE_SECONDS
+    log.info("campaign_stage_start trace_id=%s stage=prospects n=%d workers=%d",
+             trace_id, len(discovered), workers)
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=workers,
+                                                 thread_name_prefix="campaign")
+    try:
+        futures = {
+            pool.submit(_process_prospect_safely, user, p, icp, event,
+                        trace_id=trace_id): i
+            for i, p in enumerate(discovered)
+        }
+        pending = set(futures)
+        while pending:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            done, pending = concurrent.futures.wait(
+                pending, timeout=remaining,
+                return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in done:
+                results[futures[future]] = future.result()
+        for future in pending:
+            future.cancel()
+            index = futures[future]
+            results[index] = _out_of_time(discovered[index])
+            log.info("campaign_stage_timeout trace_id=%s stage=prospects domain=%s",
+                     trace_id, getattr(discovered[index], "domain", ""))
+            event("prospect_timeout",
+                  f"{getattr(discovered[index], 'domain', '')}: ran out of time")
+    finally:
+        # Never block on threads whose results are already written off: the
+        # context-manager form waits for them, which would hand the entire
+        # saving back to the slow prospect we just gave up on.
+        pool.shutdown(wait=False, cancel_futures=True)
+    return results
+
+
+def _process_prospect_safely(user: str, prospect, icp: dict, event,
+                             *, trace_id: str = "") -> dict:
+    """_process_prospect, but a raise becomes a result. Sequentially a stray
+    exception failed one prospect; through a pool it would fail the campaign."""
+    try:
+        return _process_prospect(user, prospect, icp, event, trace_id=trace_id)
+    except Exception:  # noqa: BLE001 - one bad prospect must not end the run
+        log.exception("campaign_prospect_crashed trace_id=%s domain=%s",
+                      trace_id, getattr(prospect, "domain", ""))
+        return {"domain": getattr(prospect, "domain", ""),
+                "company_name": getattr(prospect, "company_name", ""),
+                "final_status": "research_failed",
+                "reason": "This lead failed unexpectedly and was skipped; "
+                          "the rest of the campaign is unaffected."}
+
+
+def _out_of_time(prospect) -> dict:
+    """A prospect the deadline reached first. Says what happened rather than
+    reporting it as a research failure, which would blame the company's site."""
+    base = prospect.public()
+    base.update({
+        "domain": prospect.domain,
+        "final_status": "timed_out",
+        "reason": "This company was still being researched when the run hit its "
+                  "time limit, so it was left out rather than rushed. Run the "
+                  "campaign again to pick it up.",
+    })
+    return base
 
 
 def _process_prospect(user: str, prospect, icp: dict, event, trace_id: str = "") -> dict:

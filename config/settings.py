@@ -275,6 +275,21 @@ EVIDENCE_MAX_PER_PROVIDER = int(os.getenv("EVIDENCE_MAX_PER_PROVIDER", "2"))
 EVIDENCE_MIN_GAIN = float(os.getenv("EVIDENCE_MIN_GAIN", "0.05"))
 
 
+# ── Campaign preview (research -> write -> guard, per prospect) ────────
+# Prospects are independent: a different site, a different draft, no shared
+# state beyond the stores (which already hold one connection per thread). The
+# work is almost all waiting on someone else's network, so running prospects one
+# after another left the campaign idle on I/O for its whole duration.
+CAMPAIGN_PROSPECT_CONCURRENCY = int(
+    os.getenv("CAMPAIGN_PROSPECT_CONCURRENCY", "5"))
+# An upper bound on the WHOLE prospect phase, so one pathological site cannot
+# spend the request's entire budget. Without it a single slow host could exhaust
+# every fetch retry and the platform killed the request with nothing saved;
+# with it the campaign returns what finished and says plainly what did not.
+# Sized to leave room under a 300s platform limit for discovery + persistence.
+CAMPAIGN_PROSPECT_DEADLINE_SECONDS = int(
+    os.getenv("CAMPAIGN_PROSPECT_DEADLINE_SECONDS", "200"))
+
 # ── Automation Agent (the conductor: scheduling, sending, recovery) ────
 # All tunable; nothing about timing is hard-coded in the engine.
 AUTOMATION_MAX_RETRIES = 4              # send retries before a step is FAILED-terminal

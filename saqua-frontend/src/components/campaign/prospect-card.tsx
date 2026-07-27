@@ -17,6 +17,9 @@ export const FINAL_STATUS: Record<string, { label: string; tone: "success" | "wa
   strategy_hold: { label: "On hold", tone: "warn" },
   writer_failed: { label: "Writer failed", tone: "danger" },
   research_failed: { label: "Research failed", tone: "neutral" },
+  // Not a failure of the company or of us: the run hit its time budget while
+  // this one was still being read, so it was left out rather than rushed.
+  timed_out: { label: "Ran out of time", tone: "warn" },
   error: { label: "Error", tone: "danger" },
 };
 

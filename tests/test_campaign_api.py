@@ -8,6 +8,7 @@ exercised through the real FastAPI app.
 import os
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -432,6 +433,86 @@ class CampaignApiTests(unittest.TestCase):
             ).json()
         self.assertEqual(_client("bob").get(f"/api/campaigns/{created['id']}").status_code, 404)
         self.assertEqual(_client("bob").get("/api/campaigns").json()["campaigns"], [])
+
+
+class ProspectConcurrencyTests(unittest.TestCase):
+    """The prospect phase used to run one company at a time, so a 3-prospect
+    campaign measured 383s against a 300s platform limit, 94% of it sat in
+    research, and a single unreachable host accounted for 250s of that."""
+
+    @staticmethod
+    def _prospects(n):
+        return [_prospect(f"co{i}.com") for i in range(n)]
+
+    def _run(self, work, prospects=None, deadline=None):
+        """Run the phase with `work(prospect) -> dict` standing in for the real
+        research/write/guard chain."""
+        prospects = prospects or self._prospects(3)
+        patches = [mock.patch.object(campaign_api, "_process_prospect",
+                                     lambda user, p, icp, event, trace_id="": work(p))]
+        if deadline is not None:
+            patches.append(mock.patch.object(
+                campaign_api, "CAMPAIGN_PROSPECT_DEADLINE_SECONDS", deadline))
+        for p in patches:
+            p.start()
+        self.addCleanup(lambda: [p.stop() for p in patches])
+        return campaign_api._process_prospects(
+            "u", prospects, {}, lambda *a: None, trace_id="t")
+
+    def test_prospects_run_concurrently(self):
+        """Independent I/O-bound work must overlap, not queue."""
+        started = time.time()
+        out = self._run(lambda p: (time.sleep(0.6),
+                                   {"domain": p.domain, "final_status": "sendable"})[1])
+        elapsed = time.time() - started
+        self.assertEqual(len(out), 3)
+        # Sequential would be >=1.8s; overlapped is barely more than one unit.
+        self.assertLess(elapsed, 1.2, f"prospects did not overlap ({elapsed:.2f}s)")
+
+    def test_result_order_matches_discovery_order(self):
+        """Rank order is the product's output; finishing order must not change it."""
+        delays = {"co0.com": 0.5, "co1.com": 0.1, "co2.com": 0.3}
+
+        def work(p):
+            time.sleep(delays[p.domain])
+            return {"domain": p.domain, "final_status": "sendable"}
+
+        out = self._run(work)
+        self.assertEqual([r["domain"] for r in out],
+                         ["co0.com", "co1.com", "co2.com"])
+
+    def test_slow_prospect_is_bounded_and_the_rest_survive(self):
+        """One unreachable host must not spend the whole request budget."""
+        def work(p):
+            if p.domain == "co1.com":
+                time.sleep(30)                      # never finishes in time
+            return {"domain": p.domain, "final_status": "sendable"}
+
+        started = time.time()
+        out = self._run(work, deadline=1)
+        elapsed = time.time() - started
+        self.assertLess(elapsed, 5, "the deadline did not bound the phase")
+        self.assertEqual(len(out), 3)
+        self.assertEqual(out[1]["final_status"], "timed_out")
+        self.assertIn("time limit", out[1]["reason"])
+        # ...and the prospects that DID finish are still returned.
+        self.assertEqual(out[0]["final_status"], "sendable")
+        self.assertEqual(out[2]["final_status"], "sendable")
+
+    def test_a_crashing_prospect_does_not_end_the_campaign(self):
+        def work(p):
+            if p.domain == "co1.com":
+                raise RuntimeError("boom")
+            return {"domain": p.domain, "final_status": "sendable"}
+
+        out = self._run(work)
+        self.assertEqual(out[1]["final_status"], "research_failed")
+        self.assertEqual(out[0]["final_status"], "sendable")
+        self.assertEqual(out[2]["final_status"], "sendable")
+
+    def test_no_prospects_is_not_an_error(self):
+        self.assertEqual(campaign_api._process_prospects(
+            "u", [], {}, lambda *a: None), [])
 
 
 if __name__ == "__main__":
