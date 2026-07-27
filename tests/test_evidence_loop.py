@@ -30,9 +30,15 @@ def graph_with(*nodes):
 
 
 def _on(*patches):
-    """Escalation enabled, plus whatever the case needs."""
+    """Escalation enabled, plus whatever the case needs.
+
+    `_page_exists` is stubbed to True by default so no test reaches the network
+    for a guessed path (that check is real HTTP and made this file take minutes).
+    A case that cares about it patches it again, and being entered later, wins.
+    """
     st = ExitStack()
     st.enter_context(mock.patch.object(evidence_loop, "PLANNER_ESCALATION_ENABLED", True))
+    st.enter_context(mock.patch.object(evidence_loop, "_page_exists", return_value=True))
     for p in patches:
         st.enter_context(p)
     return st
@@ -45,7 +51,7 @@ def _avail(**kw):
 
 
 def _executed(out):
-    return [r for r in out["records"] if r["status"] == "executed"]
+    return [r for r in out["records"] if r["status"] == "succeeded"]
 
 
 class RecentSignalTests(unittest.TestCase):
@@ -110,7 +116,8 @@ class PricingFirecrawlTests(unittest.TestCase):
                                           "markdown": "Plans start at $29/mo " * 30,
                                           "title": "Pricing"})) :
             out = evidence_loop.run(graph, url="https://acme.com", company="Acme",
-                                    extract_fn=extract)
+                                    extract_fn=extract,
+                                    known_urls=["https://acme.com/pricing"])
         done = _executed(out)
         self.assertTrue(done)
         rec = done[0]
@@ -127,9 +134,10 @@ class PricingFirecrawlTests(unittest.TestCase):
         with _on(_avail(firecrawl=True),
                  mock.patch("research.firecrawl.scrape", return_value=None)):
             out = evidence_loop.run(graph, url="https://acme.com", company="Acme",
-                                    extract_fn=lambda pages: None)
+                                    extract_fn=lambda pages: None,
+                                    known_urls=["https://acme.com/pricing"])
         self.assertEqual(_executed(out), [])
-        self.assertTrue(any(r["status"] == "failed" for r in out["records"]))
+        self.assertTrue(any(r["status"] == "no_evidence" for r in out["records"]))
         self.assertIsNone(graph.best("pricing_model"))
 
 
@@ -185,7 +193,7 @@ class SafetyTests(unittest.TestCase):
              mock.patch("research.tavily.search", side_effect=lambda *a, **k: called.append(a)):
             out = evidence_loop.run(graph_with("what_they_do"), url="https://acme.com")
         self.assertEqual(out["stop_reason"], "escalation_disabled")
-        self.assertEqual(out["actions_executed"], 0)
+        self.assertEqual(out["succeeded"], 0)
         self.assertEqual(out["estimated_cost_usd"], 0.0)
         self.assertEqual(called, [])
 
@@ -198,7 +206,7 @@ class SafetyTests(unittest.TestCase):
             out = evidence_loop.run(graph_with("what_they_do"),
                                     url="https://acme.com", company="Acme")
         self.assertEqual(called, [])                       # never called
-        self.assertEqual(out["actions_executed"], 0)
+        self.assertEqual(out["succeeded"], 0)
         self.assertEqual(out["estimated_cost_usd"], 0.0)   # no budget consumed
         skips = [r for r in out["records"] if r["status"] == "skipped"]
         self.assertTrue(skips)
@@ -230,20 +238,33 @@ class SafetyTests(unittest.TestCase):
             out = evidence_loop.run(graph_with("what_they_do"),
                                     url="https://acme.com", company="Acme")
         self.assertEqual(called, [])
-        self.assertFalse(any(r["provider"] == "tavily" and r["status"] == "executed"
+        self.assertFalse(any(r["provider"] == "tavily" and r["status"] == "succeeded"
                              for r in out["records"]))
 
     def test_the_action_budget_is_never_exceeded(self):
-        with _on(_avail(tavily=True, x=True, firecrawl=True),
-                 mock.patch("research.tavily.search", return_value=[]),
+        # Two providers, so the per-provider cap (2) does not bind before the
+        # overall action budget (3) does.
+        with _on(_avail(firecrawl=True, tavily=True),
                  mock.patch("research.firecrawl.scrape", return_value=None),
-                 mock.patch("research.x_search.search_recent_posts",
-                            return_value={"status": "empty", "posts": []})):
-            out = evidence_loop.run(graph_with("what_they_do"),
-                                    url="https://acme.com", company="Acme")
-        attempts = [r for r in out["records"] if r["status"] != "skipped"]
-        self.assertLessEqual(len(attempts), evidence_loop.EVIDENCE_MAX_ACTIONS)
+                 mock.patch("research.tavily.search", return_value=[])):
+            out = evidence_loop.run(
+                graph_with("what_they_do"), url="https://acme.com", company="Acme",
+                extract_fn=lambda pages: None,
+                known_urls=["https://acme.com/about", "https://acme.com/customers",
+                            "https://acme.com/pricing", "https://acme.com/blog"])
+        self.assertEqual(out["attempted"], evidence_loop.EVIDENCE_MAX_ACTIONS)
         self.assertEqual(out["stop_reason"], "budget_exhausted")
+
+    def test_the_per_provider_cap_can_bind_before_the_action_budget(self):
+        with _on(_avail(firecrawl=True),
+                 mock.patch("research.firecrawl.scrape", return_value=None)):
+            out = evidence_loop.run(
+                graph_with("what_they_do"), url="https://acme.com", company="Acme",
+                extract_fn=lambda pages: None,
+                known_urls=["https://acme.com/about", "https://acme.com/customers",
+                            "https://acme.com/blog"])
+        self.assertEqual(out["attempted"], evidence_loop.EVIDENCE_MAX_PER_PROVIDER)
+        self.assertEqual(out["stop_reason"], "no_useful_actions")
 
     def test_per_provider_cap_is_respected(self):
         with _on(_avail(tavily=True),
@@ -272,7 +293,8 @@ class SafetyTests(unittest.TestCase):
                  mock.patch.object(evidence_loop, "APOLLO_ENRICH_ENABLED", False)):
             out = evidence_loop.run(graph_with("what_they_do"), url="https://acme.com")
         for rec in out["records"]:
-            self.assertIn(rec["status"], ("executed", "skipped", "failed"))
+            self.assertIn(rec["status"],
+                          ("succeeded", "no_evidence", "failed", "skipped"))
             self.assertTrue(rec["reason"] or rec["value"])
             self.assertIn("cost_usd", rec)
 
@@ -327,7 +349,7 @@ class UnrunnableProviderTests(unittest.TestCase):
         with _on(_avail(exa=True, tavily=False, firecrawl=False, x=False, apollo=False)):
             out = evidence_loop.run(graph, url="https://acme.com", company="Acme")
         self.assertFalse(any(r["provider"] == "exa" for r in out["records"]))
-        self.assertEqual(out["actions_failed"], 0)
+        self.assertEqual(out["failed"], 0)
         self.assertEqual(out["estimated_cost_usd"], 0.0)
         self.assertEqual(out["stop_reason"], "no_useful_actions")
 
@@ -344,3 +366,145 @@ class UnrunnableProviderTests(unittest.TestCase):
         done = _executed(out)
         self.assertTrue(done)
         self.assertEqual(done[0]["provider"], "tavily")
+
+
+class MetricSemanticsTests(unittest.TestCase):
+    """"executed=0 failed=3 cost=$0.008" implied three broken calls when three
+    requests had in fact run fine and simply found nothing. The four outcomes are
+    disjoint, and cost is attributable to what actually left the process."""
+
+    def test_a_working_call_that_finds_nothing_is_not_a_failure(self):
+        graph = graph_with("what_they_do", "founder_name", "product_category",
+                           "target_customer", "recent_focus")
+        with _on(_avail(firecrawl=True),
+                 mock.patch("research.firecrawl.scrape",
+                            return_value={"url": "https://acme.com/pricing",
+                                          "markdown": "no prices here " * 40,
+                                          "title": "Pricing"})):
+            out = evidence_loop.run(graph, url="https://acme.com", company="Acme",
+                                    extract_fn=lambda pages: None,
+                                    known_urls=["https://acme.com/pricing"])
+        first = out["records"][0]
+        self.assertEqual(first["status"], "no_evidence")   # ran fine, found nothing
+        self.assertEqual(out["failed"], 0)                 # NOT an infrastructure fault
+        self.assertEqual(out["succeeded"], 0)
+        self.assertGreaterEqual(out["attempted"], 1)
+        self.assertGreater(out["estimated_cost_usd"], 0)   # it still cost money
+
+    def test_a_provider_exception_is_a_failure(self):
+        graph = graph_with("what_they_do", "founder_name", "product_category",
+                           "target_customer", "recent_focus")
+        with _on(_avail(firecrawl=True),
+                 mock.patch("research.firecrawl.scrape",
+                            side_effect=RuntimeError("connection reset"))):
+            out = evidence_loop.run(graph, url="https://acme.com", company="Acme",
+                                    known_urls=["https://acme.com/pricing"])
+        self.assertGreaterEqual(out["failed"], 1)
+        self.assertEqual(out["records"][0]["status"], "failed")
+        self.assertEqual(out["no_evidence"], 0)
+
+    def test_a_skipped_action_costs_nothing_and_is_not_attempted(self):
+        with _on(_avail(apollo=True),
+                 mock.patch.object(evidence_loop, "APOLLO_ENRICH_ENABLED", False)):
+            out = evidence_loop.run(graph_with("what_they_do"), url="https://acme.com")
+        self.assertEqual(out["attempted"], 0)
+        self.assertGreater(out["skipped"], 0)
+        self.assertEqual(out["estimated_cost_usd"], 0.0)
+
+    def test_confidence_gained_counts_only_successful_actions(self):
+        graph = graph_with("what_they_do", "founder_name", "product_category",
+                           "target_customer", "pricing_model")
+        with _on(_avail(tavily=True),
+                 mock.patch("research.tavily.search",
+                            return_value=[{"title": "Acme ships v2",
+                                           "url": "https://n.test/a", "content": "c",
+                                           "published_date": "2026-07-02"}])):
+            out = evidence_loop.run(graph, url="https://acme.com", company="Acme")
+        self.assertEqual(out["succeeded"], 1)
+        self.assertGreater(out["confidence_gained"], 0)
+
+
+class TargetResolutionTests(unittest.TestCase):
+    """apple.com paid to scrape /about and /customers and got nothing. A target
+    must be a page the site really has, checked for free, before any paid call."""
+
+    def test_a_known_site_url_is_preferred_over_a_guess(self):
+        graph = graph_with("what_they_do", "founder_name", "product_category",
+                           "target_customer", "recent_focus")
+        seen = []
+        with _on(_avail(firecrawl=True),
+                 mock.patch("research.firecrawl.scrape",
+                            side_effect=lambda u: seen.append(u) or None)):
+            evidence_loop.run(graph, url="https://acme.com", company="Acme",
+                              extract_fn=lambda pages: None,
+                              known_urls=["https://acme.com/plans-and-pricing"])
+        # The site's real page is used; the guessed /pricing path never is.
+        self.assertEqual(seen[0], "https://acme.com/plans-and-pricing")
+        self.assertNotIn("https://acme.com/pricing", seen)
+
+    def test_a_guessed_path_that_does_not_exist_is_skipped_before_paying(self):
+        graph = graph_with("what_they_do", "founder_name", "product_category",
+                           "target_customer", "recent_focus")
+        scraped = []
+        with _on(_avail(firecrawl=True),
+                 mock.patch.object(evidence_loop, "_page_exists", return_value=False),
+                 mock.patch("research.firecrawl.scrape",
+                            side_effect=lambda u: scraped.append(u))):
+            out = evidence_loop.run(graph, url="https://acme.com", company="Acme",
+                                    extract_fn=lambda pages: None)
+        self.assertEqual(scraped, [])                    # never paid for a 404
+        self.assertEqual(out["estimated_cost_usd"], 0.0)
+        self.assertTrue(any("no " in r["reason"] and "page exists" in r["reason"]
+                            for r in out["records"]))
+
+    def test_a_slot_that_came_back_empty_is_not_asked_about_again(self):
+        graph = graph_with("what_they_do", "founder_name", "product_category",
+                           "target_customer", "pricing_model")
+        with _on(_avail(tavily=True, x=True),
+                 mock.patch("research.tavily.search", return_value=[]),
+                 mock.patch("research.x_search.search_recent_posts",
+                            return_value={"status": "empty", "posts": []})):
+            out = evidence_loop.run(graph, url="https://acme.com", company="Acme")
+        slots = [r["slot"] for r in out["records"] if r["status"] != "skipped"]
+        self.assertEqual(len(slots), len(set(slots)))    # one attempt per gap
+
+    def test_it_stops_when_the_bar_is_unreachable_within_the_budget(self):
+        """Almost nothing known and only low-value gaps addressable: buying a
+        fractional climb it can never finish is not worth the money."""
+        graph = graph_with("what_they_do")
+        with _on(_avail(tavily=True),
+                 mock.patch("research.tavily.search", return_value=[])):
+            out = evidence_loop.run(graph, url="https://acme.com", company="Acme")
+        for rec in out["records"]:
+            if rec["status"] == "skipped":
+                continue
+            self.assertGreaterEqual(gaps.gain_if_filled(rec["slot"]), 0.10)
+
+
+class ProviderRefusalTests(unittest.TestCase):
+    """A provider that REFUSES (quota/auth) must not be reported as "found
+    nothing". Tavily was answering HTTP 432 "exceeds your plan's usage limit" for
+    every query and the loop blamed the world for an account problem."""
+
+    def test_a_quota_refusal_is_a_failure_not_an_empty_answer(self):
+        graph = graph_with("what_they_do", "founder_name", "product_category",
+                           "target_customer", "pricing_model")
+        with _on(_avail(tavily=True),
+                 mock.patch("research.tavily.search", return_value=[]),
+                 mock.patch.object(evidence_loop, "_provider_refusal",
+                                   return_value="refused: plan or usage limit reached")):
+            out = evidence_loop.run(graph, url="https://acme.com", company="Acme")
+        first = out["records"][0]
+        self.assertEqual(first["status"], "failed")
+        self.assertIn("usage limit", first["reason"])
+        self.assertEqual(out["no_evidence"], 0)
+
+    def test_a_genuine_empty_answer_is_still_no_evidence(self):
+        graph = graph_with("what_they_do", "founder_name", "product_category",
+                           "target_customer", "pricing_model")
+        with _on(_avail(tavily=True),
+                 mock.patch("research.tavily.search", return_value=[]),
+                 mock.patch.object(evidence_loop, "_provider_refusal", return_value="")):
+            out = evidence_loop.run(graph, url="https://acme.com", company="Acme")
+        self.assertEqual(out["records"][0]["status"], "no_evidence")
+        self.assertEqual(out["failed"], 0)

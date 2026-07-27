@@ -38,6 +38,28 @@ def get_key(env_name: str) -> str:
     return (os.environ.get(env_name) or "").strip()
 
 
+# The last non-retryable refusal per provider (quota, auth, bad request). A
+# provider that REFUSES and a provider that legitimately has nothing both come
+# back as an empty list, and conflating them hides a real outage: Tavily was
+# answering HTTP 432 "exceeds your plan's usage limit" for every query, and the
+# callers reported it as "no recent coverage found".
+_LAST_ERROR = {}
+
+
+def note_error(provider: str, reason: str) -> None:
+    _LAST_ERROR[provider] = reason
+
+
+def last_error(provider: str) -> str:
+    """The most recent refusal from this provider, or "" if its last call was
+    fine. Cleared by any successful response."""
+    return _LAST_ERROR.get(provider, "")
+
+
+def clear_error(provider: str) -> None:
+    _LAST_ERROR.pop(provider, None)
+
+
 # The environment variable each provider reads. Kept here so "is this configured"
 # can be answered WITHOUT importing the provider modules (they import this one).
 # tests/test_providers.py asserts these stay identical to each module's own _ENV,
@@ -140,12 +162,15 @@ def request_json(method: str, url: str, *, provider: str,
                     parsed = resp.json()
                 except ValueError:
                     log.info("%s: non-JSON response", provider)
+                    note_error(provider, "returned a non-JSON response")
                     return None
                 if user_id:
                     _cap_record(provider, user_id)   # meter the real, paid read
+                clear_error(provider)
                 return parsed
             if resp.status_code not in _RETRYABLE_STATUS:
                 log.info("%s: HTTP %s (not retrying)", provider, resp.status_code)
+                note_error(provider, _refusal(resp))
                 return None                               # 4xx -> permanent
             last_reason = f"HTTP {resp.status_code}"
 
@@ -158,4 +183,16 @@ def request_json(method: str, url: str, *, provider: str,
         time.sleep(delay)
 
     log.info("%s: giving up (%s)", provider, last_reason)
+    note_error(provider, last_reason)
     return None
+
+
+def _refusal(resp) -> str:
+    """A short, user-safe reason a provider refused. Quota and auth are the two
+    that matter operationally, and both are invisible in an empty result list."""
+    code = resp.status_code
+    if code in (401, 403):
+        return "rejected the API key (auth)"
+    if code in (402, 429, 432):
+        return "refused: plan or usage limit reached"
+    return f"refused with HTTP {code}"

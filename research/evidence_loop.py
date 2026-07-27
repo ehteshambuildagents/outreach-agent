@@ -17,12 +17,18 @@ own next paid call is exactly the shape that quietly runs up a bill, so:
   * the whole loop is behind PLANNER_ESCALATION_ENABLED (default OFF);
   * Apollo people enrichment additionally needs APOLLO_ENRICH_ENABLED;
   * at most EVIDENCE_MAX_ACTIONS per run, EVIDENCE_MAX_PER_PROVIDER per provider;
-  * the same (company, slot, provider, target) is never tried twice;
-  * a gap worth less than EVIDENCE_MIN_GAIN is not worth a paid call;
+  * the same (company, slot, provider, target) is never tried twice, and neither
+    is the same RESOLVED request;
+  * a slot that already came back empty is not asked about again;
+  * a Firecrawl target must be a page the site really has (sitemap/links, or a
+    free existence check) — guessed paths cost money on apple.com for nothing;
+  * a gap is skipped when it cannot lift confidence to the bar within the
+    remaining budget, or is worth less than EVIDENCE_MIN_GAIN;
   * every provider call still goes through providers_common (spend caps, retries).
 
-Every decision — executed, skipped, failed, and WHY — is recorded, so the stream
-can narrate only what genuinely happened and a run can be audited afterwards.
+Every decision is recorded as one of four disjoint outcomes — succeeded,
+no_evidence, failed, skipped — so a call that ran fine and simply found nothing
+is never reported as a broken one, and cost is always attributable.
 """
 
 import logging
@@ -69,7 +75,7 @@ class ActionRecord:
     slot: str
     provider: str
     target: str = ""
-    status: str = "skipped"          # executed | skipped | failed
+    status: str = "skipped"          # succeeded | no_evidence | failed | skipped
     reason: str = ""
     value: str = ""
     source_url: str = ""
@@ -97,6 +103,7 @@ class _Budget:
     per_provider: dict = field(default_factory=dict)
     tried: set = field(default_factory=set)     # (company, slot, provider, target)
     calls: set = field(default_factory=set)     # (provider, resolved request)
+    barren: set = field(default_factory=set)    # slots that already yielded nothing
 
     def may_use(self, provider: str) -> bool:
         return self.per_provider.get(provider, 0) < EVIDENCE_MAX_PER_PROVIDER
@@ -107,13 +114,15 @@ class _Budget:
 
 
 def run(graph, *, url: str, company: str = "", signals: dict = None,
-        extract_fn=None, narrate=None, providers=None) -> dict:
+        extract_fn=None, narrate=None, providers=None, known_urls=()) -> dict:
     """Close evidence gaps with real provider calls. Never raises.
 
     ``extract_fn(pages) -> None`` folds fetched page text into ``graph`` using the
     pipeline's own extractor, so a Firecrawl page becomes evidence by exactly the
     same route as a crawled one. ``narrate(text)`` receives a short line ONLY when
-    an action genuinely runs.
+    an action genuinely runs. ``known_urls`` are pages the site actually exposes
+    (sitemap + internal links), so a paid scrape aims at a real page instead of a
+    guessed path.
     """
     signals = dict(signals or {})
     say = narrate if callable(narrate) else (lambda *a, **k: None)
@@ -133,7 +142,7 @@ def run(graph, *, url: str, company: str = "", signals: dict = None,
             return _result(records, "confidence_reached",
                            f"confidence {before:.0%} met the bar")
 
-        chosen = _choose(ledger, avail, budget, company, records, url)
+        chosen = _choose(ledger, avail, budget, company, records, url, known_urls)
         if chosen is None:
             return _result(records, "no_useful_actions",
                            "nothing left worth a paid call")
@@ -153,18 +162,32 @@ def run(graph, *, url: str, company: str = "", signals: dict = None,
             filled = _execute(action, graph, url=url, company=company,
                               signals=signals, extract_fn=extract_fn, rec=rec,
                               resolved=resolved)
+            # The request WAS made and answered. Whether it carried anything
+            # useful is a separate question from whether it worked: a pricing
+            # page that simply has no price is not an infrastructure failure,
+            # and calling it one hid the fact that the call still cost money.
+            if filled:
+                rec.status = "succeeded"
+            else:
+                # An empty answer and a REFUSED request look identical to a
+                # caller (both are an empty list). Tavily was answering HTTP 432
+                # "exceeds your plan's usage limit" for every query and the loop
+                # reported "no recent coverage found", which blamed the world for
+                # an account problem. Ask the provider layer which it was.
+                refusal = _provider_refusal(action.kind)
+                rec.status = "failed" if refusal else "no_evidence"
+                rec.reason = (f"{action.kind} {refusal}" if refusal
+                              else rec.reason or "the response held no usable evidence")
         except Exception:  # noqa: BLE001 - one provider must never end the run
             log.info("evidence action %s/%s errored", action.kind, action.slot,
                      exc_info=True)
             rec.status, rec.reason = "failed", "the provider errored"
-            filled = False
-        if filled and rec.status != "failed":
-            rec.status = rec.status if rec.status == "failed" else "executed"
-            rec.cost_usd = _COST_USD.get(action.kind, 0.0)
-        elif rec.status != "failed":
-            rec.status = "failed"
-            rec.reason = rec.reason or "the provider returned nothing usable"
-            rec.cost_usd = _COST_USD.get(action.kind, 0.0)
+        # Cost is charged for any request that actually left the process.
+        rec.cost_usd = _COST_USD.get(action.kind, 0.0)
+        if rec.status != "succeeded":
+            # This slot has now been tried and yielded nothing; do not pay to ask
+            # the same kind of question again this run.
+            budget.barren.add(action.slot)
         rec.confidence_after = gaps.assess(graph, signals).confidence
         records.append(rec)
 
@@ -173,7 +196,7 @@ def run(graph, *, url: str, company: str = "", signals: dict = None,
 
 
 # ── choosing ───────────────────────────────────────────────────────────────
-def _choose(ledger, avail, budget, company, records, url):
+def _choose(ledger, avail, budget, company, records, url, known_urls=()):
     """The best (action, resolved_target) we are actually allowed to run, or None."""
     seen_note = set()
     for action in gaps.plan(ledger, providers=avail, limit=12):
@@ -189,7 +212,17 @@ def _choose(ledger, avail, budget, company, records, url):
                 _note(records, action, "Apollo people enrichment is off "
                                        "(APOLLO_ENRICH_ENABLED)", ledger.confidence)
             continue
-        resolved = _resolve_target(action, url, company)
+        if action.slot in budget.barren:
+            continue        # already asked about this fact and got nothing back
+        if gaps.gain_if_filled(action.slot) < _reachable_gain(ledger, budget):
+            _note(records, action, "cannot reach the confidence bar within the "
+                                   "remaining budget", ledger.confidence)
+            continue
+        resolved = _resolve_target(action, url, company, known_urls)
+        if resolved is None:
+            _note(records, action, f"no {action.target} page exists on the site",
+                  ledger.confidence)
+            continue                                   # skipped BEFORE paying
         if _key(company, action.slot, action.kind, resolved) in budget.tried:
             continue                                   # never the same call twice
         if (action.kind, resolved) in budget.calls:
@@ -208,12 +241,40 @@ def _choose(ledger, avail, budget, company, records, url):
     return None
 
 
-def _resolve_target(action, url, company) -> str:
+def _reachable_gain(ledger, budget) -> float:
+    """The smallest gain still worth buying.
+
+    If even the best remaining gap cannot lift confidence to the bar within the
+    actions left, paying for a partial climb is not worth it. Returns the floor a
+    slot's weight must clear; EVIDENCE_MIN_GAIN is the absolute minimum.
+    """
+    shortfall = gaps.CONFIDENCE_TARGET - ledger.confidence
+    best_possible = sum(sorted((gaps.gain_if_filled(s) for s in ledger.missing),
+                               reverse=True)[:max(0, budget.actions)])
+    if best_possible < shortfall:
+        # Cannot get there this run. Only buy something genuinely substantial.
+        return max(EVIDENCE_MIN_GAIN, 0.10)
+    return EVIDENCE_MIN_GAIN
+
+
+def _resolve_target(action, url, company, known_urls=()):
     """The CONCRETE request this action will make — a URL for Firecrawl, a query
-    for the search providers. Resolving before the budget check is what lets two
-    different gaps that would ask the identical question be deduplicated."""
+    for the search providers. ``None`` means "do not pay for this".
+
+    For Firecrawl the URL must be one the site actually has. Guessing paths cost
+    real money on apple.com, where /about and /customers were scraped and held
+    nothing: the page either did not exist or was not the page we wanted. So the
+    target must come from pages the site itself exposes (sitemap + internal
+    links), and otherwise it is verified with a FREE request before the paid
+    scrape.
+    """
     if action.kind == "firecrawl":
-        return _page_url(url, action.target)
+        hint = str(action.target or "").strip("/").lower()
+        for candidate in known_urls or ():
+            if hint and hint in str(candidate).lower():
+                return candidate                       # the site really has it
+        guess = _page_url(url, hint)
+        return guess if _page_exists(guess) else None
     if action.kind == "tavily":
         topic = "funding round" if action.slot == "funding" else "news announcement launch"
         return f"{company} {topic}"
@@ -377,6 +438,29 @@ def _snapshot(graph) -> set:
 
 
 # ── plumbing ───────────────────────────────────────────────────────────────
+def _provider_refusal(kind: str) -> str:
+    """Whether this provider REFUSED the last request (quota/auth), rather than
+    answering with nothing. Returns a short reason, or "" if it answered fine."""
+    name = {"x": "x"}.get(kind, kind)
+    try:
+        from research.providers_common import last_error
+        return last_error(name)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _page_exists(url: str) -> bool:
+    """A FREE check that a guessed path is really there, so a 404 is never paid
+    for. Uses the ordinary fetcher (SSRF-safe, retries transient failures); if it
+    cannot be read at all we decline rather than gamble a paid scrape on it."""
+    try:
+        from research.fetcher import fetch_static
+        ok, _ = fetch_static(url)
+        return bool(ok)
+    except Exception:  # noqa: BLE001 - a checker must never break the loop
+        return False
+
+
 def _page_url(base: str, hint: str) -> str:
     parsed = urlparse(base if "://" in base else "https://" + base)
     return f"{parsed.scheme}://{parsed.netloc}/{str(hint or '').strip('/')}"
@@ -406,13 +490,35 @@ def _available() -> dict:
 
 
 def _result(records, stop_reason, detail) -> dict:
-    executed = [r for r in records if r.status == "executed"]
+    """The run's outcome in terms that cannot be misread.
+
+    The earlier shape reported "executed=0 failed=3 cost=$0.008", which implied
+    three broken calls when in fact three requests ran fine and simply found
+    nothing. These four states are disjoint and mean exactly one thing each:
+
+      succeeded    ran, returned evidence, merged        (cost charged)
+      no_evidence  ran, answered, nothing usable in it   (cost charged)
+      failed       the request itself errored            (cost charged)
+      skipped      never left the process                (no cost)
+
+    ``attempted`` is everything that actually made a request, so cost is always
+    attributable to it.
+    """
+    def n(status):
+        return sum(1 for r in records if r.status == status)
+
+    succeeded, no_evidence, failed, skipped = (
+        n("succeeded"), n("no_evidence"), n("failed"), n("skipped"))
     return {
         "records": [r.public() for r in records],
         "stop_reason": stop_reason,
         "detail": detail,
-        "actions_executed": len(executed),
-        "actions_skipped": sum(1 for r in records if r.status == "skipped"),
-        "actions_failed": sum(1 for r in records if r.status == "failed"),
+        "attempted": succeeded + no_evidence + failed,
+        "succeeded": succeeded,
+        "no_evidence": no_evidence,
+        "failed": failed,
+        "skipped": skipped,
+        "confidence_gained": round(sum(r.gain for r in records
+                                       if r.status == "succeeded"), 3),
         "estimated_cost_usd": round(sum(r.cost_usd for r in records), 4),
     }

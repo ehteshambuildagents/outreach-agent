@@ -303,11 +303,15 @@ def _adaptive_research(url, render_fetcher, sitemap_subs, find_founder=False,
         graph.nodes.update(rebuilt.nodes)
         graph.team[:] = rebuilt.team
 
+    # Pages the site genuinely exposes (crawled + still-uncrawled candidates +
+    # sitemap). A paid scrape aims at one of these rather than a guessed path.
+    known_urls = list(dict.fromkeys([u for u, _ in pages] + list(remaining)
+                                    + list(sitemap_subs or [])))
     evidence_run = evidence_loop.run(
         graph, url=url, company=graph.value("company_name") or "",
-        extract_fn=_extract_into, narrate=narrate)
-    if evidence_run.get("actions_executed"):
-        stop_reason += (f"; closed {evidence_run['actions_executed']} evidence "
+        extract_fn=_extract_into, narrate=narrate, known_urls=known_urls)
+    if evidence_run.get("succeeded"):
+        stop_reason += (f"; closed {evidence_run['succeeded']} evidence "
                         "gap(s) with provider calls")
 
     log.info("STOP %s: %s", url, stop_reason)
