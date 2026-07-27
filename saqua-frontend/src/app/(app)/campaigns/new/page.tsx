@@ -230,7 +230,10 @@ export default function NewCampaignPage() {
                     onChange={(e) => setLimit(Number(e.target.value))}
                     className="mt-2 w-full accent-[color:var(--accent)]"
                   />
-                  <span className="text-[11px] text-muted">Research runs live, so each prospect adds ~1-2 min.</span>
+                  {/* Prospects are researched in parallel now, so the run takes
+                      about as long as the slowest company rather than the sum:
+                      five measured at 82s end to end. */}
+                  <span className="text-[11px] text-muted">Research runs live, in parallel. A full run usually takes a minute or two.</span>
                 </Field>
                 <Button variant="primary" size="lg" disabled={!canSubmit} onClick={runOrchestration}>
                   <Sparkles className="size-4" /> Run Saqua

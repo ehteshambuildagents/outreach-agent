@@ -465,10 +465,18 @@ def _process_prospect_safely(user: str, prospect, icp: dict, event,
 
 def _out_of_time(prospect) -> dict:
     """A prospect the deadline reached first. Says what happened rather than
-    reporting it as a research failure, which would blame the company's site."""
-    base = prospect.public()
+    reporting it as a research failure, which would blame the company's site.
+
+    Defensive on purpose: this runs on the path where the run is already in
+    trouble, and a raise here would lose every prospect that DID finish — the
+    exact outcome the deadline exists to prevent.
+    """
+    try:
+        base = dict(prospect.public())
+    except Exception:  # noqa: BLE001
+        base = {"company_name": getattr(prospect, "company_name", "")}
     base.update({
-        "domain": prospect.domain,
+        "domain": getattr(prospect, "domain", ""),
         "final_status": "timed_out",
         "reason": "This company was still being researched when the run hit its "
                   "time limit, so it was left out rather than rushed. Run the "
