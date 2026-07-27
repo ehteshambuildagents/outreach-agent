@@ -267,9 +267,13 @@ def _name_from(title: str, domain: str) -> str:
     if t:
         # Cut at the first separator that usually precedes a tagline.
         frag = re.split(r"\s[|\-–—:·]\s", t, maxsplit=1)[0].strip()
-        # Reject obviously non-name fragments (listicle headings).
+        # Reject obviously non-name fragments: listicle headings, and the
+        # careers-page headings a hiring query surfaces constantly. A live run
+        # returned the company "Explore SDR Sales Jobs" (really memoryblue.com),
+        # where the domain core was the far better name.
         if 1 <= len(frag.split()) <= 6 and not re.search(
-                r"\b(top|best|list|companies|startups|\d{2,})\b", frag.lower()):
+                r"\b(top|best|list|companies|startups|jobs|careers|hiring|"
+                r"openings|vacancies|vacancy|\d{2,})\b", frag.lower()):
             return frag
     core = domain.split(".")[0]
     return core.replace("-", " ").title()

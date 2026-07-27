@@ -94,6 +94,25 @@ class IntentPlannerTests(unittest.TestCase):
         self.assertTrue(any("recruiters" in s for s in steps))
 
 
+class PluralAcronymRoleTests(unittest.TestCase):
+    """"Find B2B founders hiring SDRs" is the most natural phrasing of the
+    query and it parsed with no role at all, so Apollo got no title search and
+    nothing was posting-verified. Singular worked; only the plural was lost."""
+
+    def test_plural_acronyms_resolve_to_the_singular_alias(self):
+        for text, expected in (("Find B2B founders hiring SDRs", "sdr"),
+                               ("companies hiring BDRs", "bdr"),
+                               ("hiring AEs", "ae"),
+                               ("hiring CSMs", "csm")):
+            plan = intent.parse(text)
+            self.assertEqual(plan.anchor, "role", text)
+            self.assertEqual(plan.roles, [expected], text)
+
+    def test_plural_and_singular_agree(self):
+        self.assertEqual(intent.parse("hiring SDRs").role_titles,
+                         intent.parse("hiring an SDR").role_titles)
+
+
 class RoleFirstApolloTests(unittest.TestCase):
     """A role-anchored plan must search Apollo by JOB TITLE, not by category."""
 
@@ -248,12 +267,45 @@ class AggregatorClassificationTests(unittest.TestCase):
             self.assertEqual(aggregators.domain_kind(domain), aggregators.JOB_BOARD,
                              domain)
 
+    def test_singular_career_compound_is_a_job_board(self):
+        """gulfcareerhunt.com ranked 6th in a live 'hiring an AI video creator'
+        run: the fused-compound rule only knew the plural 'careers'."""
+        for domain in ("gulfcareerhunt.com", "careerhunt.io", "mycareer.com"):
+            self.assertEqual(aggregators.domain_kind(domain), aggregators.JOB_BOARD,
+                             domain)
+
     def test_real_companies_are_not_mistaken_for_job_boards(self):
-        """Token-exact matching: 'jobber' must not trip the 'job' rule."""
+        """Token-exact matching: 'jobber' must not trip the 'job' rule, and
+        'carer'/'careem' must not trip the widened 'career' rule."""
         for domain in ("jobber.com", "stripe.com", "heygen.com", "runwayml.com",
-                       "synthesia.io", "linear.app", "trycomp.ai"):
+                       "synthesia.io", "linear.app", "trycomp.ai",
+                       "carers.org", "careem.com"):
             self.assertEqual(aggregators.domain_kind(domain), aggregators.COMPANY,
                              domain)
+
+    def test_web_sourced_staffing_firms_are_demoted(self):
+        """Apollo candidates are excluded by SIC code, but web candidates carry
+        none: memoryblue.com, an outsourced-SDR firm, ranked as a prospect for
+        "founders hiring SDRs"."""
+        kind, _ = aggregators.classify(
+            "https://memoryblue.com", "memoryBlue",
+            "memoryBlue is a sales development company that recruits and "
+            "trains SDRs for technology firms.")
+        self.assertIn(kind, aggregators.INTERMEDIARY_KINDS)
+
+    def test_recruiting_software_is_still_a_prospect(self):
+        """The guard that keeps the rule safe: an ATS vendor sells a recruiting
+        PLATFORM, never a recruiting AGENCY, and is a legitimate B2B prospect."""
+        for title, content in (
+                ("Gem", "Recruiting software and CRM for talent teams."),
+                ("Rippling", "HR, IT and payroll software platform.")):
+            self.assertFalse(aggregators.sells_staffing(title, content), title)
+
+    def test_careers_page_heading_does_not_become_a_company_name(self):
+        self.assertEqual(sources._name_from("Explore SDR Sales Jobs",
+                                            "memoryblue.com"), "Memoryblue")
+        self.assertEqual(sources._name_from("Linear - Plan and build products",
+                                            "linear.app"), "Linear")
 
     def test_directory_pages_are_dropped_but_job_boards_only_demoted(self):
         q = DiscoveryQuery(raw="ai video companies", keywords=["ai video"])

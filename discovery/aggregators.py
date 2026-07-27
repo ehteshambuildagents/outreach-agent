@@ -225,7 +225,12 @@ def _looks_like_job_domain(domain: str) -> bool:
     if any(t in _JOB_TOKENS for t in tokens):
         return True
     # Fused compounds a split cannot see ("remotejobs", "aijobsboard").
-    return bool(re.search(r"(?:^|[a-z])(jobs|careers|hiring|recruiting)(?:$|[a-z])", core)
+    # Singular "career" counts too: _JOB_TOKENS already trusts it on a hyphen
+    # split, and omitting it here let gulfcareerhunt.com through as a real
+    # company. Singular "job" is deliberately NOT here — it is short enough to
+    # sit inside plausible product names, and "jobber" already needs an
+    # exception. A board named that way still gets caught by the curated list.
+    return bool(re.search(r"(?:^|[a-z])(jobs|careers?|hiring|recruiting)(?:$|[a-z])", core)
                 and not re.search(r"(?:jobber|carer)", core))
 
 
@@ -256,10 +261,37 @@ def classify(url: str, title: str = "", content: str = "",
     # hiring — it is a listing, and workwithindies is the intermediary.
     if hosts_third_party_posting(title, dom):
         return JOB_BOARD, "advertises another company's job posting"
+    # A firm that SUPPLIES staff is the same problem one step removed: it is not
+    # hiring for itself, so a hiring-signal search is not evidence it will buy.
+    # Apollo candidates are excluded by SIC/NAICS (intent.staffing_kind), but web
+    # candidates carry no codes, which is how memoryblue.com — an outsourced-SDR
+    # firm — ranked as a prospect for "founders hiring SDRs".
+    if sells_staffing(title, content):
+        return MARKETPLACE, "sells staffing or recruiting services"
     by_page = page_kind(url, title, content)
     if by_page in INTERMEDIARY_KINDS:
         return by_page, f"page looks like a {by_page.replace('_', ' ')} listing"
     return COMPANY, ""
+
+
+# A firm describing its own STAFFING SERVICE. Deliberately requires a service
+# noun ("recruiting agency/firm/services"), never a product noun, so that HR and
+# recruiting SOFTWARE — a legitimate B2B prospect — is untouched: an ATS vendor
+# calls itself a recruiting platform, never a recruiting agency.
+_STAFFING_SERVICE_RE = re.compile(
+    r"\b(?:staffing|recruiting|recruitment|placement|talent)\s+"
+    r"(?:agency|agencies|firm|firms|partner|services)\b"
+    r"|\bexecutive\s+search\b"
+    r"|\boutsourced\s+(?:sdr|bdr|sales\s+development|recruiting)\b"
+    r"|\b(?:sdr|bdr)s?\s+as\s+a\s+service\b"
+    r"|\bsales\s+development\s+company\b"
+    r"|\bwe\s+(?:place|recruit\s+and\s+train)\b",
+    re.I)
+
+
+def sells_staffing(title: str = "", content: str = "") -> bool:
+    """True when a page's own words say it supplies people to other companies."""
+    return bool(_STAFFING_SERVICE_RE.search(f"{title or ''}\n{content or ''}"))
 
 
 # "<Company> is hiring …" — the title convention a job board uses to advertise

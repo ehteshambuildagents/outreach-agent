@@ -247,10 +247,25 @@ _HIRING_NOISE_RE = re.compile(
     r"currently|actively|right now|new)\b", re.I)
 
 
+def _singular_alias(word: str) -> str:
+    """Fold a plural acronym onto the alias it names: "sdrs" -> "sdr".
+
+    People ask for "founders hiring SDRs"; employers post "SDR". Only the
+    singular is a key in _ROLE_ALIASES, and expansion matches that key on a word
+    boundary, so "sdrs" resolved to no titles at all and the whole query fell
+    back to a category search with no role and no verified postings.
+    """
+    if word in _ROLE_ALIASES:
+        return word
+    stem = word.rstrip("s")
+    return stem if stem != word and stem in _ROLE_ALIASES else word
+
+
 def _clean_role(text: str) -> str:
     out = _HIRING_NOISE_RE.sub(" ", str(text or ""))
     words, seen = [], set()
-    for w in out.lower().split():
+    for raw_word in out.lower().split():
+        w = _singular_alias(raw_word)
         if w not in seen:
             seen.add(w)
             words.append(w)
