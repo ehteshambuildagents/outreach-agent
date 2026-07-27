@@ -492,3 +492,63 @@ class ProviderRefusalTests(unittest.TestCase):
             out = evidence_loop.run(graph, url="https://acme.com", company="Acme")
         self.assertEqual(out["records"][0]["status"], "no_evidence")
         self.assertEqual(out["failed"], 0)
+
+
+class ProviderRefusalTests(unittest.TestCase):
+    """A refusal is OUR problem, not an absence of facts about the company."""
+
+    def setUp(self):
+        from research import providers_common as pc
+        pc.clear_error("tavily")
+
+    tearDown = setUp
+
+    def _refusing_tavily(self):
+        from research import providers_common as pc
+        def refuse(query, max_results=4):
+            self.calls.append(query)
+            pc.note_error("tavily", "refused: plan or usage limit reached")
+            return []
+        self.calls = []
+        return mock.patch("research.tavily.search", side_effect=refuse)
+
+    def _run(self, narrate=None):
+        graph = graph_with("what_they_do", "founder_name", "product_category",
+                           "target_customer", "pricing_model")
+        with _on(_avail(tavily=True, firecrawl=True, exa=True),
+                 mock.patch.object(evidence_loop, "_page_exists", return_value=False),
+                 self._refusing_tavily()):
+            return evidence_loop.run(graph, url="https://acme.com", company="Acme",
+                                     narrate=narrate)
+
+    def test_a_refusal_is_failed_not_no_evidence(self):
+        out = self._run()
+        self.assertEqual(out["failed"], 1)
+        self.assertEqual(out["no_evidence"], 0)
+        rec = next(r for r in out["records"] if r["provider"] == "tavily")
+        self.assertIn("limit", rec["reason"])
+        self.assertNotIn("no recent coverage", rec["reason"])
+
+    def test_the_provider_is_attempted_at_most_once_per_run(self):
+        self._run()
+        self.assertEqual(len(self.calls), 1)
+
+    def test_the_stream_names_what_carries_on_instead(self):
+        lines = []
+        self._run(narrate=lines.append)
+        note = [l for l in lines if "unavailable" in l.lower()]
+        self.assertEqual(len(note), 1)                    # said once, not per gap
+        self.assertIn("Tavily is unavailable", note[0])
+        self.assertIn("Firecrawl", note[0])
+        self.assertIn("Exa", note[0])
+
+    def test_it_never_claims_there_is_no_recent_news(self):
+        lines = []
+        out = self._run(narrate=lines.append)
+        blob = " ".join(lines) + " " + " ".join(r["reason"] for r in out["records"])
+        self.assertNotIn("no recent coverage found", blob)
+
+    def test_the_run_still_completes(self):
+        out = self._run()
+        self.assertIn(out["stop_reason"],
+                      ("no_useful_actions", "budget_exhausted", "confidence_reached"))

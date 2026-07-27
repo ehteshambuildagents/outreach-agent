@@ -272,3 +272,56 @@ class OrchestratorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class RefusalLatchTests(unittest.TestCase):
+    """A provider refusing at the ACCOUNT level must not be asked again.
+
+    Tavily answered HTTP 432 "exceeds your plan's usage limit" to every query for
+    days. Each caller kept trying, and each read the empty result as "found
+    nothing" — so the outage was invisible and the retries were pure waste.
+    """
+
+    def setUp(self):
+        from research import providers_common as pc
+        pc.clear_error("tavily")
+
+    tearDown = setUp
+
+    def test_a_quota_refusal_latches_the_provider_off(self):
+        from research import providers_common as pc
+        pc.note_error("tavily", "refused: plan or usage limit reached")
+        self.assertTrue(pc.refused("tavily"))
+
+    def test_an_auth_rejection_latches_too(self):
+        from research import providers_common as pc
+        pc.note_error("tavily", "rejected the API key (auth)")
+        self.assertTrue(pc.refused("tavily"))
+
+    def test_an_ordinary_failure_does_not_latch(self):
+        from research import providers_common as pc
+        pc.note_error("tavily", "timed out")
+        self.assertFalse(pc.refused("tavily"))       # transient: keep retrying
+
+    def test_a_latched_provider_is_not_called_again(self):
+        from research import providers_common as pc
+        pc.note_error("tavily", "refused: plan or usage limit reached")
+        with mock.patch.object(pc.requests, "request") as sent:
+            out = pc.request_json("POST", "https://api.tavily.com/search",
+                                  provider="tavily", json_body={"q": "x"})
+        self.assertIsNone(out)
+        sent.assert_not_called()                     # no wasted call, no credit
+
+    def test_a_good_response_clears_the_latch(self):
+        from research import providers_common as pc
+        pc.note_error("tavily", "refused: plan or usage limit reached")
+        self.assertTrue(pc.refused("tavily"))
+        pc.clear_error("tavily")                     # what a 200 does
+        self.assertFalse(pc.refused("tavily"))
+
+    def test_the_latch_expires_so_a_key_swap_recovers_itself(self):
+        from research import providers_common as pc
+        pc.note_error("tavily", "refused: plan or usage limit reached")
+        with mock.patch.object(pc.time, "time",
+                               return_value=pc.time.time() + pc._REFUSAL_LATCH_SECONDS + 1):
+            self.assertFalse(pc.refused("tavily"))
