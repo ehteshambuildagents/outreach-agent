@@ -140,9 +140,17 @@ def register(app, rl_read=None, rl_write=None):
     def _write(request: Request):
         return rl_write(request) if rl_write else None
 
+    # Create / list / get are identity-or-demo: a sandboxed demo visitor runs the
+    # SAME research + drafting pipeline as a member, scoped to their own demo
+    # principal, and everything stays drafts-only. Research cost is capped per
+    # principal at the provider call site (research/providers_common), exactly as
+    # the demo chat already is. Only launch/pause/resume/cancel below stay
+    # member-only (require_user) — those move real mail, which the demo never does.
+    # (list_prospects was already demo-aware; create/list/get had been missed,
+    # leaving every demo visitor a 401 on the Campaigns and New Campaign pages.)
     @app.post("/api/campaigns")
     def create_campaign(body: CampaignCreate, request: Request,
-                        _=Depends(_write), user: str = Depends(require_user)):
+                        _=Depends(_write), user: str = Depends(require_identity_or_demo)):
         key = body.idempotency_key or request.headers.get("Idempotency-Key") or _request_hash(user, body)
         trace_id = (request.headers.get("x-request-id") or request.headers.get("x-saqua-proxy-trace-id") or key[:12]).strip()
         user_hash = hashlib.sha256(user.encode("utf-8")).hexdigest()[:12]
@@ -210,13 +218,13 @@ def register(app, rl_read=None, rl_write=None):
 
     @app.get("/api/campaigns")
     def list_campaigns(request: Request, _=Depends(_read),
-                       user: str = Depends(require_user)):
+                       user: str = Depends(require_identity_or_demo)):
         rows = _campaign_store().list_for_owner(user)
         return {"campaigns": [_campaign_summary(row) for row in rows]}
 
     @app.get("/api/campaigns/{campaign_id}")
     def get_campaign(campaign_id: str, request: Request, _=Depends(_read),
-                     user: str = Depends(require_user)):
+                     user: str = Depends(require_identity_or_demo)):
         campaign = _campaign_store().get(user, campaign_id)
         if campaign is None:
             raise HTTPException(status_code=404, detail="Campaign not found.")

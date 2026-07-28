@@ -137,6 +137,25 @@ class DemoDependencyTests(unittest.TestCase):
         headers, _ = self._demo()
         self.assertEqual(self.c.get("/api/oauth/gmail/login", headers=headers).status_code, 401)
 
+    def test_demo_can_list_campaigns(self):
+        # Regression: campaign create/list/get were guarded on require_user, so
+        # every demo visitor got 401 on the Campaigns and New Campaign pages while
+        # list_prospects (same module) was already demo-aware. They now share
+        # require_identity_or_demo and resolve to the demo principal's own (empty)
+        # campaign store.
+        headers, _ = self._demo()
+        r = self.c.get("/api/campaigns", headers=headers)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"campaigns": []})
+
+    def test_demo_launch_stays_member_only(self):
+        # Creating/listing/viewing is drafts-only and demo-allowed, but launching
+        # moves real mail and must stay member-only: a demo session is refused
+        # before the handler runs (401 from require_user, not a 404).
+        headers, _ = self._demo()
+        r = self.c.post("/api/campaigns/does-not-exist/launch", headers=headers, json={})
+        self.assertEqual(r.status_code, 401)
+
     def test_paused_demo_session_is_403(self):
         headers, did = self._demo()
         with mock.patch("limits.is_paused", side_effect=lambda u: u == did):
