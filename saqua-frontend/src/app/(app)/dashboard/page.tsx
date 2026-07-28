@@ -83,8 +83,8 @@ export default function DashboardPage() {
         <div className="mt-4">
           <EmptyState
             icon={Megaphone}
-            title="Dashboard data unavailable."
-            body={`Saqua could not reach the automation backend: ${state.error}`}
+            title="Couldn't load your dashboard"
+            body={`Saqua couldn't fetch your sending activity just now, so these numbers aren't showing. Nothing about your campaigns has changed, and anything scheduled is still running. Try again in a moment. (${state.error})`}
             action={<Button variant="primary" onClick={loadDashboard}>Retry dashboard</Button>}
           />
         </div>
@@ -158,8 +158,8 @@ export default function DashboardPage() {
             {state.status !== "loading" && activeCampaigns.length === 0 && (
               <EmptyState
                 icon={Megaphone}
-                title="No campaigns running."
-                body="Create a campaign when your mailbox and backend workflow are ready."
+                title="No campaigns running yet"
+                body="Describe who you want to reach and Saqua will find the companies, research them, and draft the emails. You review everything before anything sends."
                 action={
                   <Button asChild variant="primary">
                     <Link href="/campaigns/new">Create campaign</Link>

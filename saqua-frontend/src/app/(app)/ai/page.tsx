@@ -576,9 +576,17 @@ function Composer({
   );
 }
 
+/**
+ * A reachability failure said the way the person reading it can act on.
+ *
+ * "Make sure the backend is running" was written for whoever was developing this
+ * and is meaningless to the founder using it, who has no backend to start. What
+ * they need is what happened, that their work survived, and what to do next.
+ */
 function reachError(err: string): string {
   const unreachable = /^HTTP 5\d\d$/.test(err) || err === "network error" || /proxy failed/i.test(err);
   return unreachable
-    ? `Couldn't reach the assistant (${err}). Make sure the backend is running, then try again.`
-    : err || "Something went wrong. Please try again.";
+    ? "Saqua couldn't reach the assistant, so that message wasn't answered. Your conversation is saved. " +
+      "Try sending it again in a moment."
+    : err || "That didn't go through. Your conversation is saved, so try sending it again.";
 }

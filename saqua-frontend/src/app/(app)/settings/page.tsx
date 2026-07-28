@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input } from "@/components/ui/field";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useUser } from "@clerk/nextjs";
 import { api, type Billing, type CompanyProfile, type OAuthAccount } from "@/lib/api";
 import { useDemo } from "@/components/demo/demo-provider";
 
@@ -38,6 +39,7 @@ const mailboxProviders = [
 
 export default function SettingsPage() {
   const { isDemo } = useDemo();
+  const { user } = useUser();
   const [accounts, setAccounts] = useState<OAuthAccount[]>([]);
   const [connectionState, setConnectionState] = useState<"loading" | "loaded" | "error">("loading");
   const [connectionError, setConnectionError] = useState("");
@@ -330,23 +332,28 @@ export default function SettingsPage() {
                 </Button>
               </CardContent>
             ) : (
+              // The signed-in identity, read from the account itself. These were
+              // hardcoded to one person's name, email and timezone, so every
+              // user saw somebody else's details presented as their own, above a
+              // permanently disabled Save button. They are read-only because
+              // sign-in owns them: editable-looking fields that cannot be saved
+              // are worse than fields that never claimed to be editable.
               <CardContent className="grid gap-4 md:grid-cols-2">
                 <Field label="Name">
-                  <Input defaultValue="Ehtesham Munir" />
+                  <Input value={user?.fullName || "—"} readOnly disabled />
                 </Field>
                 <Field label="Email">
-                  <Input defaultValue="ehtesham@saqua.ai" />
+                  <Input
+                    value={user?.primaryEmailAddress?.emailAddress || "—"}
+                    readOnly
+                    disabled
+                  />
                 </Field>
-                <Field label="Workspace">
-                  <Input defaultValue="Saqua" />
-                </Field>
-                <Field label="Timezone">
-                  <Input defaultValue="UTC+05 Islamabad, Karachi" />
-                </Field>
-                <div className="md:col-span-2 flex justify-end border-t border-border-faint pt-4">
-                  <Button variant="primary" disabled title="Backend endpoint missing for profile updates">
-                    <Save className="size-4" /> Save changes
-                  </Button>
+                <div className="md:col-span-2 border-t border-border-faint pt-4">
+                  <p className="text-xs leading-5 text-muted">
+                    Your name and email come from the account you signed in with. Use the
+                    account menu in the sidebar to change them.
+                  </p>
                 </div>
               </CardContent>
             )}

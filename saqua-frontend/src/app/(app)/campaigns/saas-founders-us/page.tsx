@@ -82,8 +82,8 @@ export default function CampaignDetailPage() {
     return (
       <EmptyState
         icon={Workflow}
-        title="No campaigns running."
-        body="Create a campaign after the backend has a real approved email sequence to automate."
+        title="Nothing is sending yet"
+        body="Once you launch a campaign, its live sequence status, timeline and replies show up here."
         action={
           <Button asChild variant="primary">
             <Link href="/campaigns/new">Create campaign</Link>
@@ -97,9 +97,9 @@ export default function CampaignDetailPage() {
     return (
       <EmptyState
         icon={Workflow}
-        title="Campaign status unavailable."
-        body={`Saqua could not reach the automation backend: ${state.error}`}
-        action={<Button variant="primary" onClick={loadCampaign}>Retry campaign status</Button>}
+        title="Couldn't load sequence status"
+        body={`Saqua couldn't fetch this sequence's live status just now. Sending is unaffected: anything scheduled is still running, and nothing has been paused. Try again in a moment. (${state.error})`}
+        action={<Button variant="primary" onClick={loadCampaign}>Try again</Button>}
       />
     );
   }
@@ -229,7 +229,7 @@ export default function CampaignDetailPage() {
                   {workflow.reply_detected ? (
                     <div className="rounded-md border border-success-soft bg-success-soft p-3">
                       <div className="text-sm font-medium text-success">Reply detected</div>
-                      <p className="mt-1 text-xs leading-5 text-text-2">The automation backend stopped this sequence after an inbound reply.</p>
+                      <p className="mt-1 text-xs leading-5 text-text-2">Saqua stopped this sequence automatically, so no follow-ups will go out. Reply to them yourself from your inbox.</p>
                     </div>
                   ) : (
                     <div className="rounded-md border border-border-faint bg-black/[0.02] p-3 text-xs text-muted">

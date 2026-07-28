@@ -72,8 +72,8 @@ export default function ProspectsPage() {
       {state.status === "error" && (
         <EmptyState
           icon={Users}
-          title="Couldn't load prospects"
-          body={`Saqua could not reach the backend: ${state.error}`}
+          title="Couldn't load your prospects"
+          body={`Saqua couldn't fetch your saved prospects just now. None of them have been lost, this only affects the list on this page. Try again in a moment. (${state.error})`}
           action={
             <Button variant="primary" onClick={load}>
               <RefreshCw className="size-4" /> Retry

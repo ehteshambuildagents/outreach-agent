@@ -26,8 +26,10 @@ const PLANS = [
     monthly: 65,
     yearly: 54,
     cta: "Coming soon",
+    // The prospect allowance is already the headline under the price, so it is
+    // deliberately NOT repeated as the first bullet: every card used to print it
+    // twice, a few lines apart, which reads like a rendering bug.
     features: [
-      "50 researched prospects / month",
       "Unlimited campaigns",
       "Full 5-touch follow-up cadence",
       "Automatic reply detection",
@@ -44,7 +46,6 @@ const PLANS = [
     featured: true,
     cta: "Coming soon",
     features: [
-      "100 researched prospects / month",
       "Everything in Starter",
       "Priority research queue",
       "Reply & campaign analytics",
@@ -62,7 +63,6 @@ const PLANS = [
     yearly: null,
     cta: "Talk to us",
     features: [
-      "300+ researched prospects / month",
       "Everything in Growth",
       "Team seats & shared campaigns",
       "Higher rate limits",

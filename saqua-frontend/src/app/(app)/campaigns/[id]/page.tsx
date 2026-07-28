@@ -31,6 +31,29 @@ type State =
   | { status: "error"; error: string; notFound?: boolean }
   | { status: "loaded"; campaign: CampaignDetail };
 
+/**
+ * What to say when an action does not go through.
+ *
+ * Each one names the state the campaign is actually left in, because that is the
+ * question being asked: after a failed launch, did anything send? After a failed
+ * pause, is it still sending? Every one of these actions is applied server-side
+ * or not at all, so the campaign is always left exactly as it was.
+ */
+const ACTION_FAILED: Record<"launch" | "pause" | "resume" | "cancel", string> = {
+  launch:
+    "Saqua couldn't start this campaign, so no emails were sent and no sequences were scheduled. " +
+    "It's still ready to launch whenever you are.",
+  pause:
+    "Saqua couldn't pause this campaign, so it is still sending. Try again in a moment, and if it " +
+    "keeps failing you can pause the individual sequences from the campaign list.",
+  resume:
+    "Saqua couldn't resume this campaign, so it is still paused and nothing is going out. " +
+    "Try again in a moment.",
+  cancel:
+    "Saqua couldn't cancel this campaign, so it is still active. Try again in a moment, and pause " +
+    "it in the meantime if you need sending to stop now.",
+};
+
 export default function CampaignDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -66,8 +89,9 @@ export default function CampaignDetailPage() {
     if (!res.ok) {
       setActionError(
         res.status === 400 && kind === "launch"
-          ? "No guard-approved emails with a valid recipient address. Nothing was launched."
-          : `${kind} failed: ${res.error}`,
+          ? "None of these prospects has a guard-approved email with a valid recipient address, " +
+            "so there was nothing to launch. Nothing was sent."
+          : `${ACTION_FAILED[kind]} (${res.error})`,
       );
       return;
     }

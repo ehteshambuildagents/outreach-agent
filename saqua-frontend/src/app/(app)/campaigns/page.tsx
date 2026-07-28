@@ -139,8 +139,8 @@ export default function CampaignsPage() {
       {state.status === "error" && (
         <EmptyState
           icon={Megaphone}
-          title="Couldn't load campaigns"
-          body={`Saqua could not reach the campaign backend: ${state.error}`}
+          title="Couldn't load your campaigns"
+          body={`Saqua couldn't fetch your campaign list just now. Nothing has been paused or changed, and anything already sending is still running. Try again in a moment. (${state.error})`}
           action={
             <Button variant="primary" onClick={load}>
               <RefreshCw className="size-4" /> Retry

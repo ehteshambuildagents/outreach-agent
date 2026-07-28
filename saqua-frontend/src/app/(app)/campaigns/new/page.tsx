@@ -91,11 +91,17 @@ export default function NewCampaignPage() {
       },
     });
     if (!res.ok) {
+      // Only a bare status or a dropped connection is unexplained. Anything the
+      // backend actually described (campaign_api.explain_failure says what ran,
+      // what broke and what to do) is already a better message than we can write
+      // here, so it is passed through untouched.
       const unreachable = /^HTTP 5\d\d$/.test(res.error) || res.error === "network error";
       setError(
         unreachable
-          ? `Couldn't reach the campaign service (${res.error}). Make sure the backend is running, then retry.`
-          : res.error || "The campaign wasn't created. Please retry.",
+          ? "Saqua couldn't reach its research service, so nothing was researched and no campaign was created. " +
+            "This is usually a brief hiccup on our side. Try again in a moment, and if it keeps happening, " +
+            "send us the time it occurred and we'll look into it."
+          : res.error || "The campaign wasn't created, and nothing was sent. Please try again.",
       );
       setPhase("error");
       return;
@@ -111,10 +117,18 @@ export default function NewCampaignPage() {
     const res = await api.launchCampaign(campaign.id, provider);
     setLaunching(false);
     if (!res.ok) {
+      // On a launch error the first thing anyone needs to know is whether
+      // something went out. Launching is atomic — a campaign either claims the
+      // launch and creates every sequence or creates none — so "nothing was
+      // sent" is a claim we can actually stand behind, and it is the one that
+      // stops someone re-clicking in a panic.
       setLaunchError(
         res.status === 400
-          ? "No guard-approved emails with a valid recipient address. Nothing was launched."
-          : `Launch failed: ${res.error}`,
+          ? "None of these prospects has a guard-approved email with a valid recipient address, " +
+            "so there was nothing to launch. Nothing was sent. Add a recipient on a prospect below, " +
+            "or rerun the campaign to draft fresh emails."
+          : "Saqua couldn't start this campaign, so no emails were sent and no sequences were scheduled. " +
+            `Nothing has changed. Please try again in a moment. (${res.error})`,
       );
       return;
     }
@@ -253,7 +267,7 @@ export default function NewCampaignPage() {
           // (campaign_api.explain_failure), so the heading stays neutral and the
           // explanation does the work. "Orchestration failed" told nobody anything.
           title="Campaign wasn't created"
-          body={error || "Saqua could not reach the campaign backend."}
+          body={error || "Saqua couldn't reach its research service, so nothing was researched and no campaign was created. Please try again in a moment."}
           action={
             <Button variant="primary" onClick={runOrchestration}>
               <RefreshCw className="size-4" /> Retry
