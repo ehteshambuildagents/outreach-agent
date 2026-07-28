@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useInView, useReducedMotion } from "framer-motion";
 
+import { useObserverBroken } from "./use-observer-health";
+
 /**
  * A number that ticks up to its value the first time it scrolls into view.
  *
@@ -24,13 +26,16 @@ export function CountUp({
   const ref = useRef<HTMLSpanElement>(null);
   const inView = useInView(ref, { once: true, margin: "-40px" });
   const reduced = useReducedMotion();
+  const observerBroken = useObserverBroken();
   const [n, setN] = useState(0);
 
   useEffect(() => {
     // Fail safe to the real number. A score is content, not decoration: if we
-    // cannot observe the scroll (reduced motion, or no IntersectionObserver at
-    // all) the badge must still read 92, never a stuck "0".
-    if (reduced || typeof IntersectionObserver === "undefined") {
+    // cannot observe the scroll (reduced motion, or an observer that never
+    // fires) the badge must still read 92, never a stuck "0". Testing for a
+    // missing IntersectionObserver is not enough — the webviews that break this
+    // do have the constructor, they just never call back.
+    if (reduced || observerBroken) {
       setN(to);
       return;
     }
@@ -45,7 +50,7 @@ export function CountUp({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [inView, reduced, to, duration]);
+  }, [inView, reduced, observerBroken, to, duration]);
 
   return (
     <span ref={ref} className={className} style={{ fontVariantNumeric: "tabular-nums" }}>

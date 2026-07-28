@@ -11,6 +11,7 @@ import {
 } from "framer-motion";
 import { Check, PenLine, Radar, Search, Send, ShieldCheck } from "lucide-react";
 import { CountUp } from "@/components/ui/count-up";
+import { useObserverBroken } from "@/components/ui/use-observer-health";
 import { cn } from "@/lib/utils";
 
 /**
@@ -45,11 +46,21 @@ const item: Variants = {
 /** Parent of a staggered group. Children reveal in DOM order, once, in view. */
 function Stagger({ children, className }: { children: React.ReactNode; className?: string }) {
   const reduced = useReducedMotion();
+  const observerBroken = useObserverBroken();
+  // An observer that never fires would leave every child parked at "hidden",
+  // so drop the gesture entirely and mount the group already shown.
+  if (reduced || observerBroken) {
+    return (
+      <motion.div className={className} variants={list} initial="show" animate="show">
+        {children}
+      </motion.div>
+    );
+  }
   return (
     <motion.div
       className={className}
       variants={list}
-      initial={reduced ? "show" : "hidden"}
+      initial="hidden"
       whileInView="show"
       viewport={{ once: true, margin: "-60px" }}
     >
@@ -240,6 +251,7 @@ const STEPS: {
 export function PipelineStory() {
   const ref = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
+  const observerBroken = useObserverBroken();
   // The rail tracks the section through the viewport: full by the time the last
   // step is read, not at the very bottom of the element.
   const { scrollYProgress } = useScroll({
@@ -267,9 +279,11 @@ export function PipelineStory() {
 
       {STEPS.map((s, i) => (
         <motion.div
-          key={s.label}
-          initial={reduced ? false : { opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
+          // `initial` is read once, at mount, so the key carries the flag: when
+          // the observer turns out to be dead the step remounts already shown.
+          key={observerBroken ? `${s.label}-shown` : s.label}
+          initial={reduced || observerBroken ? false : { opacity: 0, y: 16 }}
+          whileInView={observerBroken ? undefined : { opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-90px" }}
           transition={{ duration: 0.55, ease: EASE }}
           className={cn(
