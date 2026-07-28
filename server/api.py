@@ -671,28 +671,22 @@ def put_company(body: CompanyProfile, request: Request, _=Depends(_rl_write),
     return {"company": data}
 
 
-# ── Billing / plan (the user's real plan + free-tier usage) ────────────
-@app.get("/api/billing")
-def get_billing(request: Request, _=Depends(_rl_read),
-                user: str = Depends(require_member_or_demo)):
-    from config.settings import FREE_PROSPECT_LIMIT
-    usage = _store_for(user).load_usage()
-    used = len(usage.get("prospects") or [])
-    limit = FREE_PROSPECT_LIMIT
-    return {
-        "plan": "free",
-        "prospect_limit": limit,
-        "prospects_used": used,
-        "prospects_remaining": (max(0, limit - used) if limit > 0 else None),
-    }
+# ── Billing / plan ─────────────────────────────────────────────────────
+# GET /api/billing (plan + usage), checkout, portal, and the Lemon Squeezy webhook
+# now live in server.billing_api, registered below with the shared limiters and the
+# already-defined auth + per-user-store helpers injected (so it never imports back
+# into this module). The plan it reports is the user's REAL Lemon Squeezy plan, and
+# the same limit is what the chat gate enforces (billing.limit_for_user).
 
 
 # ── Automation Agent routes (Clerk-gated, per-user) ────────────────────
-from server import admin_api, automation_api, campaign_api, oauth_api  # noqa: E402
+from server import admin_api, automation_api, billing_api, campaign_api, oauth_api  # noqa: E402
 admin_api.register(app)                          # internal ops views (X-Admin-Token)
 automation_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
 oauth_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
 campaign_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
+billing_api.register(app, rl_read=_rl_read, rl_write=_rl_write, store_for=_store_for,
+                     member=require_approved_user, member_or_demo=require_member_or_demo)
 
 # Public (unauthenticated) waitlist. Deliberately NOT given _rl_read/_rl_write:
 # those count per-process and key on the proxy's IP, which is not good enough for

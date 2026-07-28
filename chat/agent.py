@@ -164,6 +164,15 @@ def _run_turn(conversation, user_text: str, store, user_id, emit):
             conversation.workspace["usage"] = store.load_usage()
         except Exception:  # noqa: BLE001 - never let usage IO break a reply
             pass
+    # The user's plan allowance (Free / Starter / Growth / Enterprise), resolved
+    # from their Stripe subscription and cached on the workspace so the research /
+    # write / send tools enforce the RIGHT cap — a paid plan lifts it above the
+    # Free constant. Fail-safe: any billing hiccup leaves the Free cap in force.
+    try:
+        from billing import limit_for_user
+        conversation.workspace["prospect_limit"] = limit_for_user(user_id)
+    except Exception:  # noqa: BLE001 - billing must never break a reply
+        pass
     # Learn from THIS message directly — a preference like "no emojis" or "never
     # say X" is captured whether or not it triggers a rewrite, so the user never
     # has to repeat it. style.learn only reacts to explicit style cues, so an

@@ -157,12 +157,16 @@ export interface CompanyProfile {
   tone: string;
 }
 
-/** The user's real plan + free-tier usage (GET /api/billing). */
+/** The user's real plan + usage (GET /api/billing). */
 export interface Billing {
   plan: string;
   prospect_limit: number;
   prospects_used: number;
   prospects_remaining: number | null;
+  /** LS subscription status ("active" | "on_trial" | "past_due" | "cancelled" | ... | "none"). */
+  status?: string;
+  /** Unix seconds the current paid period ends, when on a paid plan. */
+  current_period_end?: number | null;
 }
 
 export interface CampaignSummary {
@@ -512,6 +516,14 @@ export const api = {
   saveCompany: (body: CompanyProfile) =>
     req<{ company: CompanyProfile }>("/api/company", { method: "PUT", body: JSON.stringify(body) }),
   billing: () => req<Billing>("/api/billing"),
+  /** Start a Lemon Squeezy Checkout for a paid plan; returns the URL to redirect to. */
+  checkout: (plan: string, interval: "monthly" | "yearly" = "monthly") =>
+    req<{ url: string; id?: string }>("/api/billing/checkout", {
+      method: "POST",
+      body: JSON.stringify({ plan, interval }),
+    }),
+  /** Open the Lemon Squeezy customer portal to manage/cancel an existing subscription. */
+  billingPortal: () => req<{ url: string }>("/api/billing/portal", { method: "POST" }),
 
   workflows: () => req<{ workflows: WorkflowStatus[] }>("/api/automation/workflows"),
   workflow: (id: string) => req<WorkflowStatus & { events: WorkflowEvent[] }>(`/api/automation/workflows/${id}`),

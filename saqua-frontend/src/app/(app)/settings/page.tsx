@@ -37,6 +37,15 @@ const mailboxProviders = [
   ["outlook", "Outlook", "Connect Microsoft inboxes for sending"],
 ] as const;
 
+// Self-serve, checkout-able tiers (Enterprise is sales-assisted). Ids are the
+// canonical plan ids the API reports (pro/max); prospect counts must match the
+// backend PLAN_LIMITS so the card and the enforced cap agree. (The public /pricing
+// page still markets these as Starter/Growth; the backend accepts both.)
+const planTiers = [
+  { id: "pro", name: "Pro", prospects: 50, price: 65 },
+  { id: "max", name: "Max", prospects: 100, price: 100 },
+] as const;
+
 export default function SettingsPage() {
   const { isDemo } = useDemo();
   const { user } = useUser();
@@ -53,6 +62,42 @@ export default function SettingsPage() {
   const [companySaved, setCompanySaved] = useState(false);
 
   const [billing, setBilling] = useState<Billing | null>(null);
+  const [checkoutBusy, setCheckoutBusy] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState("");
+  const [checkoutNotice, setCheckoutNotice] = useState<"success" | "cancel" | null>(null);
+
+  function reloadBilling() {
+    void api.billing().then((result) => {
+      if (result.ok) setBilling(result.data);
+    });
+  }
+
+  function startCheckout(plan: string) {
+    setCheckoutBusy(plan);
+    setCheckoutError("");
+    void api.checkout(plan).then((result) => {
+      if (!result.ok) {
+        setCheckoutBusy(null);
+        setCheckoutError(result.error);
+        return;
+      }
+      // Hand off to Lemon Squeezy's hosted Checkout (leaves the app).
+      window.location.href = result.data.url;
+    });
+  }
+
+  function openPortal() {
+    setCheckoutBusy("portal");
+    setCheckoutError("");
+    void api.billingPortal().then((result) => {
+      if (!result.ok) {
+        setCheckoutBusy(null);
+        setCheckoutError(result.error);
+        return;
+      }
+      window.location.href = result.data.url;
+    });
+  }
 
   function saveCompany() {
     setSavingCompany(true);
@@ -155,6 +200,20 @@ export default function SettingsPage() {
     return () => {
       mounted = false;
     };
+  }, []);
+
+  // Returning from Lemon Squeezy Checkout: show a confirmation/cancel note and, on
+  // success, refetch the plan (the webhook may have just flipped it) — then strip
+  // the ?checkout= flag so a refresh doesn't re-show the banner.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get("checkout");
+    if (outcome !== "success" && outcome !== "cancel") return;
+    setCheckoutNotice(outcome);
+    if (outcome === "success") reloadBilling();
+    params.delete("checkout");
+    const qs = params.toString();
+    window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
   }, []);
 
   return (
@@ -367,11 +426,28 @@ export default function SettingsPage() {
               <CreditCard className="size-4 text-muted" />
             </CardHeader>
             <CardContent>
+              {checkoutNotice === "success" && (
+                <div className="mb-4 rounded-md border border-success-soft bg-success-soft p-3 text-sm text-success">
+                  Payment received. Your plan is updated — it can take a few seconds to
+                  reflect here after a fresh checkout.
+                </div>
+              )}
+              {checkoutNotice === "cancel" && (
+                <div className="mb-4 rounded-md border border-border-faint bg-black/[0.02] p-3 text-sm text-text-2">
+                  Checkout canceled. You&apos;re still on your current plan.
+                </div>
+              )}
+
               <div className="rounded-lg border border-accent-line bg-accent-soft p-5">
                 <div className="text-sm text-muted">Current plan</div>
                 <div className="mt-2 text-2xl font-semibold capitalize text-text">
                   {billing ? `${billing.plan} plan` : "…"}
                 </div>
+                {billing && billing.status === "past_due" && (
+                  <div className="mt-2 rounded-md border border-danger-soft bg-danger-soft p-2 text-xs text-danger">
+                    Your last payment failed. Update your card to keep your plan.
+                  </div>
+                )}
                 {billing && billing.prospect_limit > 0 ? (
                   <>
                     <div className="mt-1 text-sm text-text-2">
@@ -387,8 +463,8 @@ export default function SettingsPage() {
                     </div>
                     <div className="mt-3 text-xs text-muted">
                       {(billing.prospects_remaining ?? 0) > 0
-                        ? `${billing.prospects_remaining} prospect${billing.prospects_remaining === 1 ? "" : "s"} left on the free plan.`
-                        : "You've used all your free prospects. Upgrade to keep going."}
+                        ? `${billing.prospects_remaining} prospect${billing.prospects_remaining === 1 ? "" : "s"} left on the ${billing.plan} plan.`
+                        : `You've used all ${billing.prospect_limit} prospects on the ${billing.plan} plan. Upgrade to keep going.`}
                     </div>
                   </>
                 ) : (
@@ -397,9 +473,56 @@ export default function SettingsPage() {
                   </div>
                 )}
               </div>
-              <Button asChild variant="primary" className="mt-5 w-full">
-                <Link href="/pricing">Upgrade plan</Link>
-              </Button>
+
+              {checkoutError && (
+                <div className="mt-4 rounded-md border border-danger-soft bg-danger-soft p-3 text-sm text-danger">
+                  {checkoutError}
+                </div>
+              )}
+
+              {isDemo ? (
+                // A demo visitor has no account to attach a subscription to, so the
+                // upgrade path points them to create one rather than 401ing on checkout.
+                <Button asChild variant="primary" className="mt-5 w-full">
+                  <Link href="/#waitlist">Create an account to upgrade</Link>
+                </Button>
+              ) : (
+                <div className="mt-5 space-y-2">
+                  {planTiers
+                    .filter((tier) => !billing || tier.prospects > billing.prospect_limit)
+                    .map((tier) => (
+                      <Button
+                        key={tier.id}
+                        variant="primary"
+                        className="w-full justify-between"
+                        onClick={() => startCheckout(tier.id)}
+                        disabled={checkoutBusy !== null}
+                      >
+                        <span>
+                          {checkoutBusy === tier.id ? "Starting checkout…" : `Upgrade to ${tier.name}`}
+                        </span>
+                        <span className="text-xs opacity-80">
+                          {tier.prospects} prospects · ${tier.price}/mo
+                        </span>
+                      </Button>
+                    ))}
+
+                  {billing && billing.status && !["none", ""].includes(billing.status) && (
+                    <Button
+                      variant="secondary"
+                      className="w-full"
+                      onClick={openPortal}
+                      disabled={checkoutBusy !== null}
+                    >
+                      {checkoutBusy === "portal" ? "Opening…" : "Manage billing"}
+                    </Button>
+                  )}
+
+                  <Button asChild variant="ghost" className="w-full">
+                    <Link href="/contact">Need more? Talk to us about Enterprise</Link>
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
 

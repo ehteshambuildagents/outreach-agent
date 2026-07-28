@@ -323,9 +323,95 @@ GUARD_MONTHLY_BUDGET_USD = 200.0
 # small number of distinct prospects (research → write → send), after which the
 # chat prompts an upgrade. Metered per-user (chat/store `_usage.json`), counted
 # on research (the gateway to a prospect). Set FREE_PROSPECT_LIMIT=0 to disable
-# the cap (e.g. local dev). The paid plans on /pricing are Starter (50) / Growth
-# (150) / Enterprise — wire a real plan lookup here when billing exists.
+# the cap (e.g. local dev). This is now just the FREE tier's allowance: paid plans
+# come from the user's Lemon Squeezy subscription via the `billing` package, whose
+# PLAN_LIMITS reads this same value for Free (Pro 50 / Max 100 / Enterprise 300).
+# The chat gate resolves the caller's real plan (billing.limit_for_user).
 FREE_PROSPECT_LIMIT = int(os.getenv("FREE_PROSPECT_LIMIT", "3"))
+
+
+# ── Lemon Squeezy billing (Test mode until live keys are set) ──────────
+# Lemon Squeezy is a Merchant of Record: it owns checkout, tax, and the customer
+# portal, and talks to us over one signed webhook. Billing is OFF unless
+# LEMONSQUEEZY_API_KEY *and* LEMONSQUEEZY_STORE_ID are set: with either unset,
+# /api/billing still reports the user's plan (Free) and the checkout endpoint
+# returns a clean 503 — nothing breaks, there is just nothing to buy. Flip the LS
+# store to Test mode and use a test API key + a test-store webhook secret until a
+# real Test-mode checkout has verified the flow end to end (see BILLING_RUNBOOK.md).
+# All backend-only; never sent to the browser.
+LEMONSQUEEZY_API_KEY = (os.getenv("LEMONSQUEEZY_API_KEY") or "").strip()
+LEMONSQUEEZY_STORE_ID = (os.getenv("LEMONSQUEEZY_STORE_ID") or "").strip()
+# The webhook's signing secret (Settings → Webhooks in the LS dashboard). LS signs
+# the raw body with HMAC-SHA256 and sends the hex digest in the X-Signature header.
+LEMONSQUEEZY_WEBHOOK_SECRET = (os.getenv("LEMONSQUEEZY_WEBHOOK_SECRET") or "").strip()
+LEMONSQUEEZY_API_BASE = os.getenv("LEMONSQUEEZY_API_BASE",
+                                  "https://api.lemonsqueezy.com").rstrip("/")
+
+# Which LS *variant* the checkout uses, per (plan, billing interval). A variant is
+# the purchasable price of a product; create the products/variants in the LS
+# dashboard (Test mode first) and paste their numeric variant ids here. Canonical
+# plan ids are pro/max; the monthly ids use the short env names
+# LEMON_SQUEEZY_{PRO,MAX}_VARIANT_ID, with the older LEMONSQUEEZY_VARIANT_*_MONTHLY
+# accepted as fallbacks. A plan with no variant configured simply can't be checked
+# out (clean 400).
+LEMONSQUEEZY_VARIANT_IDS = {
+    "pro_monthly": (os.getenv("LEMON_SQUEEZY_PRO_VARIANT_ID")
+                    or os.getenv("LEMONSQUEEZY_VARIANT_PRO_MONTHLY")
+                    or os.getenv("LEMONSQUEEZY_VARIANT_STARTER_MONTHLY") or "").strip(),
+    "pro_yearly": (os.getenv("LEMON_SQUEEZY_PRO_YEARLY_VARIANT_ID")
+                   or os.getenv("LEMONSQUEEZY_VARIANT_PRO_YEARLY") or "").strip(),
+    "max_monthly": (os.getenv("LEMON_SQUEEZY_MAX_VARIANT_ID")
+                    or os.getenv("LEMONSQUEEZY_VARIANT_MAX_MONTHLY")
+                    or os.getenv("LEMONSQUEEZY_VARIANT_GROWTH_MONTHLY") or "").strip(),
+    "max_yearly": (os.getenv("LEMON_SQUEEZY_MAX_YEARLY_VARIANT_ID")
+                   or os.getenv("LEMONSQUEEZY_VARIANT_MAX_YEARLY") or "").strip(),
+}
+
+# Marketing/legacy plan name -> canonical id (kept in sync with billing.PLAN_ALIASES;
+# duplicated here because settings must not import billing — billing imports settings).
+_PLAN_ALIASES = {"starter": "pro", "growth": "max"}
+
+
+def _canon_plan(plan: str) -> str:
+    p = (plan or "").strip().lower()
+    return _PLAN_ALIASES.get(p, p)
+
+
+def lemonsqueezy_variant_id(plan: str, interval: str = "monthly") -> str:
+    """The configured LS variant id for a plan/interval, or '' if unset.
+
+    Accepts the marketing aliases (starter/growth) as well as pro/max."""
+    key = f"{_canon_plan(plan)}_{(interval or 'monthly').lower()}"
+    return LEMONSQUEEZY_VARIANT_IDS.get(key, "")
+
+
+def variant_to_plan(variant_id) -> str:
+    """Reverse map an LS variant id -> canonical plan name ('pro'/'max'), else ''.
+
+    Used by the webhook to name the plan from the subscription's variant when the
+    checkout's custom_data.plan is absent."""
+    vid = str(variant_id or "").strip()
+    if not vid:
+        return ""
+    for key, configured in LEMONSQUEEZY_VARIANT_IDS.items():
+        if configured and configured == vid:
+            return key.split("_", 1)[0]   # "max_monthly" -> "max"
+    return ""
+
+
+def lemonsqueezy_enabled() -> bool:
+    """True when LS can transact (API key + store id both configured)."""
+    return bool(LEMONSQUEEZY_API_KEY and LEMONSQUEEZY_STORE_ID)
+
+
+# Where Lemon Squeezy Checkout returns the browser. The frontend origin owns these
+# pages; the query flag lets Settings refresh the plan and show a confirm/cancel note.
+BILLING_SUCCESS_URL = (os.getenv("BILLING_SUCCESS_URL")
+                       or (os.getenv("FRONTEND_URL", "http://localhost:3200").rstrip("/")
+                           + "/settings?checkout=success"))
+BILLING_CANCEL_URL = (os.getenv("BILLING_CANCEL_URL")
+                      or (os.getenv("FRONTEND_URL", "http://localhost:3200").rstrip("/")
+                          + "/settings?checkout=cancel"))
 
 
 # ── Per-user usage caps & account kill switch (public-signup safety) ────

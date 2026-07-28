@@ -123,6 +123,20 @@ def _free_limit() -> int:
     return int(getattr(settings, "FREE_PROSPECT_LIMIT", 3))
 
 
+def _plan_limit(conversation) -> int:
+    """The prospect allowance to enforce for THIS user.
+
+    Their real plan limit is resolved from billing once per turn and cached on the
+    workspace by ``chat.agent`` (``prospect_limit``); a paid plan lifts the cap
+    above the Free constant. Falls back to the Free limit whenever it is absent
+    (no billing, older turn, any resolution failure), so enforcement never opens
+    up by accident. 0 means unlimited, matching FREE_PROSPECT_LIMIT=0."""
+    lim = conversation.workspace.get("prospect_limit")
+    if isinstance(lim, int) and lim >= 0:
+        return lim
+    return _free_limit()
+
+
 def _usage_prospects(conversation) -> list:
     u = conversation.workspace.get("usage")
     if isinstance(u, dict) and isinstance(u.get("prospects"), list):
@@ -140,8 +154,8 @@ def _prospect_key(company=None, url=None) -> str:
 
 
 def _free_slot_blocked(conversation, key: str) -> bool:
-    """True if working a NEW prospect `key` would exceed the free plan cap."""
-    limit = _free_limit()
+    """True if working a NEW prospect `key` would exceed the user's plan cap."""
+    limit = _plan_limit(conversation)
     if limit <= 0 or not key:
         return False
     used = _usage_prospects(conversation)
@@ -149,7 +163,7 @@ def _free_slot_blocked(conversation, key: str) -> bool:
 
 
 def _remaining_prospects(conversation) -> int:
-    limit = _free_limit()
+    limit = _plan_limit(conversation)
     if limit <= 0:
         return 10 ** 9
     return max(0, limit - len(_usage_prospects(conversation)))
@@ -167,12 +181,12 @@ def _record_prospect(conversation, *keys) -> dict:
     return u
 
 
-def _upgrade_result() -> ToolResult:
-    limit = _free_limit()
+def _upgrade_result(conversation) -> ToolResult:
+    limit = _plan_limit(conversation)
     return ToolResult(summary=(
-        f"The user has used all {limit} prospects on their free plan, and this "
+        f"The user has used all {limit} prospects on their current plan, and this "
         f"would be a new one. Do NOT research, write, or send for a new prospect. "
-        f"Warmly tell them they've hit the free limit of {limit} prospects and need "
+        f"Warmly tell them they've hit their plan limit of {limit} prospects and need "
         f"to upgrade to keep going — point them to Pricing (in Settings, or the "
         f"/pricing page). They can still revisit the prospects they've already "
         f"worked."))
@@ -266,7 +280,7 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
 
     # Free-tier gate: a new prospect beyond the plan cap is not researched.
     if _free_slot_blocked(conversation, _prospect_key(company=query, url=url)):
-        return _upgrade_result()
+        return _upgrade_result(conversation)
 
     try:
         result = research_company(url, find_founder=find_founder)
@@ -359,7 +373,7 @@ def _tool_deep_research(inp: dict, conversation) -> ToolResult:
 
     # Free-tier gate: a new prospect beyond the plan cap is not researched.
     if _free_slot_blocked(conversation, _prospect_key(company=company or query, url=url)):
-        return _upgrade_result()
+        return _upgrade_result(conversation)
 
     try:
         intel = orchestrator.research(company, url=url, focus=focus)
@@ -1229,7 +1243,7 @@ def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
     # Free-tier gate: research at most the remaining prospect allowance.
     remaining = _remaining_prospects(conversation)
     if remaining <= 0:
-        return _upgrade_result()
+        return _upgrade_result(conversation)
     truncated = len(leads) > remaining
     if truncated:
         leads = leads[:remaining]
@@ -1258,8 +1272,8 @@ def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
              f"({e['recommendation'] or e['status']}) — {e['preview']}"
              for i, e in enumerate(prospects, 1)]
     more = " More candidates are available for a bigger batch." if has_more else ""
-    cap_note = (f" NOTE: the free plan is limited to {_free_limit()} prospects, so "
-                "only that many were researched here — tell the user this and that "
+    cap_note = (f" NOTE: this plan is limited to {_plan_limit(conversation)} prospects, "
+                "so only that many were researched here — tell the user this and that "
                 "upgrading unlocks more." if truncated else "")
     return ToolResult(
         summary=("Researched a scored prospect list (shown as an interactive card: "
