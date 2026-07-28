@@ -13,6 +13,10 @@ import { api, type ConversationSummary } from "@/lib/api";
 type ChatNav = {
   conversations: ConversationSummary[];
   activeId: string | null;
+  // Bumped on every explicit `open()` so the chat page can re-fetch the SAME
+  // conversation after a failed load — clicking a Recents item that errored last
+  // time must retry, and setActiveId(sameValue) alone would not re-run the effect.
+  openNonce: number;
   refresh: () => void;
   open: (id: string) => void;
   startNew: () => void;
@@ -33,6 +37,7 @@ export function ChatNavProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [openNonce, setOpenNonce] = useState(0);
 
   const refresh = useCallback(() => {
     void api.conversations().then((r) => r.ok && setConversations(r.data.conversations || []));
@@ -44,6 +49,10 @@ export function ChatNavProvider({ children }: { children: React.ReactNode }) {
   const open = useCallback(
     (id: string) => {
       setActiveId(id);
+      // Force the load effect to run even if the id is unchanged (retry after a
+      // failed load). setActive() — used post-send to just highlight — does NOT
+      // bump this, so a freshly created conversation is never needlessly re-fetched.
+      setOpenNonce((n) => n + 1);
       if (pathname !== "/ai") router.push("/ai");
     },
     [pathname, router],
@@ -61,7 +70,7 @@ export function ChatNavProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ conversations, activeId, refresh, open, startNew, remove, setActive: setActiveId }}>
+    <Ctx.Provider value={{ conversations, activeId, openNonce, refresh, open, startNew, remove, setActive: setActiveId }}>
       {children}
     </Ctx.Provider>
   );

@@ -48,7 +48,7 @@ const ACTION_PROMPT: Record<string, (company: string) => string> = {
 };
 
 export default function AIChatPage() {
-  const { activeId, setActive, refresh } = useChatNav();
+  const { activeId, openNonce, setActive, refresh } = useChatNav();
   // Demo sessions meter turns server-side; refreshing right after a send keeps
   // the banner's remaining-messages count and the engagement prompt honest
   // instead of waiting up to a minute for the background poll.
@@ -77,6 +77,10 @@ export default function AIChatPage() {
   }, [messages, sending]);
 
   // Load whichever conversation the sidebar selected (or reset for a new chat).
+  // Re-runs on openNonce too, so clicking a Recents item whose load just failed
+  // retries the fetch even though activeId is unchanged. The activeId===convId
+  // guard still skips a needless refetch of an already-loaded conversation
+  // (after an error convId is null, so a retry falls through to the fetch).
   useEffect(() => {
     if (activeId === convId) return;
     if (!activeId) {
@@ -104,7 +108,7 @@ export default function AIChatPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId]);
+  }, [activeId, openNonce]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });

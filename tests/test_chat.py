@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from chat import agent, resolver, tools  # noqa: E402
 from chat.context import research_digest, workspace_state_text  # noqa: E402
-from chat.models import Conversation, EMAIL, RESEARCH, Message  # noqa: E402
+from chat.models import Conversation, EMAIL, RESEARCH, TEXT, Message  # noqa: E402
 from chat.store import ConversationStore  # noqa: E402
 
 
@@ -418,6 +418,51 @@ class StoreTests(unittest.TestCase):
     def test_load_missing_returns_none(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertIsNone(ConversationStore(directory=d).load("nope"))
+
+    def test_conversation_reopens_after_restart(self):
+        """The 'reopen a saved conversation' contract, end to end and offline.
+
+        Regression guard for the reported "saved conversation won't reopen after
+        refresh" symptom. A refresh throws away the in-memory activeId and reloads
+        the thread list from disk, so the guarantee that must hold is: a brand-new
+        store instance over the same directory (a fresh process / fresh page) can
+        (1) list the thread in the sidebar and (2) load back the FULL renderable
+        transcript — every message, in order, with card kinds and payloads intact.
+        Uses only local-disk ConversationStore: zero Apollo/Exa/Tavily/Firecrawl/
+        LLM calls, so it never spends API budget reproducing an intermittent UI bug.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            conv = Conversation(title="Linear")
+            conv.add_user("Research linear.app as a prospect")
+            conv.add(Message(role="assistant", kind=RESEARCH,
+                             content="Here's what I found on Linear.",
+                             data=_research_ok(company="Linear")))
+            conv.add(Message(role="assistant", kind=EMAIL, content="Drafted an opener.",
+                             data={"subject": "warehouse robots", "body": "Hey Bob,"}))
+            conv.add(Message(role="assistant", kind=TEXT,
+                             content="Want me to tweak the subject line?", data=None))
+            ConversationStore(directory=d).save(conv)
+
+            # A DIFFERENT instance over the same dir == the post-refresh reload.
+            reopened_store = ConversationStore(directory=d)
+
+            summaries = reopened_store.list_summaries()
+            self.assertEqual(len(summaries), 1)
+            self.assertEqual(summaries[0]["id"], conv.id)
+            self.assertEqual(summaries[0]["title"], "Linear")
+            self.assertEqual(summaries[0]["message_count"], 4)
+
+            reopened = reopened_store.load(conv.id)
+            self.assertIsNotNone(reopened)
+            self.assertEqual([m.kind for m in reopened.messages],
+                             [TEXT, RESEARCH, EMAIL, TEXT])
+            self.assertEqual(reopened.messages[0].role, "user")
+            # The cards the sidebar-reopened pane renders keep their payloads, so the
+            # transcript is not a blank pane: research score + draft body survive.
+            self.assertEqual(reopened.messages[1].data["research_score"], 72)
+            self.assertEqual(reopened.messages[2].data["body"], "Hey Bob,")
+            self.assertEqual(reopened.messages[3].content,
+                             "Want me to tweak the subject line?")
 
 
 # ── Agent loop (Claude tool-use mocked) ────────────────────────────────
