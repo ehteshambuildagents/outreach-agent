@@ -3,9 +3,14 @@ import { randomUUID } from "crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Not exported: a route module may only export Next's own reserved names.
-const MAX_DURATION_SECONDS = 300;
-export const maxDuration = MAX_DURATION_SECONDS;
+// MUST stay a literal. Next reads this at build time by statically analysing the
+// module, and it does not resolve identifiers: assigning from a named constant
+// (`export const maxDuration = MAX_DURATION_SECONDS`) builds fine but is silently
+// discarded — "Unknown identifier at maxDuration ... the default config will be
+// used instead" — dropping the function back to the platform default of 10-15s.
+// A campaign create runs ~200s, so every one of them was being killed by the host
+// long before the 290s abort below could return an explained 502.
+export const maxDuration = 300;
 
 const RAW_API_ORIGIN = process.env.SAQUA_API_ORIGIN?.trim();
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
@@ -40,8 +45,10 @@ if (IS_PRODUCTION && !API_ORIGIN) {
 // code: at 10 minutes against a 5-minute maxDuration the host always won, and a
 // slow campaign returned an opaque platform timeout instead of the explained
 // 502 with a trace id that this handler is built to return. Derived from
-// MAX_DURATION_SECONDS so the two cannot drift apart again.
-const PROXY_TIMEOUT_MS = (MAX_DURATION_SECONDS - 10) * 1000;
+// `maxDuration` itself so the two cannot drift apart again — reading the exported
+// const here is fine, it is only the export's own initializer that Next needs to
+// be a literal.
+const PROXY_TIMEOUT_MS = (maxDuration - 10) * 1000;
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "content-encoding",
