@@ -37,15 +37,15 @@ money, not just on the Settings card.
 ## 1. One-time Lemon Squeezy dashboard setup (Test mode)
 
 1. LS Dashboard → toggle **Test mode** (top of the sidebar).
-2. **Store**: note the numeric **Store ID** (Settings → Stores) → `LEMONSQUEEZY_STORE_ID`.
+2. **Store**: note the numeric **Store ID** (Settings → Stores) → `LEMON_SQUEEZY_STORE_ID`.
 3. **Products** → create two subscription products, each with a **monthly** variant:
    - `Saqua Starter` (Pro, 50) → $65/mo → open the variant, copy its numeric
      **variant id** → `LEMON_SQUEEZY_PRO_VARIANT_ID`
    - `Saqua Growth` (Max, 100) → $100/mo → copy the variant id → `LEMON_SQUEEZY_MAX_VARIANT_ID`
    - (Optional yearly variants → `LEMON_SQUEEZY_PRO_YEARLY_VARIANT_ID` / `..._MAX_YEARLY_VARIANT_ID`.)
-4. **Settings → API** → create a **test** API key → `LEMONSQUEEZY_API_KEY`.
+4. **Settings → API** → create a **test** API key → `LEMON_SQUEEZY_API_KEY`.
 5. **Settings → Webhooks** → **+** → URL `https://<api-host>/api/billing/webhook`,
-   set a **signing secret** → `LEMONSQUEEZY_WEBHOOK_SECRET`, and subscribe to the
+   set a **signing secret** → `LEMON_SQUEEZY_WEBHOOK_SECRET`, and subscribe to the
    events in section 3.
 
 Put these in the backend `.env` (see `.env.example` "Lemon Squeezy billing" block).
@@ -59,8 +59,8 @@ LS has no `stripe listen`; the webhook needs a publicly reachable URL, so tunnel
 your local backend:
 
 ```bash
-# backend env: LEMONSQUEEZY_API_KEY, LEMONSQUEEZY_STORE_ID, the two variant ids,
-# LEMONSQUEEZY_WEBHOOK_SECRET, DATABASE_URL empty (SQLite).
+# backend env: LEMON_SQUEEZY_API_KEY, LEMON_SQUEEZY_STORE_ID, the two variant ids,
+# LEMON_SQUEEZY_WEBHOOK_SECRET, DATABASE_URL empty (SQLite).
 python -m automation.migrate          # creates billing_* tables (0002 + 0004 + 0005)
 uvicorn server.api:app --port 8000
 
@@ -159,8 +159,8 @@ test subscription (cancel, pause, resume) or **Resend** a past delivery.
 
 1. **Settings → Webhooks → Add endpoint** → `https://<api-host>/api/billing/webhook`.
 2. Subscribe to the events in section 3 and set the signing secret.
-3. Copy the signing secret → `LEMONSQUEEZY_WEBHOOK_SECRET` on the **backend** service
-   (Railway), alongside `LEMONSQUEEZY_API_KEY`, `LEMONSQUEEZY_STORE_ID`, and the
+3. Copy the signing secret → `LEMON_SQUEEZY_WEBHOOK_SECRET` on the **backend** service
+   (Railway), alongside `LEMON_SQUEEZY_API_KEY`, `LEMON_SQUEEZY_STORE_ID`, and the
    variant ids. These go on the API service, **not** the frontend.
 4. Run `python -m automation.migrate` against the production `DATABASE_URL` once so
    `billing_*` (0002/0004) and the `portal_url` column (0005) exist.

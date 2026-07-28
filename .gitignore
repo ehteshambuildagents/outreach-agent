@@ -34,6 +34,9 @@ package-lock.json.tmp
 saqua-frontend/.next/
 saqua-frontend/.next-dev/
 saqua-frontend/node_modules/
+# Generated TypeScript incremental build cache (not source).
+*.tsbuildinfo
+saqua-frontend/tsconfig.tsbuildinfo
 
 # Build artifacts
 dist/

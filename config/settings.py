@@ -333,19 +333,28 @@ FREE_PROSPECT_LIMIT = int(os.getenv("FREE_PROSPECT_LIMIT", "3"))
 # ── Lemon Squeezy billing (Test mode until live keys are set) ──────────
 # Lemon Squeezy is a Merchant of Record: it owns checkout, tax, and the customer
 # portal, and talks to us over one signed webhook. Billing is OFF unless
-# LEMONSQUEEZY_API_KEY *and* LEMONSQUEEZY_STORE_ID are set: with either unset,
+# LEMON_SQUEEZY_API_KEY *and* LEMON_SQUEEZY_STORE_ID are set: with either unset,
 # /api/billing still reports the user's plan (Free) and the checkout endpoint
 # returns a clean 503 — nothing breaks, there is just nothing to buy. Flip the LS
 # store to Test mode and use a test API key + a test-store webhook secret until a
 # real Test-mode checkout has verified the flow end to end (see BILLING_RUNBOOK.md).
 # All backend-only; never sent to the browser.
-LEMONSQUEEZY_API_KEY = (os.getenv("LEMONSQUEEZY_API_KEY") or "").strip()
-LEMONSQUEEZY_STORE_ID = (os.getenv("LEMONSQUEEZY_STORE_ID") or "").strip()
+#
+# Env-var names match the Lemon Squeezy convention LEMON_SQUEEZY_* (the exact names
+# set on Railway). The older no-underscore LEMONSQUEEZY_* names are still read as a
+# fallback so an existing deployment keeps working; the Python attribute names below
+# stay LEMONSQUEEZY_* (they are not env keys).
+LEMONSQUEEZY_API_KEY = (os.getenv("LEMON_SQUEEZY_API_KEY")
+                        or os.getenv("LEMONSQUEEZY_API_KEY") or "").strip()
+LEMONSQUEEZY_STORE_ID = (os.getenv("LEMON_SQUEEZY_STORE_ID")
+                         or os.getenv("LEMONSQUEEZY_STORE_ID") or "").strip()
 # The webhook's signing secret (Settings → Webhooks in the LS dashboard). LS signs
 # the raw body with HMAC-SHA256 and sends the hex digest in the X-Signature header.
-LEMONSQUEEZY_WEBHOOK_SECRET = (os.getenv("LEMONSQUEEZY_WEBHOOK_SECRET") or "").strip()
-LEMONSQUEEZY_API_BASE = os.getenv("LEMONSQUEEZY_API_BASE",
-                                  "https://api.lemonsqueezy.com").rstrip("/")
+LEMONSQUEEZY_WEBHOOK_SECRET = (os.getenv("LEMON_SQUEEZY_WEBHOOK_SECRET")
+                               or os.getenv("LEMONSQUEEZY_WEBHOOK_SECRET") or "").strip()
+LEMONSQUEEZY_API_BASE = (os.getenv("LEMON_SQUEEZY_API_BASE")
+                         or os.getenv("LEMONSQUEEZY_API_BASE")
+                         or "https://api.lemonsqueezy.com").rstrip("/")
 
 # Which LS *variant* the checkout uses, per (plan, billing interval). A variant is
 # the purchasable price of a product; create the products/variants in the LS

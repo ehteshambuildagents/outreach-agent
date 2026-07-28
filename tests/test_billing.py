@@ -133,6 +133,59 @@ class PlanModelTests(unittest.TestCase):
         self.assertEqual(ent["current_period_end"], 999.0)
 
 
+# ── Env-var name mapping (regression: Railway uses LEMON_SQUEEZY_*) ──────
+class EnvNameMappingTests(unittest.TestCase):
+    """The Railway variables are LEMON_SQUEEZY_* (with the underscore). Settings
+    must read those exact names, so a real deploy is 'configured' and the webhook
+    stops returning the 'billing not configured' 503. The older no-underscore
+    LEMONSQUEEZY_* names remain valid as a fallback."""
+
+    _KEYS = ["LEMON_SQUEEZY_API_KEY", "LEMON_SQUEEZY_STORE_ID",
+             "LEMON_SQUEEZY_WEBHOOK_SECRET", "LEMONSQUEEZY_API_KEY",
+             "LEMONSQUEEZY_STORE_ID", "LEMONSQUEEZY_WEBHOOK_SECRET"]
+
+    def _snapshot_with(self, env):
+        """Reload config.settings under ``env`` and return a snapshot of the
+        resolved values (importlib.reload mutates the module in place, so we read
+        while the env is applied, then restore the original env and reload back)."""
+        import importlib
+        saved = {k: os.environ.pop(k, None) for k in self._KEYS}
+        try:
+            os.environ.update(env)
+            import config.settings as s
+            importlib.reload(s)
+            return {"api_key": s.LEMONSQUEEZY_API_KEY,
+                    "store_id": s.LEMONSQUEEZY_STORE_ID,
+                    "secret": s.LEMONSQUEEZY_WEBHOOK_SECRET,
+                    "enabled": s.lemonsqueezy_enabled()}
+        finally:
+            for k in self._KEYS:
+                os.environ.pop(k, None)
+                if saved[k] is not None:
+                    os.environ[k] = saved[k]
+            import config.settings as s
+            importlib.reload(s)
+
+    def test_railway_underscore_names_configure_billing(self):
+        snap = self._snapshot_with({"LEMON_SQUEEZY_API_KEY": "ls_test_railway",
+                                    "LEMON_SQUEEZY_STORE_ID": "42",
+                                    "LEMON_SQUEEZY_WEBHOOK_SECRET": "whsec_rw"})
+        self.assertEqual(snap["api_key"], "ls_test_railway")
+        self.assertEqual(snap["store_id"], "42")
+        self.assertEqual(snap["secret"], "whsec_rw")
+        self.assertTrue(snap["enabled"])
+
+    def test_legacy_no_underscore_names_still_read(self):
+        snap = self._snapshot_with({"LEMONSQUEEZY_API_KEY": "ls_legacy",
+                                    "LEMONSQUEEZY_STORE_ID": "7"})
+        self.assertEqual(snap["api_key"], "ls_legacy")
+        self.assertEqual(snap["store_id"], "7")
+        self.assertTrue(snap["enabled"])
+
+    def test_unset_is_disabled(self):
+        self.assertFalse(self._snapshot_with({})["enabled"])
+
+
 # ── Webhook signature verification (LS: raw-body HMAC, hex, no timestamp) ─
 class SignatureTests(unittest.TestCase):
     def test_roundtrip_verifies(self):
