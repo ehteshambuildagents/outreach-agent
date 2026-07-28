@@ -163,10 +163,22 @@ def register(app, rl_read=None, rl_write=None):
             result, status, events = _run_pipeline(user, body, trace_id=trace_id)
             completed = "Research and drafting"
             log.info("campaign_stage_start trace_id=%s stage=persist status=%s", trace_id, status)
-            campaign = campaigns.create(
-                owner=user, idempotency_key=key, name=body.name,
-                request=body.model_dump(), result=result, status=status,
-            )
+            try:
+                campaign = campaigns.create(
+                    owner=user, idempotency_key=key, name=body.name,
+                    request=body.model_dump(), result=result, status=status,
+                )
+            except Exception:  # noqa: BLE001 - most likely the UNIQUE(owner, key) constraint
+                # A concurrent request with the same idempotency key (e.g. a client
+                # retry after a slow response) won the INSERT first. That is a
+                # successful de-duplication, not a fault: return their campaign
+                # rather than a 500. Re-raise only if no such row actually exists.
+                existing = campaigns.get_by_idempotency_key(user, key)
+                if existing is None:
+                    raise
+                log.info("campaign_create_idempotent_after_conflict trace_id=%s campaign_id=%s",
+                         trace_id, existing["id"])
+                return _campaign_public(existing, idempotent=True)
             for event in events:
                 try:
                     campaigns.add_event(user, campaign["id"], event["type"], event["detail"])
@@ -253,39 +265,76 @@ def register(app, rl_read=None, rl_write=None):
         campaign = campaigns.get(user, campaign_id)
         if campaign is None:
             raise HTTPException(status_code=404, detail="Campaign not found.")
+        # Fast path: re-launching a campaign that already has workflows is a no-op.
         if campaign["status"] == "launched" and campaign["workflow_ids"]:
             return _campaign_public(campaign)
 
-        launchable = _launchable_emails(campaign["result"])
+        prelaunch_status = campaign["status"]
+        duplicate_recipients = []
+        launchable = _launchable_emails(campaign["result"],
+                                        duplicates=duplicate_recipients)
         if not launchable:
             raise HTTPException(status_code=400, detail="No guard-approved emails with valid recipient addresses.")
 
-        workflow_ids = []
-        for item in launchable:
-            wf = engine.create_workflow(
-                _workflow_store(), user, _cadence_steps(item),
-                company=item["company"], to_email=item["to"], provider=body.provider,
-                conversation_id=campaign_id, timezone=body.timezone,
-            )
-            workflow_ids.append(wf.id)
-        result = dict(campaign["result"])
-        result["launched_at"] = time.time()
-        result["workflow_ids"] = workflow_ids
-        # Flag any prospect that launched with a 3-step (no-follow-up) cadence so the
-        # UI can warn — nobody should ship a silently incomplete sequence unknowingly.
-        warnings = [{"domain": p.get("domain") or p.get("website"), **w}
-                    for p in (result.get("prospects") or [])
-                    if (w := _cadence_warning(p))]
-        if warnings:
-            result["launched_with_warnings"] = warnings
-        updated = campaigns.update(user, campaign_id, status="launched",
-                                   result=result, workflow_ids=workflow_ids)
-        campaigns.add_event(user, campaign_id, "launched",
-                            f"{len(workflow_ids)} workflow(s) created via {body.provider}")
-        if warnings:
-            campaigns.add_event(user, campaign_id, "launched_incomplete",
-                                f"{len(warnings)} prospect(s) launched with a 3-step cadence")
-        return _campaign_public(updated)
+        # Reserve the launch atomically so a double-submit cannot double-send. Only
+        # the winner creates workflows; a loser returns the authoritative row as-is,
+        # having sent nothing. Before this guard two concurrent launches (a double
+        # click, or a client retry after a slow response) each built a full workflow
+        # set — every prospect received the sequence twice, and the campaign tracked
+        # only one of the two, orphaning the other beyond pause/cancel.
+        if not campaigns.claim_launch(user, campaign_id):
+            current = campaigns.get(user, campaign_id)
+            return _campaign_public(current if current is not None else campaign)
+
+        try:
+            workflow_ids = []
+            for item in launchable:
+                wf = engine.create_workflow(
+                    _workflow_store(), user, _cadence_steps(item),
+                    company=item["company"], to_email=item["to"], provider=body.provider,
+                    conversation_id=campaign_id, timezone=body.timezone,
+                )
+                workflow_ids.append(wf.id)
+            result = dict(campaign["result"])
+            result["launched_at"] = time.time()
+            result["workflow_ids"] = workflow_ids
+            # Flag any prospect that launched with a 3-step (no-follow-up) cadence so the
+            # UI can warn — nobody should ship a silently incomplete sequence unknowingly.
+            warnings = [{"domain": p.get("domain") or p.get("website"), **w}
+                        for p in (result.get("prospects") or [])
+                        if (w := _cadence_warning(p))]
+            if warnings:
+                result["launched_with_warnings"] = warnings
+            # Prospects that share a recipient with an earlier one were collapsed
+            # rather than sent twice. Report it: from the user's side a prospect
+            # they previewed did not launch, and they are owed the reason.
+            if duplicate_recipients:
+                result["duplicate_recipients_skipped"] = duplicate_recipients
+            updated = campaigns.update(user, campaign_id, status="launched",
+                                       result=result, workflow_ids=workflow_ids)
+            campaigns.add_event(user, campaign_id, "launched",
+                                f"{len(workflow_ids)} workflow(s) created via {body.provider}")
+            if warnings:
+                campaigns.add_event(user, campaign_id, "launched_incomplete",
+                                    f"{len(warnings)} prospect(s) launched with a 3-step cadence")
+            if duplicate_recipients:
+                campaigns.add_event(
+                    user, campaign_id, "duplicate_recipients_skipped",
+                    f"{len(duplicate_recipients)} prospect(s) shared a recipient "
+                    "address with another and were not sent a second sequence")
+            return _campaign_public(updated)
+        except Exception:
+            # We hold the claim (status is 'launching') but did not finish. Release it
+            # back to the pre-launch status so the campaign is not wedged; a retry can
+            # then launch cleanly, and stale-claim recovery is the backstop if even
+            # this release fails. Workflows already created before the fault are not
+            # re-persisted here — that rare partial-launch case is the known edge that
+            # idempotent workflow creation (the deferred follow-up) would close.
+            try:
+                campaigns.update(user, campaign_id, status=prelaunch_status)
+            except Exception:  # noqa: BLE001 - best effort; stale-claim recovery still applies
+                log.exception("launch_claim_release_failed campaign_id=%s", campaign_id)
+            raise
 
     @app.post("/api/campaigns/{campaign_id}/pause")
     def pause_campaign(campaign_id: str, request: Request, _=Depends(_write),
@@ -915,8 +964,21 @@ def _summary_from_prospects(prospects: list[dict], previous: dict | None = None)
     return counts
 
 
-def _launchable_emails(result: dict) -> list[dict]:
-    out = []
+def _launchable_emails(result: dict, *, duplicates: list = None) -> list[dict]:
+    """The guard-approved emails to actually launch, AT MOST ONE PER RECIPIENT.
+
+    Two prospects in one campaign can legitimately resolve to the same address:
+    research falls back to a generic ``info@``/``hello@`` inbox, or a parent and
+    its subsidiary share one. Each launched prospect becomes its own 5-touch
+    workflow, so without this the same human received two full sequences, ten
+    emails, from one campaign. The per-prospect guard cannot catch it because it
+    only ever sees one prospect at a time.
+
+    Ordering decides the winner, and prospects arrive ranked, so the best-matching
+    company keeps the address. ``duplicates`` optionally collects what was skipped
+    so the launch can report it rather than dropping prospects silently.
+    """
+    out, claimed = [], {}
     for prospect in result.get("prospects") or []:
         email = prospect.get("email") or {}
         to = (email.get("recipient") or {}).get("email") or email.get("to")
@@ -926,9 +988,18 @@ def _launchable_emails(result: dict) -> list[dict]:
             continue
         if email.get("status") != "ok" or not _valid_email(to):
             continue
+        company = (prospect.get("company_name")
+                   or prospect.get("research", {}).get("company_name") or "")
+        key = str(to).strip().lower()
+        if key in claimed:
+            if duplicates is not None:
+                duplicates.append({"to": to, "company": company,
+                                   "already_launched_for": claimed[key]})
+            continue
+        claimed[key] = company
         out.append({
             "to": to,
-            "company": prospect.get("company_name") or prospect.get("research", {}).get("company_name") or "",
+            "company": company,
             "subject": email.get("subject") or "",
             "body": email.get("body") or "",
             "followups": prospect.get("followups") or [],

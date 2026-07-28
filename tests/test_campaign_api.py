@@ -5,9 +5,11 @@ surface, persistence, gates, idempotency, launch, and per-user isolation are
 exercised through the real FastAPI app.
 """
 
+import concurrent.futures
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -23,6 +25,7 @@ from discovery.engine import DiscoveryResult  # noqa: E402
 from discovery.models import Prospect  # noqa: E402
 import server.api as api  # noqa: E402
 import server.campaign_api as campaign_api  # noqa: E402
+import server.campaign_store as campaign_store  # noqa: E402
 
 
 def _client(user="u_test"):
@@ -63,6 +66,17 @@ def _research(email="founder@acme.com"):
             "recipient_route": email or "https://acme.com/contact",
             "has_enough_detail": True,
         },
+    }
+
+
+def _sendable(company, to):
+    """A minimal prospect shaped the way _launchable_emails expects."""
+    return {
+        "company_name": company,
+        "final_status": "sendable",
+        "guard": {"decision": "ALLOW"},
+        "email": {"status": "ok", "subject": "s", "body": "b",
+                  "recipient": {"email": to}},
     }
 
 
@@ -513,6 +527,337 @@ class ProspectConcurrencyTests(unittest.TestCase):
     def test_no_prospects_is_not_an_error(self):
         self.assertEqual(campaign_api._process_prospects(
             "u", [], {}, lambda *a: None), [])
+
+
+class LaunchIdempotencyTests(unittest.TestCase):
+    """Launching must never double-send. Two near-simultaneous launches (a double
+    click, or a client retry after a slow response) previously each built a full
+    workflow set: every prospect received the sequence twice, and the campaign
+    recorded only one of the two workflows, orphaning the other beyond pause/cancel.
+    An atomic launch claim now lets exactly one caller through."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.env = mock.patch.dict(os.environ, {
+            "AUTOMATION_FORCE_SQLITE": "1",
+            "AUTOMATION_DB_PATH": os.path.join(self.tmp, "launch.db"),
+        })
+        self.env.start()
+        automation_db.reset_default()
+        api._BUCKETS.clear()
+        campaign_api._campaigns = None
+        campaign_api._prospects = None
+        campaign_api._workflows = None
+
+    def tearDown(self):
+        api.app.dependency_overrides.clear()
+        api._BUCKETS.clear()
+        campaign_api._campaigns = None
+        campaign_api._prospects = None
+        campaign_api._workflows = None
+        automation_db.reset_default()
+        self.env.stop()
+
+    @staticmethod
+    def _happy():
+        """Mock every model/provider call in the create pipeline — including the
+        mid-cadence follow-up writer, which generates at create time and would
+        otherwise make real LLM calls (slow offline, costly in CI)."""
+        return mock.patch.multiple(
+            "server.campaign_api",
+            research_company=mock.Mock(return_value=_research()),
+            guard_assess=mock.Mock(return_value=_guard("ALLOW")),
+        )
+
+    @staticmethod
+    def _writer():
+        return mock.patch.multiple(
+            "server.campaign_api.writer",
+            write_email=mock.Mock(return_value={
+                "status": "ok", "subject": "s",
+                "body": "This is a specific complete email body for Acme warehouse automation work here."}),
+            write_followup=mock.Mock(return_value={
+                "status": "ok", "subject": "Re: s",
+                "body": "Quick nudge on the Acme warehouse automation angle in case it slipped by."}),
+        )
+
+    def _ready_campaign(self, c, n=1):
+        prospects = [_prospect(f"co{i}.com") for i in range(n)]
+        with mock.patch("server.campaign_api.discover", return_value=DiscoveryResult(
+                "ok", prospects=prospects, returned=n, limit=n, providers={"test": True})), \
+                self._happy(), self._writer():
+            data = c.post("/api/campaigns", json={"name": "A", "icp": {"raw": "x"}, "limit": n}).json()
+        self.assertEqual(data["summary"]["launchable"], n, data)
+        return data["id"]
+
+    def test_concurrent_launch_creates_one_workflow_set(self):
+        """The regression guard: two overlapping launches must create ONE workflow
+        set. Fails on the pre-fix code (two sets); passes with the atomic claim."""
+        c = _client("alice")
+        cid = self._ready_campaign(c, n=1)
+
+        real_create = campaign_api.engine.create_workflow
+        calls = []
+        lock = threading.Lock()
+
+        def counting_create(*args, **kwargs):
+            with lock:
+                calls.append(1)
+                first = len(calls) == 1
+            if first:
+                time.sleep(0.5)          # hold the critical section open to force the race
+            return real_create(*args, **kwargs)
+
+        start = threading.Barrier(2)
+
+        def launch():
+            client = TestClient(api.app)   # a client per thread; overrides are app-global
+            start.wait()                   # both requests leave the gate together
+            return client.post(f"/api/campaigns/{cid}/launch", json={"provider": "dryrun"})
+
+        with mock.patch("server.campaign_api.engine.create_workflow", side_effect=counting_create):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+                responses = [f.result() for f in
+                             [ex.submit(launch), ex.submit(launch)]]
+
+        self.assertEqual(sorted(r.status_code for r in responses), [200, 200])
+        self.assertEqual(len(calls), 1, "launch created more than one workflow set (double-send)")
+        # Source of truth: exactly one workflow was actually persisted (the orphan
+        # from the pre-fix double-launch would show up here as a second row).
+        persisted = campaign_api._workflow_store().list_for_user("alice")
+        self.assertEqual(len(persisted), 1, "more than one workflow persisted for one prospect")
+        final = c.get(f"/api/campaigns/{cid}").json()
+        self.assertEqual(final["status"], "launched")
+        self.assertEqual(len(final["workflow_ids"]), 1)
+
+    def test_relaunch_is_idempotent_and_creates_no_new_workflows(self):
+        c = _client("alice")
+        cid = self._ready_campaign(c, n=1)
+        first = c.post(f"/api/campaigns/{cid}/launch", json={"provider": "dryrun"}).json()
+        with mock.patch("server.campaign_api.engine.create_workflow",
+                        wraps=campaign_api.engine.create_workflow) as spy:
+            second = c.post(f"/api/campaigns/{cid}/launch", json={"provider": "dryrun"}).json()
+        spy.assert_not_called()
+        self.assertEqual(first["workflow_ids"], second["workflow_ids"])
+        self.assertEqual(len(campaign_api._workflow_store().list_for_user("alice")), 1)
+
+    def test_claim_launch_is_won_by_exactly_one_concurrent_caller(self):
+        store = campaign_api._campaign_store()
+        row = store.create(owner="alice", idempotency_key="k1", name="A",
+                           request={}, result={"summary": {}}, status="ready")
+        wins = []
+        wins_lock = threading.Lock()
+        barrier = threading.Barrier(8)
+
+        def claim():
+            barrier.wait()
+            if store.claim_launch("alice", row["id"]):
+                with wins_lock:
+                    wins.append(1)
+
+        threads = [threading.Thread(target=claim) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(len(wins), 1, "more than one caller won the launch claim")
+        self.assertEqual(store.get("alice", row["id"])["status"], campaign_store.LAUNCHING)
+
+    def test_claim_launch_rejects_inflight_and_launched_but_recovers_stale(self):
+        store = campaign_api._campaign_store()
+        cid = store.create(owner="alice", idempotency_key="k2", name="A",
+                           request={}, result={}, status="ready")["id"]
+        self.assertTrue(store.claim_launch("alice", cid))       # first caller wins
+        self.assertFalse(store.claim_launch("alice", cid))      # fresh in-flight -> rejected
+
+        store.update("alice", cid, status="launched")
+        self.assertFalse(store.claim_launch("alice", cid))      # fully launched -> never re-claimed
+
+        store.update("alice", cid, status=campaign_store.LAUNCHING)  # simulate a crashed launch
+        future = time.time() + campaign_store.LAUNCH_CLAIM_STALE_SECONDS + 1
+        self.assertTrue(store.claim_launch("alice", cid, now=future))  # stale claim may be retaken
+
+    def test_create_conflict_returns_existing_campaign_idempotently(self):
+        """If a racing retry misses the idempotency pre-check and its INSERT then
+        conflicts on UNIQUE(owner, key), the handler returns the existing campaign
+        (idempotent), not a 500."""
+        c = _client("alice")
+        body = {"name": "A", "idempotency_key": "dup", "icp": {"raw": "x"}}
+        with mock.patch("server.campaign_api.discover", return_value=DiscoveryResult(
+                "ok", prospects=[_prospect()], returned=1, limit=1, providers={"test": True})), \
+                self._happy(), self._writer():
+            first = c.post("/api/campaigns", json=body).json()
+
+            # Force the racing window: the pre-check misses (row not seen yet), so the
+            # pipeline runs and the INSERT conflicts; the except-path lookup then finds it.
+            real_get = campaign_store.CampaignStore.get_by_idempotency_key
+            seen = {"n": 0}
+
+            def racing_get(self, owner, key):
+                seen["n"] += 1
+                return None if seen["n"] == 1 else real_get(self, owner, key)
+
+            with mock.patch.object(campaign_store.CampaignStore,
+                                   "get_by_idempotency_key", racing_get):
+                second = c.post("/api/campaigns", json=body)
+
+        self.assertEqual(second.status_code, 200)
+        data = second.json()
+        self.assertEqual(data["id"], first["id"])
+        self.assertTrue(data["idempotent"])
+
+
+class LaunchStressTests(LaunchIdempotencyTests):
+    """Harder than the two-thread regression above: many launchers, several
+    prospects, and a launch that dies mid-flight.
+
+    The invariant under all of them is the one that costs real money if it
+    breaks — ONE workflow per prospect, so no recipient is ever emailed twice.
+    """
+
+    def _ready_campaign(self, c, n=1, *, distinct_recipients=False):
+        """As the base fixture, but optionally giving every prospect its OWN
+        address. The base one returns a single shared email for all of them,
+        which the launch now (correctly) collapses to one workflow — so a
+        "one workflow per prospect" assertion needs distinct recipients to mean
+        anything at all."""
+        if not distinct_recipients:
+            return super()._ready_campaign(c, n=n)
+        prospects = [_prospect(f"co{i}.com") for i in range(n)]
+        seq = iter(range(n))
+        with mock.patch("server.campaign_api.discover", return_value=DiscoveryResult(
+                "ok", prospects=prospects, returned=n, limit=n, providers={"test": True})), \
+                mock.patch.multiple(
+                    "server.campaign_api",
+                    research_company=mock.Mock(
+                        side_effect=lambda *a, **k: _research(f"founder{next(seq)}@acme.com")),
+                    guard_assess=mock.Mock(return_value=_guard("ALLOW"))), \
+                self._writer():
+            data = c.post("/api/campaigns",
+                          json={"name": "A", "icp": {"raw": "x"}, "limit": n}).json()
+        self.assertEqual(data["summary"]["launchable"], n, data)
+        return data["id"]
+
+    def test_eight_concurrent_launches_send_each_prospect_exactly_once(self):
+        c = _client("alice")
+        cid = self._ready_campaign(c, n=3, distinct_recipients=True)
+
+        real_create = campaign_api.engine.create_workflow
+        lock = threading.Lock()
+        created = []
+
+        def slow_create(*args, **kwargs):
+            with lock:
+                created.append(kwargs.get("to_email") or args[-1])
+            time.sleep(0.05)          # widen the window every launcher races for
+            return real_create(*args, **kwargs)
+
+        barrier = threading.Barrier(8)
+
+        def launch():
+            client = TestClient(api.app)
+            barrier.wait()
+            return client.post(f"/api/campaigns/{cid}/launch", json={"provider": "dryrun"})
+
+        with mock.patch("server.campaign_api.engine.create_workflow", side_effect=slow_create):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+                responses = [f.result() for f in [ex.submit(launch) for _ in range(8)]]
+
+        self.assertEqual({r.status_code for r in responses}, {200})
+        self.assertEqual(len(created), 3,
+                         "a prospect was enqueued more than once (double-send)")
+        persisted = campaign_api._workflow_store().list_for_user("alice")
+        self.assertEqual(len(persisted), 3)
+        # One workflow per distinct recipient: the real no-duplicate-email check.
+        self.assertEqual(len({w.to_email for w in persisted}), 3)
+        final = c.get(f"/api/campaigns/{cid}").json()
+        self.assertEqual(final["status"], "launched")
+        self.assertEqual(len(final["workflow_ids"]), 3)
+
+    def test_a_crashed_launch_releases_its_claim_and_retry_does_not_double_send(self):
+        """A launch that raises part-way must not wedge the campaign, and the
+        retry that follows must not re-send to anyone already enqueued."""
+        c = _client("alice")
+        cid = self._ready_campaign(c, n=2, distinct_recipients=True)
+
+        with mock.patch("server.campaign_api.engine.create_workflow",
+                        side_effect=RuntimeError("provider exploded")):
+            with self.assertRaises(RuntimeError):
+                c.post(f"/api/campaigns/{cid}/launch", json={"provider": "dryrun"})
+
+        # The claim was released, so the campaign is launchable again rather than
+        # stuck in the transient "launching" state.
+        after = campaign_api._campaign_store().get("alice", cid)
+        self.assertNotEqual(after["status"], campaign_store.LAUNCHING)
+
+        retry = c.post(f"/api/campaigns/{cid}/launch", json={"provider": "dryrun"})
+        self.assertEqual(retry.status_code, 200)
+        persisted = campaign_api._workflow_store().list_for_user("alice")
+        self.assertEqual(len(persisted), 2)
+        self.assertEqual(len({w.to_email for w in persisted}), 2)
+
+    def test_two_prospects_sharing_an_address_get_one_sequence(self):
+        """Research often falls back to a generic info@/hello@ inbox, and a parent
+        and subsidiary can share one. Each launched prospect becomes its own
+        5-touch workflow, so without collapsing them the same human received two
+        full sequences (ten emails) from a single campaign. The per-prospect guard
+        cannot see this: it only ever inspects one prospect at a time."""
+        c = _client("alice")
+        # Every prospect resolves to the SAME address (the fixture default).
+        cid = self._ready_campaign(c, n=3)
+
+        launched = c.post(f"/api/campaigns/{cid}/launch",
+                          json={"provider": "dryrun"}).json()
+        self.assertEqual(len(launched["workflow_ids"]), 1,
+                         "one recipient must receive exactly one sequence")
+        persisted = campaign_api._workflow_store().list_for_user("alice")
+        self.assertEqual([w.to_email for w in persisted], ["founder@acme.com"])
+
+        # The two that were collapsed are reported, not silently dropped.
+        detail = c.get(f"/api/campaigns/{cid}").json()
+        skipped = detail["result"]["duplicate_recipients_skipped"]
+        self.assertEqual(len(skipped), 2)
+        self.assertTrue(all(s["to"] == "founder@acme.com" for s in skipped))
+        self.assertIn("duplicate_recipients_skipped",
+                      [e["type"] for e in detail["events"]])
+
+    def test_recipient_dedupe_is_case_insensitive(self):
+        """Addresses are case-insensitive at the domain and, in practice, at the
+        mailbox: "Founder@Acme.com" and "founder@acme.com" are one inbox."""
+        result = {"prospects": [
+            _sendable("Acme", "Founder@Acme.com"),
+            _sendable("Acme Labs", "founder@acme.com"),
+            _sendable("Other", "someone@other.com"),
+        ]}
+        dupes = []
+        out = campaign_api._launchable_emails(result, duplicates=dupes)
+        self.assertEqual([o["company"] for o in out], ["Acme", "Other"])
+        self.assertEqual(len(dupes), 1)
+        self.assertEqual(dupes[0]["already_launched_for"], "Acme")
+
+    def test_concurrent_creates_with_one_key_yield_one_campaign(self):
+        """A double-submit of the same campaign must leave exactly one row, and
+        both callers must get that same campaign back."""
+        body = {"name": "A", "idempotency_key": "same-key", "icp": {"raw": "x"}, "limit": 1}
+        barrier = threading.Barrier(4)
+
+        def create():
+            client = TestClient(api.app)
+            barrier.wait()
+            return client.post("/api/campaigns", json=body)
+
+        with mock.patch("server.campaign_api.discover", return_value=DiscoveryResult(
+                "ok", prospects=[_prospect()], returned=1, limit=1, providers={"test": True})), \
+                self._happy(), self._writer():
+            _client("alice")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+                responses = [f.result() for f in [ex.submit(create) for _ in range(4)]]
+
+        self.assertEqual({r.status_code for r in responses}, {200})
+        ids = {r.json()["id"] for r in responses}
+        self.assertEqual(len(ids), 1, f"same idempotency key produced {len(ids)} campaigns")
+        rows = campaign_api._campaign_store().list_for_owner("alice")
+        self.assertEqual(len(rows), 1)
 
 
 if __name__ == "__main__":

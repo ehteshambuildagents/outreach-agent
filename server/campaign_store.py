@@ -12,6 +12,15 @@ import uuid
 
 from automation import db as _db
 
+# Transient status held only between claiming a launch and finishing it. It is not
+# a terminal state; the winner flips it to "launched" once workflows are created.
+LAUNCHING = "launching"
+# A launch claim older than this is presumed abandoned by a crashed request and may
+# be retaken, so a mid-launch crash cannot wedge a campaign in "launching" forever.
+# Generous on purpose: creating workflows is local persistence only (no network),
+# so a healthy launch finishes in well under a second even for a full prospect set.
+LAUNCH_CLAIM_STALE_SECONDS = 120.0
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS campaigns (
     id              TEXT PRIMARY KEY,
@@ -115,6 +124,35 @@ class CampaignStore:
              json.dumps(workflow_ids, ensure_ascii=False), now, owner, campaign_id),
         )
         return self.get(owner, campaign_id)
+
+    def claim_launch(self, owner: str, campaign_id: str, *, now: float | None = None,
+                     stale_seconds: float = LAUNCH_CLAIM_STALE_SECONDS) -> bool:
+        """Atomically reserve the right to launch this campaign; return whether we won.
+
+        Launch is otherwise check-then-act: two near-simultaneous requests (a
+        double-click, or a client retry after a slow response) can both read
+        "not launched" and each create a full workflow set, double-sending every
+        prospect. This flips the campaign to a transient ``launching`` status in a
+        single conditional UPDATE, so exactly one caller wins; only the winner
+        creates workflows, and a loser re-reads and returns the authoritative row
+        without sending anything.
+
+        Recoverable by design: a claim older than ``stale_seconds`` is presumed
+        abandoned by a crashed request and may be retaken, so a mid-launch crash
+        cannot wedge the campaign in ``launching`` forever. A fully ``launched``
+        campaign is never re-claimed. Atomic on both backends: SQLite serialises
+        writers (WAL + busy_timeout) and Postgres re-checks the WHERE under the row
+        lock, so concurrent claimants cannot both match.
+        """
+        now = time.time() if now is None else now
+        stale_before = now - stale_seconds
+        rows = self.db.execute(
+            "UPDATE campaigns SET status=?, updated_at=? "
+            "WHERE owner=? AND id=? AND status<>? "
+            "AND (status<>? OR updated_at<?)",
+            (LAUNCHING, now, owner, campaign_id, "launched", LAUNCHING, stale_before),
+        )
+        return rows == 1
 
     def add_event(self, owner: str, campaign_id: str, type_: str, detail: str = "") -> None:
         self.db.execute(
