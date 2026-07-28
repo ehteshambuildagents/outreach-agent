@@ -10,6 +10,7 @@ assert the orchestration and ranking rules rather than a live API.
 """
 
 import os
+import re
 import sys
 import unittest
 from unittest import mock
@@ -111,6 +112,234 @@ class PluralAcronymRoleTests(unittest.TestCase):
     def test_plural_and_singular_agree(self):
         self.assertEqual(intent.parse("hiring SDRs").role_titles,
                          intent.parse("hiring an SDR").role_titles)
+
+
+class ProductCategoryVersusVacancyTests(unittest.TestCase):
+    """A role noun in the ask does not always mean a vacancy.
+
+    "AI SDR startups" names companies that BUILD an AI SDR. It was read as a
+    hiring ask because the whole-field fallback saw the role noun "sdr", so a
+    live run returned Anthropic, OpenAI and Salesforce (giants hiring a sales
+    rep) and ranked them above Decagon, which is what the user actually asked
+    for. Only the head noun separates the two phrasings, so that is what the
+    parser tests.
+    """
+
+    def test_a_product_category_is_not_a_hiring_ask(self):
+        for text in ("AI SDR startups", "SDR software", "AI recruiting startups",
+                     "sales development platforms", "AI sales assistant companies"):
+            plan = intent.parse(text)
+            self.assertEqual(plan.anchor, "category", text)
+            self.assertEqual(plan.roles, [], text)
+
+    def test_a_hiring_word_still_wins_over_the_category_head_noun(self):
+        """The guard requires BOTH no hiring word AND a company head noun, so an
+        ask that says "hiring" stays role-anchored whatever it ends with."""
+        for text, expected in (("startups hiring SDRs", "sdr"),
+                               ("companies hiring an SDR", "sdr"),
+                               ("software companies hiring BDRs", "bdr")):
+            plan = intent.parse(text)
+            self.assertEqual(plan.anchor, "role", text)
+            self.assertEqual(plan.roles, [expected], text)
+
+    def test_a_bare_role_hint_still_anchors_on_the_role(self):
+        """The fallback is what lets a bare keyword hint work; the guard must not
+        take that away, because it has no company head noun."""
+        self.assertEqual(intent.parse("sdr").roles, ["sdr"])
+        self.assertEqual(intent.parse("find prospects", keywords=["sdr"]).roles, ["sdr"])
+
+
+class CoversTheCategoryTests(unittest.TestCase):
+    """A live "fintech founders" run filled its first page with Fintech News
+    Malaysia, FinTech Futures, FinTech Global and Colombia Fintech, and a
+    "cybersecurity startups" run with Cyber Security News and CISA. All real
+    organisations, none of them a company you can sell fintech or security to:
+    they matched the keyword because they WRITE ABOUT the category. Their domains
+    look ordinary, so only Apollo's own industry codes separate them.
+
+    The codes below are the real ones those organisations returned.
+    """
+
+    def test_publishers_bodies_and_government_are_identified(self):
+        for sic, naics, expected in (
+                (["2721", "7389", "7311"], ["513120", "561920"], "publisher"),
+                ([], ["519290", "513120", "561920"], "publisher"),
+                (["7389"], ["54151", "813910", "561920"], "association"),
+                (["9199"], ["54169", "928110", "922190"], "government")):
+            self.assertEqual(intent.covers_category_kind(sic, naics), expected,
+                             f"{sic} {naics}")
+
+    def test_software_publishers_are_never_confused_with_periodicals(self):
+        """NAICS 513210 is Software Publishers and 513120 is Periodical
+        Publishers. A three-digit prefix would have demoted Apple and Microsoft."""
+        for sic, naics in ((["3571", "7372"], ["334111", "513210"]),      # Apple
+                           (["7372", "7373"], ["54151", "51321"]),        # Microsoft
+                           (["7375"], ["541512", "561110"])):             # Wipro
+            self.assertEqual(intent.covers_category_kind(sic, naics), "")
+
+    def test_a_category_search_demotes_them_below_real_companies(self):
+        orgs = [{"name": "FinTech Futures", "domain": "fintechfutures.com",
+                 "sic_codes": ["7375"], "naics_codes": ["513120"]},
+                {"name": "Acme Payments", "domain": "acmepay.com",
+                 "sic_codes": ["7372"], "naics_codes": ["513210"]}]
+        q = DiscoveryQuery(raw="fintech founders", keywords=["fintech"], limit=10)
+        stats = {}
+        # A NARROW match set, so this exercises the demotion rather than the
+        # separate breadth gate that discards a six-figure category match whole.
+        with mock.patch.object(apollo_orgs, "available", lambda: True), \
+             mock.patch.object(apollo_orgs, "search_organizations",
+                               lambda **kw: {"status": "ok", "organizations": orgs,
+                                             "total": 820}):
+            found = sources.search_apollo(q, keywords=["fintech"], job_titles=[],
+                                          stats=stats)
+        by_domain = {p.domain: p for p in found}
+        self.assertEqual(by_domain["fintechfutures.com"].tier, "fallback")
+        self.assertEqual(by_domain["acmepay.com"].tier, "company")
+        self.assertEqual(stats["covers_demoted"], {"publisher": 1})
+
+    def test_a_web_hit_cannot_promote_a_demoted_publisher_back(self):
+        """The demotion is backed by an industry code; a second source that simply
+        does not recognise the domain is weaker evidence. Without this guard the
+        merge promoted FinTech Futures straight back to the top of the page after
+        Apollo had correctly demoted it."""
+        publisher = Prospect(company_name="FinTech Futures",
+                             website="https://fintechfutures.com",
+                             domain="fintechfutures.com", confidence=0.5,
+                             discovery_source="apollo", tier="fallback",
+                             kind=aggregators.MEDIA)
+        publisher.add_source("apollo", "")
+        web_copy = Prospect(company_name="FinTech Futures",
+                            website="https://fintechfutures.com",
+                            domain="fintechfutures.com", confidence=0.5,
+                            discovery_source="exa", tier="company",
+                            kind=aggregators.COMPANY)
+        web_copy.add_source("exa", "")
+
+        merged = {publisher.domain: publisher}
+        engine._merge(merged, [web_copy], DiscoveryQuery(raw="fintech", limit=10), set())
+        self.assertEqual(merged["fintechfutures.com"].tier, "fallback")
+        self.assertEqual(merged["fintechfutures.com"].kind, aggregators.MEDIA)
+
+    def test_a_web_hit_can_still_promote_an_ordinary_demotion(self):
+        """The promotion path must survive for the case it exists for: an
+        employer's own careers page misread as an ATS."""
+        demoted = Prospect(company_name="Acme", website="https://acme.com",
+                           domain="acme.com", confidence=0.5,
+                           discovery_source="exa", tier="fallback",
+                           kind=aggregators.ATS)
+        demoted.add_source("exa", "")
+        apollo_copy = Prospect(company_name="Acme", website="https://acme.com",
+                               domain="acme.com", confidence=0.5,
+                               discovery_source="apollo", tier="company",
+                               kind=aggregators.COMPANY)
+        apollo_copy.add_source("apollo", "")
+
+        merged = {demoted.domain: demoted}
+        engine._merge(merged, [apollo_copy], DiscoveryQuery(raw="x", limit=10), set())
+        self.assertEqual(merged["acme.com"].tier, "company")
+
+    def test_a_role_search_keeps_them(self):
+        """A trade publisher with a live SDR posting really is hiring one, so the
+        demotion must not apply when the match came from a job title."""
+        orgs = [{"name": "FinTech Futures", "domain": "fintechfutures.com",
+                 "sic_codes": ["7375"], "naics_codes": ["513120"]}]
+        q = DiscoveryQuery(raw="companies hiring an SDR", limit=10)
+        with mock.patch.object(apollo_orgs, "available", lambda: True), \
+             mock.patch.object(apollo_orgs, "search_organizations",
+                               lambda **kw: {"status": "ok", "organizations": orgs,
+                                             "total": 900}):
+            found = sources.search_apollo(q, keywords=[], job_titles=["sdr"])
+        self.assertEqual(found[0].tier, "company")
+
+
+class CategoryBreadthTests(unittest.TestCase):
+    """Apollo orders a broad keyword match by company size, so the match count
+    itself says whether the tag narrowed anything.
+
+    Measured live: "ai sdr" matches 147 companies and returns SuperAGI, Klenty
+    and Clara, exactly the ask. "healthcare" matches 1,005,621 and returns
+    Amazon, Google, Nestlé and Microsoft. So a specific tag is worth searching
+    and a broad one is worth discarding, and one number separates them.
+    """
+
+    @staticmethod
+    def _apollo(total, orgs):
+        return mock.patch.multiple(
+            apollo_orgs, available=lambda: True,
+            search_organizations=lambda **kw: {"status": "ok", "total": total,
+                                               "organizations": orgs})
+
+    def test_a_specific_category_search_is_kept(self):
+        orgs = [{"name": "SuperAGI", "domain": "superagi.com",
+                 "sic_codes": ["7372"], "naics_codes": ["513210"]}]
+        q = DiscoveryQuery(raw="AI SDR startups", limit=10)
+        stats = {}
+        with self._apollo(147, orgs):
+            found = sources.search_apollo(q, keywords=["ai sdr"], job_titles=[],
+                                          stats=stats)
+        self.assertEqual([p.domain for p in found], ["superagi.com"])
+        self.assertNotIn("too_broad", stats)
+
+    def test_a_match_set_too_broad_to_narrow_is_discarded(self):
+        orgs = [{"name": "Amazon", "domain": "amazon.com",
+                 "sic_codes": ["5961"], "naics_codes": ["454110"]}]
+        q = DiscoveryQuery(raw="healthcare SaaS", limit=10)
+        stats = {}
+        with self._apollo(1_005_621, orgs):
+            found = sources.search_apollo(q, keywords=["healthcare"], job_titles=[],
+                                          stats=stats)
+        self.assertEqual(found, [], "a million-company match is not a shortlist")
+        # Still reported honestly rather than looking like an outage.
+        self.assertEqual(stats["state"], "ok")
+        self.assertEqual(stats["total"], 1_005_621)
+        self.assertTrue(stats["too_broad"])
+
+    def test_a_role_search_is_never_discarded_for_breadth(self):
+        """A live job posting is a real signal however many companies share it."""
+        orgs = [{"name": "Acme", "domain": "acme.com",
+                 "sic_codes": ["7372"], "naics_codes": ["513210"]}]
+        q = DiscoveryQuery(raw="companies hiring an SDR", limit=10)
+        with self._apollo(1_005_621, orgs):
+            found = sources.search_apollo(q, keywords=[], job_titles=["sdr"])
+        self.assertEqual([p.domain for p in found], ["acme.com"])
+
+    def test_a_specific_ask_with_no_named_vertical_still_reaches_apollo(self):
+        """The regression: "AI SDR startups" names no vertical the parser knows,
+        so plan.keyword_tags was empty and Apollo was skipped entirely."""
+        plan = intent.parse("AI SDR startups")
+        self.assertEqual(plan.keyword_tags, [])
+        q = DiscoveryQuery(raw="AI SDR startups", limit=10)
+        first = engine._pass_plans(q, plan)[0]
+        self.assertTrue(first["apollo"])
+        self.assertIn("ai sdr", first["apollo_tags"])
+
+
+class RoleVocabularyTests(unittest.TestCase):
+    """The two role-noun vocabularies must not drift apart.
+
+    sources._ROLE_NOUN_RE strips role nouns out of Apollo category tags, and
+    intent._ROLE_NOUNS decides what counts as a role at all. "executive" was in
+    the first and missing from the second, so "Series A startups hiring account
+    executives" lost the role, searched Apollo for the nonsense category "series
+    account", and verified no job postings whatsoever.
+    """
+
+    def test_intent_recognises_every_noun_sources_strips(self):
+        stripped = re.findall(r"([a-z]+)s\?", sources._ROLE_NOUN_RE.pattern)
+        missing = [w for w in stripped if not intent._has_role_noun(w)]
+        self.assertEqual(missing, [],
+                         "sources strips these as role nouns but intent does not "
+                         "recognise them as roles")
+
+    def test_the_common_b2b_titles_are_recognised(self):
+        for text, expected in (
+                ("companies hiring an account executive", "account executive"),
+                ("companies hiring a recruiter", "recruiter"),
+                ("companies hiring a controller", "controller"),
+                ("companies hiring a chief revenue officer", "chief revenue officer")):
+            plan = intent.parse(text)
+            self.assertEqual(plan.anchor, "role", text)
+            self.assertEqual(plan.roles, [expected], text)
 
 
 class RoleFirstApolloTests(unittest.TestCase):

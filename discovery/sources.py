@@ -568,8 +568,26 @@ def search_apollo(query, *, plan=None, keywords=None, job_titles=None,
                               else "failed")
         return []
 
+    # A category tag that matched six figures of companies did not narrow
+    # anything, and Apollo hands back the biggest of them, so keeping these would
+    # put Amazon and Microsoft on a page about startups. Nothing is kept, but the
+    # stats (and so the narration) still report honestly what was searched and why
+    # it was set aside. A role search is never discarded this way: a live posting
+    # is a real signal however many companies share it.
+    total = res.get("total")
+    if (not titles and isinstance(total, int) and total >= CATEGORY_TOO_BROAD):
+        log.info("discovery_apollo category too broad tags=%s total=%s — discarding",
+                 tags, total)
+        if stats is not None:
+            stats.update({"state": "ok", "total": total, "kept": 0,
+                          "staffing_dropped": 0, "recruiter_names": [],
+                          "agency_dropped": 0, "covers_demoted": {},
+                          "too_broad": True})
+        return []
+
     query_text = _query_text(query)
     out, staffing_dropped, recruiter_names, agency_dropped = [], 0, [], 0
+    covers_demoted = Counter()
     for org in res.get("organizations") or []:
         domain = org.get("domain") or ""
         name = org.get("name") or ""
@@ -595,6 +613,23 @@ def search_apollo(query, *, plan=None, keywords=None, job_titles=None,
             tier = "fallback"
         else:
             kind, tier = aggregators.COMPANY, "company"
+
+        # A trade publisher, industry body or government agency matches a CATEGORY
+        # keyword because it covers that category, not because it sells in it: a
+        # live "fintech" search came back Fintech News Malaysia, FinTech Futures
+        # and Colombia Fintech across the top of the page. Their domains look
+        # ordinary, so only Apollo's industry codes separate them.
+        #
+        # Only for a category search, and only a DEMOTION. When ``titles`` is set
+        # the match is a live job posting, and a publisher hiring an SDR is a
+        # perfectly real lead — dropping it there would lose a true result.
+        if not titles and tier == "company":
+            covers = intent.covers_category_kind(org.get("sic_codes"),
+                                                 org.get("naics_codes"))
+            if covers and not aggregators.query_requests(_COVERS_KIND[covers],
+                                                         query_text):
+                kind, tier = _COVERS_KIND[covers], "fallback"
+                covers_demoted[covers] += 1
 
         industry_kind = apollo_orgs.industry_kind(org)
         reasons = ["In Apollo's company database (a real company, not a listing)"]
@@ -646,7 +681,8 @@ def search_apollo(query, *, plan=None, keywords=None, job_titles=None,
         stats.update({"state": "ok", "total": res.get("total"), "kept": len(out),
                       "staffing_dropped": staffing_dropped,
                       "recruiter_names": recruiter_names,
-                      "agency_dropped": agency_dropped})
+                      "agency_dropped": agency_dropped,
+                      "covers_demoted": dict(covers_demoted)})
     return out
 
 
@@ -717,6 +753,26 @@ def verify_hiring(prospects, role_terms, *, limit: int = None) -> int:
         verified += 1
     log.info("discovery_hiring_verified=%s of %s looked up", verified, cap)
     return verified
+
+
+# Past this many matches an Apollo CATEGORY search stops being a search.
+#
+# Measured against the live API: "ai sdr" matches 147 companies and returns
+# SuperAGI, Klenty and Clara — exactly the ask. "healthcare" matches 1,005,621
+# and returns Amazon, Google, Nestlé and Microsoft, because Apollo orders a broad
+# keyword match by company size. So the match count itself says whether the tag
+# narrowed anything, and past this line the results are a list of the largest
+# companies on earth rather than an answer. Role searches are exempt: a live job
+# posting is a real signal no matter how many companies share it.
+CATEGORY_TOO_BROAD = 50_000
+
+# The aggregator kind each "covers the category" verdict maps onto, so these are
+# demoted, counted and narrated through the same vocabulary as job boards.
+_COVERS_KIND = {
+    "publisher": aggregators.MEDIA,
+    "association": aggregators.ASSOCIATION,
+    "government": aggregators.GOVERNMENT,
+}
 
 
 def apollo_keywords(query) -> list:

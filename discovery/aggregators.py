@@ -38,11 +38,16 @@ MARKETPLACE = "marketplace"
 DIRECTORY = "directory"
 LIST_SITE = "list_site"
 MEDIA = "media"
+# Classified from Apollo's industry codes rather than the domain (see
+# intent.covers_category_kind): a trade publisher or an industry body matches a
+# category search because it COVERS that category, not because it operates in it.
+ASSOCIATION = "association"
+GOVERNMENT = "government"
 UNKNOWN = "unknown"
 
 # Everything that is an intermediary rather than a prospect.
 INTERMEDIARY_KINDS = frozenset({JOB_BOARD, ATS, MARKETPLACE, DIRECTORY,
-                                LIST_SITE, MEDIA})
+                                LIST_SITE, MEDIA, ASSOCIATION, GOVERNMENT})
 
 # Of those, the ones that can never be a prospect at all, because the page is
 # ABOUT other companies: a Tracxn profile of Acme is not Tracxn-the-prospect, and
@@ -51,6 +56,14 @@ INTERMEDIARY_KINDS = frozenset({JOB_BOARD, ATS, MARKETPLACE, DIRECTORY,
 # demoted to the fallback tier instead and promoted back when asked for.
 DROP_KINDS = frozenset({DIRECTORY, LIST_SITE, MEDIA})
 DEMOTE_KINDS = frozenset({JOB_BOARD, ATS, MARKETPLACE})
+
+# Verdicts backed by EVIDENCE rather than by a guess: a curated domain list, or
+# Apollo's own industry codes. A second source finding the same domain and simply
+# not knowing any better must never promote one of these back to "company" —
+# fintechfutures.com is NAICS 513120 (Periodical Publishers) whatever a web search
+# result thinks, and letting the merge overturn it put a trade magazine at the top
+# of the page again after it had been correctly demoted.
+AUTHORITATIVE_KINDS = frozenset({MEDIA, ASSOCIATION, GOVERNMENT})
 
 # ── Domain sets ────────────────────────────────────────────────────────────
 # Job boards and job aggregators: the class of site that was polluting results.

@@ -33,7 +33,7 @@ from config.settings import (
     DISCOVERY_PROVIDER_POOL,
     DISCOVERY_STRONG_CONFIDENCE,
 )
-from discovery import intent, narration, scoring, sources
+from discovery import aggregators, intent, narration, scoring, sources
 from discovery.models import DiscoveryQuery, registrable_domain
 from discovery.store import ProspectStore
 
@@ -248,6 +248,7 @@ def _search_until_good(query, seen, pool, plan=None, progress=None):
                     staffing_dropped=stats.get("staffing_dropped", 0),
                     recruiter_names=stats.get("recruiter_names", ()),
                     agency_dropped=stats.get("agency_dropped", 0),
+                    covers_demoted=stats.get("covers_demoted"),
                     role_label=role_label))
             searched_apollo = True
         if step["search_text"]:
@@ -364,12 +365,20 @@ def _pass_plans(query, plan) -> list:
                            "apollo_tags": plan.relevance_terms[:2],
                            "search_text": f"{category} b2b company pricing customers"})
     else:
+        # `plan.keyword_tags` is only populated when the user named a RECOGNISED
+        # vertical, so a specific-but-unlisted ask ("AI SDR startups") reached
+        # Apollo with no tag and skipped it entirely — losing SuperAGI, Klenty and
+        # Clara, the only exactly-right answers available. Derive a tag from the
+        # words instead. This is safe at both ends: apollo_keywords returns nothing
+        # when the ask is purely generic, and search_apollo discards a match set
+        # too broad to mean anything, so mega-corps cannot come back in.
+        derived = plan.keyword_tags or sources.apollo_keywords(query)
         passes.append({"label": "literal ask", "apollo": True, "apollo_page": 1,
-                       "apollo_tags": plan.keyword_tags or None,
+                       "apollo_tags": derived,
                        "apollo_titles": [], "search_text": query.search_string()})
         if category:
             passes.append({"label": "company category", "apollo": True,
-                           "apollo_page": 2, "apollo_tags": plan.keyword_tags or None,
+                           "apollo_page": 2, "apollo_tags": derived,
                            "apollo_titles": [],
                            "search_text": f"{category} b2b saas company pricing customers"})
             passes.append({"label": "product angle", "apollo": False,
@@ -419,7 +428,13 @@ def _merge(merged: dict, batch, query, seen) -> None:
         # Apollo's identity beats a web-scraped title for the company name.
         if p.discovery_source == "apollo" and p.company_name:
             existing.company_name = p.company_name
-        if existing.tier != "company" and p.tier == "company":
+        # A second source can promote a demoted candidate back to "company" —
+        # that is how an employer's own careers page escapes an ATS misread. But
+        # not out of an evidence-backed verdict: a web hit that merely does not
+        # recognise a trade publisher is weaker evidence than the industry code
+        # that demoted it, and letting it win put FinTech Futures back at #1.
+        if (existing.tier != "company" and p.tier == "company"
+                and existing.kind not in aggregators.AUTHORITATIVE_KINDS):
             existing.tier, existing.kind = "company", p.kind
         base = max(existing.confidence, p.confidence)
         existing.confidence = min(1.0, base + (0.10 if new_provider else 0.0))

@@ -22,6 +22,11 @@ checked against the state that produced it (see tests/test_discovery_narration.p
 """
 
 from discovery import aggregators
+# The same threshold the search itself uses. An Apollo match count past this
+# narrows nothing: "healthcare" matches over a million companies and comes back
+# Amazon, Google and Nestlé first. Imported rather than restated so the sentence
+# this module writes and the behaviour it describes can never disagree.
+from discovery.sources import CATEGORY_TOO_BROAD as _TOO_BROAD
 
 # How lopsided a drop has to be before it is worth calling "most of them".
 _MOST = 0.5
@@ -35,6 +40,16 @@ _KIND_WORDS = {
     aggregators.DIRECTORY: "company directories",
     aggregators.LIST_SITE: "listicles",
     aggregators.MEDIA: "news and media pages",
+    aggregators.ASSOCIATION: "industry associations",
+    aggregators.GOVERNMENT: "government bodies",
+}
+
+# How a "covers the category" verdict reads mid-sentence (see
+# intent.covers_category_kind). Singular and plural, because one is common.
+_COVERS_WORDS = {
+    "publisher": ("trade publication", "trade publications"),
+    "association": ("industry body", "industry bodies"),
+    "government": ("government agency", "government agencies"),
 }
 
 
@@ -50,12 +65,22 @@ _ACRONYMS = {"sdr", "bdr", "ae", "csm", "cs", "pmm", "ai", "vp", "hr", "it", "qa
 
 def role_phrase(role_label: str) -> str:
     """A role as it should READ mid-sentence: acronyms upper-cased and an article
-    in front, so the narration says "an SDR" rather than "sdr"."""
+    in front, so the narration says "an SDR" rather than "sdr".
+
+    A PLURAL role takes no article. People ask for "account executives" as often
+    as "an account executive", and the label is kept as typed, so a blanket
+    article produced "27 companies hiring an account executives".
+    """
     label = " ".join(str(role_label or "").split())
     if not label:
         return ""
     words = [w.upper() if w.lower() in _ACRONYMS else w for w in label.split()]
     phrase = " ".join(words)
+    head = words[-1].lower()
+    # "ss" guards words that merely end in s ("business"); an acronym is never
+    # plural here because plural acronyms are folded to the singular upstream.
+    if head.endswith("s") and not head.endswith("ss") and head not in _ACRONYMS:
+        return phrase
     article = "an" if phrase[0].lower() in "aeiou" or words[0].lower() in (
         "sdr", "ae", "hr", "it", "ux", "ui", "seo") else "a"
     return f"{article} {phrase}"
@@ -105,7 +130,7 @@ def _subject(names) -> str:
 
 # ── 1. After the Apollo company search ─────────────────────────────────────
 def after_apollo(*, total=None, kept=0, staffing_dropped=0, recruiter_names=(),
-                 agency_dropped=0, role_label="") -> list:
+                 agency_dropped=0, role_label="", covers_demoted=None) -> list:
     """What the company-database search actually returned, and what was thrown
     away. ``total`` is Apollo's own match count, ``kept`` what survived filtering.
 
@@ -113,12 +138,22 @@ def after_apollo(*, total=None, kept=0, staffing_dropped=0, recruiter_names=(),
     different reasons, and only a firm classified as true staffing is ever NAMED:
     the agency/consulting codes are coarse enough to catch a Google or a Deloitte,
     and "ignoring Google, it's a recruiter" is a false claim.
+
+    A run with no ``role_label`` searched Apollo BY CATEGORY, not by job posting,
+    so it must not mention a role: saying "companies with a matching open role"
+    for a category search invented a hiring signal that was never looked for.
     """
     out = []
     if isinstance(total, int) and total > 0:
-        role = (f" hiring {role_phrase(role_label)}" if role_label
-                else " with a matching open role")
-        out.append(f"Apollo has {total:,} companies{role}.")
+        where = (f" hiring {role_phrase(role_label)}" if role_label
+                 else " in that category")
+        out.append(f"Apollo has {total:,} companies{where}.")
+        # A match set this size cannot be a shortlist, and Apollo returns the
+        # biggest companies first, which is why a broad category search surfaces
+        # household names. Say so rather than letting the page look authoritative.
+        if total >= _TOO_BROAD:
+            out.append("That is far too broad to rank on its own, so I am leaning "
+                       "on the web results and scoring for fit rather than size.")
 
     if staffing_dropped > 0:
         seen = staffing_dropped + max(kept, 0)
@@ -141,7 +176,26 @@ def after_apollo(*, total=None, kept=0, staffing_dropped=0, recruiter_names=(),
                               "consultancies"), "hire"
             out.append(f"{lead}, which {verb} on a client's behalf. "
                        "Leaving those out.")
+
+    # Organisations that match the category because they COVER it. Reported as a
+    # demotion, not a drop, because that is exactly what happened to them.
+    covers = {k: v for k, v in dict(covers_demoted or {}).items() if v > 0}
+    if covers:
+        parts = []
+        for verdict, n in sorted(covers.items(), key=lambda kv: -kv[1]):
+            one, many = _COVERS_WORDS.get(verdict, (verdict, verdict + "s"))
+            parts.append(f"{n} {one if n == 1 else many}")
+        out.append(f"{_and_list(parts)} write about this category rather than sell "
+                   "in it, so they go below the real companies.")
     return out
+
+
+def _and_list(parts) -> str:
+    """"a", "a and b", "a, b and c"."""
+    parts = list(parts)
+    if len(parts) <= 1:
+        return parts[0] if parts else ""
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 # ── 2. After the web corroboration pass ────────────────────────────────────

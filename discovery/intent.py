@@ -46,9 +46,20 @@ _ROLE_NOUN_EQUIVALENTS = {
     "lead": ("lead", "manager", "head"),
 }
 
+# Head nouns that make a phrase a JOB TITLE. This must stay a superset of
+# sources._ROLE_NOUN_RE (asserted by tests/test_discovery_quality.py): that regex
+# strips role nouns out of Apollo category tags, so a noun known there but not
+# here means the role is stripped from the tag AND never recognised as a role,
+# which is how "hiring account executives" searched for the category "series
+# account" and verified no postings at all.
 _ROLE_NOUNS = tuple(_ROLE_NOUN_EQUIVALENTS) + (
     "representative", "rep", "analyst", "strategist", "writer", "director",
     "head", "associate", "coordinator", "architect", "scientist", "consultant",
+    # Sales and finance titles a B2B ask reaches for constantly. "account
+    # executive" is the single most common one after SDR and was unrecognised.
+    "executive", "officer", "vp", "president", "recruiter", "controller",
+    "accountant", "administrator", "supervisor", "generalist", "researcher",
+    "copywriter", "technician", "assistant", "intern",
 )
 
 # Common GTM abbreviations the user will type, mapped to the titles companies post.
@@ -141,6 +152,35 @@ AGENCY_NAICS_PREFIXES = ("541612", "54161", "5418", "541810", "541613")
 
 STAFFING_SIC = RECRUITER_SIC | AGENCY_SIC
 STAFFING_NAICS_PREFIXES = RECRUITER_NAICS_PREFIXES + AGENCY_NAICS_PREFIXES
+
+# Organisations that match a CATEGORY search because they cover that category
+# rather than operate in it. A live "fintech" search returned Fintech News
+# Malaysia, FinTech Futures, FinTech Global and Colombia Fintech across the top
+# of the page: all real organisations, none of them a company selling fintech.
+# The domain heuristics cannot catch these (fintechnews.my looks like any other
+# site), so they are classified off Apollo's own industry codes instead.
+PUBLISHER_SIC = frozenset({
+    "2711",   # newspapers: publishing
+    "2721",   # periodicals: publishing
+    "2731",   # book publishing
+    "2741",   # miscellaneous publishing
+    "7383",   # news syndicates
+})
+# 5131x / 5111x are newspaper, periodical, book and directory publishers. Both
+# stop short of SOFTWARE publishers (513210 / 511210), which is why the prefixes
+# are four digits: "5132" is Microsoft and Apple, and must never match here.
+PUBLISHER_NAICS_PREFIXES = ("5131", "5111")
+
+ASSOCIATION_SIC = frozenset({
+    "8611",   # business associations
+    "8621",   # professional membership organisations
+    "8631",   # labor unions
+    "8641",   # civic and social associations
+})
+ASSOCIATION_NAICS_PREFIXES = ("8139",)   # 81391x-81399x membership organisations
+
+GOVERNMENT_SIC_PREFIXES = ("91", "92", "93", "94", "95", "96", "97")
+GOVERNMENT_NAICS_PREFIXES = ("92",)      # public administration
 
 
 @dataclass
@@ -240,6 +280,23 @@ _ROLE_PATTERNS = (
     r"(?:looking|search(?:ing)?)\s+for\s+(?:an?\s+)?([a-z][a-z0-9 /+&-]{2,44}?)\s+(?:role|hire)s?\b",
 )
 
+# Does this text actually ask about HIRING? Without one of these words, a role
+# noun in the text is describing a product, not a vacancy.
+_HIRING_SIGNAL_RE = re.compile(
+    r"\b(hiring|hire|hires|hired|recruit(?:s|ing|ment)?|job|jobs|role|roles|"
+    r"position|positions|opening|openings|vacanc(?:y|ies)|headcount|"
+    r"looking for|searching for|needs?|wants? to hire|bring(?:ing)? on)\b", re.I)
+
+# Head nouns that mean the phrase names a KIND OF COMPANY, not a job title.
+# "AI SDR startups" is a category of vendor; "companies hiring SDRs" is a
+# vacancy. Both contain the role noun "sdr", and only the head noun separates
+# them, so it is what the fallback below tests.
+_CATEGORY_HEAD_RE = re.compile(
+    r"\b(startups?|companies|company|vendors?|platforms?|tools?|software|apps?|"
+    r"products?|saas|solutions?|services?|agencies|agency|firms?|providers?|"
+    r"brands?|sites?|marketplaces?|suites?|stacks?|engines?|copilots?|assistants?)"
+    r"\s*$", re.I)
+
 _HIRING_NOISE_RE = re.compile(
     r"\b(hiring|hire|hires|recruit(?:ing|ment)?|job|jobs|role|roles|position|"
     r"positions|opening|openings|vacanc(?:y|ies)|career|careers|for|an|a|the|"
@@ -293,9 +350,31 @@ def _roles(raw: str, hints) -> list:
             for m in re.finditer(pat, field_text, re.I):
                 add(m.group(1))
                 matched = True
-        if not matched:
+        if not matched and not _names_a_company_category(field_text):
+            # Falling back to the whole field is how a bare "sdr" hint still
+            # anchors on the role. It is skipped only for the category case
+            # below, never for text that actually asks about hiring.
             add(field_text)
     return found[:3]
+
+
+def _names_a_company_category(field_text: str) -> bool:
+    """Is this text naming a KIND OF COMPANY rather than a vacancy?
+
+    "AI SDR startups" means companies that BUILD an AI SDR; "companies hiring
+    SDRs" means companies with that vacancy. Both contain the role noun "sdr",
+    so the whole-field fallback read the first one as a role and returned the
+    giants hiring a sales rep (Anthropic, OpenAI, Salesforce) instead of the
+    vendors the user asked for, which Exa had found and Apollo's hiring boost
+    then outranked.
+
+    Two conditions, both required, to keep this from eating real asks: the text
+    carries NO hiring word at all, and its head noun names a company or product.
+    """
+    text = " ".join(str(field_text or "").split())
+    if not text or _HIRING_SIGNAL_RE.search(text):
+        return False
+    return bool(_CATEGORY_HEAD_RE.search(text))
 
 
 def _has_role_noun(text: str) -> bool:
@@ -485,6 +564,32 @@ def staffing_kind(sic_codes=None, naics_codes=None) -> str:
         return "recruiter"
     if sic & AGENCY_SIC or any(c.startswith(AGENCY_NAICS_PREFIXES) for c in naics):
         return "agency"
+    return ""
+
+
+def covers_category_kind(sic_codes=None, naics_codes=None) -> str:
+    """Why this organisation is not a prospect for a CATEGORY search, or ``""``.
+
+    ``"publisher"`` (a trade magazine or news site about the category),
+    ``"association"`` (an industry body), or ``"government"``. All three match a
+    keyword search on the category they write about or represent, and a live
+    "fintech founders" run filled its whole first page with them.
+
+    Deliberately NOT applied to a role-anchored search: a trade publisher with a
+    live posting for an SDR really is hiring one, so it is a genuine lead there.
+    The caller decides, which is why this only classifies.
+    """
+    sic = {str(c) for c in (sic_codes or [])}
+    naics = [str(c) for c in (naics_codes or [])]
+    if (any(c.startswith(GOVERNMENT_SIC_PREFIXES) for c in sic)
+            or any(c.startswith(GOVERNMENT_NAICS_PREFIXES) for c in naics)):
+        return "government"
+    if (sic & PUBLISHER_SIC
+            or any(c.startswith(PUBLISHER_NAICS_PREFIXES) for c in naics)):
+        return "publisher"
+    if (sic & ASSOCIATION_SIC
+            or any(c.startswith(ASSOCIATION_NAICS_PREFIXES) for c in naics)):
+        return "association"
     return ""
 
 

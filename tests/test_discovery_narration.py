@@ -181,6 +181,40 @@ class AdaptiveToneTests(unittest.TestCase):
         said = _text(narration.after_apollo(total=10241, kept=5, role_label="sdr"))
         self.assertIn("hiring an sdr.", said)        # article + acronym, not "hiring sdr"
 
+    def test_a_plural_role_takes_no_article(self):
+        """People ask for "account executives" as often as "an account executive",
+        and the label is kept as typed, so a blanket article produced the live
+        line "27 companies hiring an account executives"."""
+        self.assertEqual(narration.role_phrase("account executives"),
+                         "account executives")
+        self.assertEqual(narration.role_phrase("ml engineers"), "ml engineers")
+        # A word merely ending in "s" is not a plural.
+        self.assertEqual(narration.role_phrase("business analyst"),
+                         "a business analyst")
+        said = _text(narration.after_apollo(total=27, kept=5,
+                                            role_label="account executives"))
+        self.assertIn("hiring account executives.", said)
+        self.assertNotIn("an account executives", said)
+
+    def test_a_category_search_never_claims_a_role(self):
+        """Apollo matched on a category keyword, not a job posting. Saying
+        "companies with a matching open role" invented a hiring signal that was
+        never looked for."""
+        said = _text(narration.after_apollo(total=101395, kept=20, role_label=""))
+        self.assertIn("in that category", said)
+        self.assertNotIn("open role", said)
+        self.assertIn("too broad", said)      # and says so when it cannot narrow
+
+    def test_organisations_that_cover_the_category_are_reported_as_demoted(self):
+        said = _text(narration.after_apollo(
+            total=900, kept=20, role_label="",
+            covers_demoted={"publisher": 3, "association": 1}))
+        self.assertIn("3 trade publications and 1 industry body", said)
+        self.assertIn("rather than sell in it", said)
+        # Nothing claimed when nothing was demoted.
+        self.assertNotIn("trade publication", _text(
+            narration.after_apollo(total=900, kept=20, covers_demoted={})))
+
     def test_counts_agree_with_their_verbs(self):
         one = _text(narration.after_apollo(total=99, kept=9, staffing_dropped=2,
                                            recruiter_names=["A"], agency_dropped=1))
