@@ -44,6 +44,19 @@ _GENERIC_FOUNDER_OUTBOUND = (
     "personalized cold email", "hours per prospect", "without spending hours",
     "personalization grind", "generic templates",
 )
+# Cold-email / AI tells that read as machine-written wherever they appear in the
+# body (not only as the opener). Two or more of these is a template, not a note.
+_AI_TELLS = (
+    "i hope this email finds you well", "hope this email finds you",
+    "i hope you are doing well", "i hope you're doing well", "hope you are well",
+    "hope this finds you", "my name is", "i am reaching out", "i'm reaching out",
+    "reaching out because", "i came across your", "i came across you",
+    "i wanted to see if", "i just wanted to", "explore synergies", "synergies",
+    "looking forward to hearing", "let me know your thoughts",
+    "quick call to discuss", "hop on a quick", "the right person for this",
+    "there might be a great opportunity", "help you grow", "work together",
+    "i noticed your",
+)
 
 
 class Review:
@@ -81,8 +94,63 @@ def _grounded_tokens(data: dict) -> set:
                      "who", "how", "what", "they", "their", "are", "was", "has"}
 
 
-def review(draft: dict, data: dict) -> Review:
-    """Score a draft 0-100 across founder-email qualities; list soft issues."""
+def _trigrams(text: str) -> set:
+    words = re.findall(r"[a-z0-9]+", (text or "").lower())
+    return set(zip(words, words[1:], words[2:]))
+
+
+# Above this word-trigram Jaccard, two drafts read as the same email reskinned.
+_REPEAT_JACCARD = 0.32
+
+
+def repetition_against(body: str, prior_bodies) -> tuple:
+    """How much ``body`` repeats any earlier draft. Returns (similarity 0..1,
+    issue|None). A reused OPENING line is the loudest tell (a batch that all starts
+    the same way), so it maxes the score; otherwise it's word-trigram overlap.
+
+    This is what catches "repetitive multi-email batches" and "identical sentence
+    architecture across drafts" that a single-draft review can't see."""
+    priors = [p for p in (prior_bodies or []) if isinstance(p, str) and p.strip()]
+    if not body or not priors:
+        return 0.0, None
+    new_tri = _trigrams(body)
+    new_sents = _split_sentences(body)
+    new_open = _norm(new_sents[0]) if new_sents else ""
+    worst = 0.0
+    for prior in priors:
+        ps = _split_sentences(prior)
+        if new_open and ps and _norm(ps[0]) == new_open:
+            return 1.0, ("Opens with the same line as an earlier draft; write a "
+                         "genuinely fresh opening for this one.")
+        pt = _trigrams(prior)
+        if new_tri and pt:
+            worst = max(worst, len(new_tri & pt) / len(new_tri | pt))
+    if worst >= _REPEAT_JACCARD:
+        return worst, ("Reuses too much phrasing and structure from an earlier "
+                       "draft; vary the wording, the angle, and the sentence shapes.")
+    return worst, None
+
+
+def batch_distinctiveness(bodies) -> tuple:
+    """Worst pairwise similarity across a batch of drafts (a sequence or an A/B/C
+    set). Returns (worst_similarity 0..1, (i, j)|None) so a caller can flag or
+    regenerate the offending pair. Used by the sequence path and the benchmark."""
+    bodies = [b for b in (bodies or []) if isinstance(b, str) and b.strip()]
+    worst, pair = 0.0, None
+    for i in range(len(bodies)):
+        sim, _ = repetition_against(bodies[i], bodies[:i])
+        if sim > worst:
+            worst, pair = sim, (i - 1, i)
+    return worst, (pair if worst >= _REPEAT_JACCARD else None)
+
+
+def review(draft: dict, data: dict, prior_bodies=None) -> Review:
+    """Score a draft 0-100 across founder-email qualities; list soft issues.
+
+    ``prior_bodies`` (optional): other drafts this one should NOT echo (earlier
+    sequence steps, previously generated emails). When it repeats one, a
+    ``distinctiveness`` dimension drops and a concrete fix is added to ``issues``,
+    so the writer's existing repair loop rewrites it to be different."""
     body = _strip_ps((draft or {}).get("body") or "").strip()
     subject = ((draft or {}).get("subject") or "").strip()
     if not body:
@@ -205,7 +273,38 @@ def review(draft: dict, data: dict) -> Review:
     # 6) Clarity — a usable subject exists and isn't empty/too long.
     dims["clarity"] = 1.0 if (0 < len(subject) <= 90) else 0.5
 
+    # 6b) AI phrasing — classic cold-email/AI tells ANYWHERE in the body, not only
+    #     as the opener. A clean-grammar generic template used to average ~70 here
+    #     because its few real weaknesses were diluted by tidy writing; this makes
+    #     the tells count directly.
+    tell_hits = [t for t in _AI_TELLS if t in body_low]
+    if tell_hits:
+        dims["ai_phrasing"] = 0.2 if len(tell_hits) >= 2 else 0.5
+        issues.append("Drop the cold-email cliches (" + ", ".join(tell_hits[:2])
+                      + "); say the real thing plainly, the way you'd message a peer.")
+    else:
+        dims["ai_phrasing"] = 1.0
+
+    # 7) Distinctiveness — this draft must not echo an earlier one (only scored
+    #    when prior drafts are supplied; otherwise it's a no-op, not a free point).
+    if prior_bodies:
+        sim, repeat_issue = repetition_against(body, prior_bodies)
+        if repeat_issue:
+            dims["distinctiveness"] = 0.2 if sim >= 0.99 else 0.45
+            issues.append(repeat_issue)
+        else:
+            dims["distinctiveness"] = 1.0
+
     score = round(100 * sum(dims.values()) / len(dims))
+    # Floor rules: two failure modes are disqualifying on their own, no matter how
+    # clean the rest of the writing looks. An email that references NOTHING specific
+    # about the company (pure generic), and one built from AI cold-email cliches,
+    # are both weak by definition — cap them so the repair loop rewrites them
+    # instead of shipping an average-looking generic note.
+    if grounded and dims.get("personalization", 1.0) <= 0.2:
+        score = min(score, REVIEW_WEAK_THRESHOLD - 7)
+    if dims.get("ai_phrasing", 1.0) <= 0.4:
+        score = min(score, REVIEW_WEAK_THRESHOLD - 7)
     return Review(score, issues, dims)
 
 

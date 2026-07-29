@@ -51,7 +51,8 @@ _NON_OUTREACH_STRATEGIES = {"hold", "research", "enrich"}
 def write_email(research_data, *, add_reveal: bool = False,
                 max_repairs: int = WRITER_MAX_REPAIRS,
                 guidance: str = None, current_email: dict = None,
-                allow_thin: bool = False, style_note: str = None) -> dict:
+                allow_thin: bool = False, style_note: str = None,
+                prior_bodies=None) -> dict:
     """Turn research output into a ready-to-send cold email (or a skip/error).
 
     guidance / current_email support conversational REVISIONS driven by the chat
@@ -81,7 +82,7 @@ def write_email(research_data, *, add_reveal: bool = False,
                           confidence=confidence, style_note=style_note)
         draft = validator.repair(draft, data, add_reveal)
         problems = validator.validate(draft, data, add_reveal)
-        review = reviewer.review(draft, data)
+        review = reviewer.review(draft, data, prior_bodies=prior_bodies)
 
         attempts = 0
         # Regenerate while HARD problems remain, or the draft is soft-weak and we
@@ -94,7 +95,7 @@ def write_email(research_data, *, add_reveal: bool = False,
                              style_note=style_note)
             draft = validator.repair(draft, data, add_reveal)
             problems = validator.validate(draft, data, add_reveal)
-            review = reviewer.review(draft, data)
+            review = reviewer.review(draft, data, prior_bodies=prior_bodies)
             attempts += 1
 
         # HARD rules block a send; a lingering SOFT weakness does not — a grounded
@@ -113,7 +114,7 @@ def write_email(research_data, *, add_reveal: bool = False,
         if guidance is None:
             draft = _maybe_refine(draft, data, review, add_reveal,
                                   style_note=style_note)
-            review = reviewer.review(draft, data)
+            review = reviewer.review(draft, data, prior_bodies=prior_bodies)
         return _ok(draft, data, add_reveal, review=review)
     except claude_client.ClaudeClientError as exc:
         # Already a user-safe message (no secrets, no stack trace).
