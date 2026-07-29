@@ -67,6 +67,81 @@ def _no_em_dashes(text):
     return re.sub(r"\s*[,]?\s*([,.;:!?])", r"\1", out)  # never leave " ." or ", ."
 
 
+# ── write_email invariant (#8) ─────────────────────────────────────────
+# The model sometimes NARRATES that it will write an email ("Let me write it
+# anyway so you can see what it looks like") and then ends the turn without ever
+# calling write_email, leaving the user with a promise and no draft. These match
+# that promise so the turn can keep it deterministically rather than trusting the
+# model to. Kept deliberately conservative: a bare "let me write it" only counts
+# when the user's own message this turn was about an email.
+# Committed first-person forms only: "I'll", "let me", "I'm going to". Offers like
+# "I can draft…?" / "Want me to…?" are deliberately NOT here — those are questions
+# awaiting a yes, not promises, and auto-writing on them would surprise the user.
+_COMMIT = r"(i['’]?ll|i will|let me|let['’]?s|i['’]?m going to|going to)"
+_PROMISE_STRONG = re.compile(
+    r"\b" + _COMMIT + r"\b"
+    r"[^.!?\n]{0,40}\b(write|draft|put together|whip up|compose|create|sketch)\b"
+    r"[^.!?\n]{0,40}\b(email|e-mail|opener|cold\s+(?:email|note)|draft|message to)\b",
+    re.IGNORECASE)
+_PROMISE_VAGUE = re.compile(
+    r"\b" + _COMMIT + r"\b"
+    r"[^.!?\n]{0,30}\b(write|draft|put together|compose)\b"
+    r"[^.!?\n]{0,20}\b(it|one|that|this|something)\b",
+    re.IGNORECASE)
+_EMAIL_INTENT = re.compile(
+    r"\b(email|e-mail|cold\s+(?:email|note)|opener|draft|reach\s+out|write\s+to)\b",
+    re.IGNORECASE)
+_OFFER_LEADIN = re.compile(
+    r"^\s*(want me|do you want|would you like|should i|shall i|can i|may i|happy to|"
+    r"i can|i could)\b",
+    re.IGNORECASE)
+
+
+def _promised_email(final_text: str, user_text: str) -> bool:
+    """True when the closing prose COMMITS to writing an email that never came.
+
+    Sentence-scoped so a question ("Want me to draft an opener?") or an offer
+    ("I can draft one if you like") is never mistaken for a promise — only an
+    unhedged commitment counts. A bare "let me write it" additionally requires the
+    user's own message this turn to have been about an email."""
+    if not final_text:
+        return False
+    intent = bool(_EMAIL_INTENT.search(user_text or ""))
+    for sentence in re.split(r"(?<=[.!?])\s+", final_text):
+        s = sentence.strip()
+        if not s or s.endswith("?") or _OFFER_LEADIN.match(s):
+            continue
+        if _PROMISE_STRONG.search(s):
+            return True
+        if intent and _PROMISE_VAGUE.search(s):
+            return True
+    return False
+
+
+def _fulfil_email_promise(conversation, emit) -> None:
+    """Keep a promise-to-write the model made but didn't act on: call the writer
+    directly and surface the draft. If there's no company to write for (or the
+    writer fails), degrade to a concrete ask, never to silence."""
+    emit("step", {"label": "Writing the draft"})
+    try:
+        result = tools.execute("write_email", {"mode": "auto"}, conversation)
+    except Exception:  # noqa: BLE001
+        log.exception("forced write_email failed")
+        result = None
+    if result is not None and result.message is not None:
+        if result.workspace_updates:
+            conversation.workspace.update(result.workspace_updates)
+        _emit_message(conversation, emit, result.message)
+        for extra in getattr(result, "messages", None) or []:
+            _emit_message(conversation, emit, extra)
+        return
+    _emit_assistant(
+        conversation, emit,
+        "I need to know which company this email is for before I can draft it. "
+        "Tell me the company (or ask me to research one) and I'll write it right away.",
+        kind=NOTICE)
+
+
 def respond(conversation, user_text: str, store=None, user_id=None):
     """Handle one user message end-to-end (blocking); returns the conversation.
 
@@ -195,71 +270,105 @@ def _run_turn(conversation, user_text: str, store, user_id, emit):
              (user_text or "")[:80], ", ".join(s["name"] for s in specs))
 
     emit("step", {"label": "Thinking"})
-    for _hop in range(CHAT_MAX_TOOL_HOPS):
-        try:
-            # Attribute the orchestration LLM call to the "chat" agent (telemetry).
-            with telemetry.scope(user_id=user_id, agent="chat"):
-                resp = claude_client.call_with_tools(system, messages, specs)
-        except claude_client.ClaudeClientError as exc:
-            _emit_assistant(conversation, emit,
-                            f"I hit a problem reaching the model: {exc}", kind=NOTICE)
-            _save(store, conversation)
-            return
-        except Exception:  # noqa: BLE001 - last-resort guard; never crash the UI
-            _emit_assistant(conversation, emit,
-                            "Something went wrong. Please try again.", kind=NOTICE)
-            _save(store, conversation)
-            return
-
-        if not resp["tool_uses"]:
-            # No tool chosen — the model answered directly. Logged explicitly so
-            # "tool offered but not selected" is distinguishable from "not offered".
-            log.info("tool selection (hop %d): none - model answered directly", _hop)
-            _emit_assistant(conversation, emit, _no_em_dashes(resp["text"]) or "Done.")
-            break
-
-        # The model narrated + decided to use tools: show the narration first.
-        log.info("tool selection (hop %d): %s", _hop,
-                 ", ".join(c["name"] for c in resp["tool_uses"]))
-        if resp["text"]:
-            _emit_assistant(conversation, emit, _no_em_dashes(resp["text"]))
-
-        messages.append({"role": "assistant", "content": resp["assistant_content"]})
-        results = []
-        for call in resp["tool_uses"]:
-            log.info("tool call: %s %s", call["name"], call["input"])
-            _announce_tool(call["name"], emit)
-            # Tools that stream their own stages get a live progress sink; the rest
-            # already announced a single step above. Cleared after so a later tool
-            # never inherits a stale sink. ``kind`` separates WHAT is happening
-            # ("step") from WHY ("thought", grounded in discovery/narration.py).
-            conversation._progress = (
-                (lambda label, kind="step": emit(kind, {"label": label}))
-                if call["name"] in _PROGRESS_TOOLS else None)
-            # Record the agent execution + attribute any LLM calls inside the tool.
+    # Turn-scoped bookkeeping the terminal-state guarantees depend on: whether the
+    # user actually got an email this turn, and the assistant's closing prose.
+    produced_email = False
+    final_text = ""
+    try:
+        for _hop in range(CHAT_MAX_TOOL_HOPS):
             try:
-                with telemetry.track_agent(call["name"], user_id=user_id):
-                    result = tools.execute(call["name"], call["input"], conversation)
-            finally:
-                conversation._progress = None
-            if result.workspace_updates:
-                conversation.workspace.update(result.workspace_updates)
-            if result.message is not None:
-                _emit_message(conversation, emit, result.message)
-            for extra in getattr(result, "messages", None) or []:
-                _emit_message(conversation, emit, extra)
-            results.append({"type": "tool_result", "tool_use_id": call["id"],
-                            "content": result.summary})
-        messages.append({"role": "user", "content": results})
-    else:
-        # Ran out of tool hops without a final answer.
-        _emit_assistant(
-            conversation, emit,
-            "I've done what I can for now, let me know how you'd like to proceed.",
-            kind=NOTICE)
+                # Attribute the orchestration LLM call to the "chat" agent.
+                with telemetry.scope(user_id=user_id, agent="chat"):
+                    resp = claude_client.call_with_tools(system, messages, specs)
+            except claude_client.ClaudeClientError as exc:
+                _emit_assistant(conversation, emit,
+                                f"I hit a problem reaching the model: {exc}", kind=NOTICE)
+                return
+            except Exception:  # noqa: BLE001 - last-resort guard; never crash the UI
+                _emit_assistant(conversation, emit,
+                                "Something went wrong. Please try again.", kind=NOTICE)
+                return
 
-    _maybe_set_title(conversation, user_text)
-    _save(store, conversation)
+            if not resp["tool_uses"]:
+                # No tool chosen — the model answered directly. Logged explicitly so
+                # "tool offered but not selected" is distinguishable from "not offered".
+                log.info("tool selection (hop %d): none - model answered directly", _hop)
+                final_text = _no_em_dashes(resp["text"]) or "Done."
+                _emit_assistant(conversation, emit, final_text)
+                break
+
+            # The model narrated + decided to use tools: show the narration first.
+            log.info("tool selection (hop %d): %s", _hop,
+                     ", ".join(c["name"] for c in resp["tool_uses"]))
+            if resp["text"]:
+                _emit_assistant(conversation, emit, _no_em_dashes(resp["text"]))
+
+            messages.append({"role": "assistant", "content": resp["assistant_content"]})
+            results = []
+            for call in resp["tool_uses"]:
+                log.info("tool call: %s %s", call["name"], call["input"])
+                _announce_tool(call["name"], emit)
+                # Tools that stream their own stages get a live progress sink; the rest
+                # already announced a single step above. Cleared after so a later tool
+                # never inherits a stale sink. ``kind`` separates WHAT is happening
+                # ("step") from WHY ("thought", grounded in discovery/narration.py).
+                conversation._progress = (
+                    (lambda label, kind="step": emit(kind, {"label": label}))
+                    if call["name"] in _PROGRESS_TOOLS else None)
+                # One tool raising must NOT sink the whole turn: everything produced
+                # so far stays, the model is told the tool failed so it can wrap up,
+                # and the loop continues to a clean terminal state.
+                try:
+                    with telemetry.track_agent(call["name"], user_id=user_id):
+                        result = tools.execute(call["name"], call["input"], conversation)
+                except Exception:  # noqa: BLE001
+                    log.exception("tool %s failed", call["name"])
+                    label = _TOOL_LABEL.get(call["name"], "that step")
+                    _emit_assistant(
+                        conversation, emit,
+                        f"I hit a problem while {label[0].lower() + label[1:]}. "
+                        "Anything I finished before this is above, so you can ask me "
+                        "to try that part again.",
+                        kind=NOTICE)
+                    results.append({"type": "tool_result", "tool_use_id": call["id"],
+                                    "content": f"ERROR: {call['name']} failed and "
+                                               "returned no result. Wrap up with what "
+                                               "you already have; do not retry it now.",
+                                    "is_error": True})
+                    continue
+                finally:
+                    conversation._progress = None
+                if result.workspace_updates:
+                    conversation.workspace.update(result.workspace_updates)
+                if result.message is not None:
+                    _emit_message(conversation, emit, result.message)
+                    if result.message.kind == EMAIL:
+                        produced_email = True
+                for extra in getattr(result, "messages", None) or []:
+                    _emit_message(conversation, emit, extra)
+                    if extra.kind == EMAIL:
+                        produced_email = True
+                results.append({"type": "tool_result", "tool_use_id": call["id"],
+                                "content": result.summary})
+            messages.append({"role": "user", "content": results})
+        else:
+            # Ran out of tool hops without a final answer.
+            _emit_assistant(
+                conversation, emit,
+                "I've done what I can for now, let me know how you'd like to proceed.",
+                kind=NOTICE)
+
+        # Invariant (#8): the model promised an email but never produced one — keep
+        # the promise deterministically instead of leaving the user empty-handed.
+        if final_text and not produced_email and _promised_email(final_text, user_text):
+            log.info("write_email invariant: model promised a draft but produced none; fulfilling")
+            _fulfil_email_promise(conversation, emit)
+    finally:
+        # Whatever this turn produced is persisted exactly once, on every path
+        # (clean finish, early return, or an exception bubbling out), so a refresh
+        # never loses completed cards or research.
+        _maybe_set_title(conversation, user_text)
+        _save(store, conversation)
 
 
 def _announce_tool(name: str, emit) -> None:
