@@ -1,8 +1,7 @@
 "use client";
 
 import { UserButton } from "@clerk/nextjs";
-import Link from "next/link";
-import { Search, PanelLeftOpen, Sparkles } from "lucide-react";
+import { Search, PanelLeftOpen } from "lucide-react";
 import { useDemo } from "@/components/demo/demo-provider";
 
 export function Topbar({ collapsed, onExpand }: { collapsed: boolean; onExpand: () => void }) {
@@ -30,14 +29,9 @@ export function Topbar({ collapsed, onExpand }: { collapsed: boolean; onExpand: 
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        {isDemo ? (
-          <Link
-            href="/#waitlist"
-            className="inline-flex h-8 items-center gap-1.5 rounded-full bg-accent px-3.5 text-xs font-semibold text-white transition-colors hover:bg-accent-hi"
-          >
-            <Sparkles className="size-3.5" /> Join the waitlist
-          </Link>
-        ) : (
+        {/* No waitlist CTA here for demo sessions: the demo banner directly below
+            owns that single call to action, so it never appears twice on screen. */}
+        {!isDemo && (
           <div className="ml-1 grid size-8 place-items-center rounded-full border border-border bg-black/[0.04] text-[11px] font-semibold text-text">
             <UserButton afterSignOutUrl="/" />
           </div>

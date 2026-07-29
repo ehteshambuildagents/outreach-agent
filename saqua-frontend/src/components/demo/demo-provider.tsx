@@ -19,7 +19,13 @@ type DemoState = {
   expiresAt: number | null; // epoch seconds
   turnsUsed: number;
   turnsLimit: number;
+  /** Messages the visitor can still send. `null` when unknown (not a demo, or
+   *  status not loaded yet) so callers can distinguish "unknown" from "zero". */
+  turnsLeft: number | null;
   refresh: () => void;
+  /** Optimistically count one turn the instant a message is sent, so the banner
+   *  moves immediately; the next `refresh` reconciles to the server's truth. */
+  noteTurnUsed: () => void;
   endSession: () => Promise<void>;
 };
 
@@ -28,7 +34,9 @@ const DemoContext = createContext<DemoState>({
   expiresAt: null,
   turnsUsed: 0,
   turnsLimit: 0,
+  turnsLeft: null,
   refresh: () => {},
+  noteTurnUsed: () => {},
   endSession: async () => {},
 });
 
@@ -86,7 +94,14 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Count one turn immediately on send. Clamped so it can never read negative
+  // before the server reconciles; `refresh` (called right after) is authoritative.
+  const noteTurnUsed = useCallback(() => {
+    setTurnsUsed((u) => u + 1);
+  }, []);
+
   const isDemo = expiresAt !== null && expiresAt * 1000 > Date.now();
+  const turnsLeft = isDemo && turnsLimit > 0 ? Math.max(0, turnsLimit - turnsUsed) : null;
   void tick; // referenced so the interval re-render isn't optimised away
 
   const endSession = async () => {
@@ -100,7 +115,7 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <DemoContext.Provider
-      value={{ isDemo, expiresAt, turnsUsed, turnsLimit, refresh, endSession }}
+      value={{ isDemo, expiresAt, turnsUsed, turnsLimit, turnsLeft, refresh, noteTurnUsed, endSession }}
     >
       {children}
     </DemoContext.Provider>

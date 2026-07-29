@@ -357,6 +357,8 @@ export interface ProspectEntry {
   status: string;
   score: number;
   fit_level: string;
+  /** Honest qualification band shown on the card. Present on discovered entries. */
+  band?: "strong" | "possible" | "weak";
   priority: string;
   recommendation: string;
   recommended: boolean;

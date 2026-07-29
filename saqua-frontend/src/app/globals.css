@@ -72,6 +72,14 @@
   border-color: var(--border);
 }
 
+/* App shell height: exactly one viewport, with a static-vh fallback for browsers
+   that don't understand dvh. dvh tracks the *dynamic* viewport so mobile browser
+   chrome collapsing/expanding never leaves the composer stranded under the fold. */
+.app-shell-viewport {
+  height: 100vh;
+  height: 100dvh;
+}
+
 /* Respect prefers-reduced-motion everywhere. */
 @media (prefers-reduced-motion: reduce) {
   *,

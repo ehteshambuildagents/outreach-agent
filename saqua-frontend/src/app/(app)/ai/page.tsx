@@ -52,7 +52,7 @@ export default function AIChatPage() {
   // Demo sessions meter turns server-side; refreshing right after a send keeps
   // the banner's remaining-messages count and the engagement prompt honest
   // instead of waiting up to a minute for the background poll.
-  const { refresh: refreshDemo } = useDemo();
+  const { isDemo, turnsLeft, refresh: refreshDemo, noteTurnUsed } = useDemo();
   const [convId, setConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -64,12 +64,19 @@ export default function AIChatPage() {
   const [steps, setSteps] = useState<TraceLine[]>([]);
   const [artifact, setArtifact] = useState<{ idx: number; data: EmailCardData } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Index boundary marking where the CURRENT turn's assistant output begins. Any
+  // message before it belongs to a prior turn and must never be re-animated — that
+  // was the "old HackerRank paragraph types itself out again while the new request
+  // is still processing" bug: before the first new token arrived, the newest
+  // assistant message WAS the previous turn's, so the typewriter replayed it.
+  const turnStartRef = useRef(0);
 
   // The assistant text that should type itself out: the newest assistant prose in
-  // the transcript, but only while a turn is streaming. History renders in full.
+  // the transcript, but only within the current turn. History renders in full, and
+  // the gap between "send" and the first new token animates nothing.
   const typingIdx = useMemo(() => {
     if (!sending) return -1;
-    for (let i = messages.length - 1; i >= 0; i--) {
+    for (let i = messages.length - 1; i >= turnStartRef.current; i--) {
       const m = messages[i];
       if (m.role === "assistant" && (m.kind === "text" || m.kind === "notice")) return i;
     }
@@ -102,7 +109,10 @@ export default function AIChatPage() {
         return;
       }
       setConvId(activeId);
-      setMessages(res.data.messages || []);
+      const loaded = res.data.messages || [];
+      // Loaded history is complete: nothing in it should type itself out.
+      turnStartRef.current = loaded.length;
+      setMessages(loaded);
     });
     return () => {
       cancelled = true;
@@ -114,10 +124,18 @@ export default function AIChatPage() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, pending, sending]);
 
+  // A demo visitor who has spent every message can't send another — the server
+  // would 429 anyway, so stop it here and point at the waitlist instead.
+  const demoExhausted = isDemo && turnsLeft === 0;
+
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
+      if (isDemo && turnsLeft === 0) {
+        setError("You've used every message in this demo. Join the waitlist to keep going.");
+        return;
+      }
       setError("");
       setInput("");
       setPending(trimmed);
@@ -140,8 +158,16 @@ export default function AIChatPage() {
 
       // Commit the user's message into the transcript, then stream the reply. The
       // pending bubble hands off to this so there is no flicker between the two.
-      setMessages((prev) => [...prev, { role: "user", kind: "text", content: trimmed, data: null }]);
+      // Mark the turn boundary at the first slot AFTER this user message: only
+      // assistant messages from here on are "live" and may animate.
+      setMessages((prev) => {
+        turnStartRef.current = prev.length + 1;
+        return [...prev, { role: "user", kind: "text", content: trimmed, data: null }];
+      });
       setPending(null);
+      // Move the banner the instant we send; refreshDemo() below reconciles to the
+      // server's authoritative count once the turn is reserved.
+      if (isDemo) noteTurnUsed();
 
       const append = (kind: TraceLine["kind"]) => (text: string) =>
         setSteps((prev) =>
@@ -165,7 +191,7 @@ export default function AIChatPage() {
       refresh(); // sidebar Recents — the title may have been auto-generated this turn
       refreshDemo(); // demo only: turns used just changed
     },
-    [convId, sending, setActive, refresh, refreshDemo],
+    [convId, sending, setActive, refresh, refreshDemo, isDemo, turnsLeft, noteTurnUsed],
   );
 
   const onAction = useCallback(
@@ -179,7 +205,7 @@ export default function AIChatPage() {
   const empty = messages.length === 0 && !pending && !sending;
 
   return (
-    <div className="-mx-5 -mb-28 -mt-6 flex h-[calc(100vh-var(--nav-h))] md:-mx-8 md:-my-8">
+    <div className="-mx-5 -mb-28 -mt-6 flex h-full overflow-hidden md:-mx-8 md:-my-8">
       <OnboardingTour />
       {/* Conversation (chat history now lives in the single app sidebar) */}
       <section data-tour="artifact-hint" className="flex min-w-0 flex-1 flex-col">
@@ -216,7 +242,26 @@ export default function AIChatPage() {
 
         <div data-tour="composer" className="glass border-t border-border-faint p-3">
           <div className="mx-auto max-w-3xl">
-            <Composer value={input} onChange={setInput} onSend={() => send(input)} disabled={sending} />
+            {demoExhausted ? (
+              <div className="flex flex-col items-center gap-2 rounded-lg border border-accent-line bg-accent-soft/50 px-5 py-4 text-center">
+                <p className="text-sm text-text-2">
+                  That&apos;s every message in this demo. Join the waitlist to keep going with your own account.
+                </p>
+                <a
+                  href="/#waitlist"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-xs font-semibold text-[color:var(--accent-ink)] transition-colors hover:bg-accent-hi"
+                >
+                  Join the waitlist →
+                </a>
+              </div>
+            ) : (
+              <Composer
+                value={input}
+                onChange={setInput}
+                onSend={() => send(input)}
+                disabled={sending}
+              />
+            )}
           </div>
         </div>
       </section>

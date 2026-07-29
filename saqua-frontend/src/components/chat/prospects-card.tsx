@@ -51,6 +51,16 @@ const HIRING_TONE: Record<string, Tone> = {
   page: "neutral",
 };
 
+/** The honest qualification band. This is what stops a 22% match from reading as
+ *  a recommendation: it is labelled "Weak" in plain words, right next to the
+ *  percentage, and a company hiring for a different role can only ever be
+ *  "Possible" (the backend caps it — see research_pipeline._qualification_band). */
+const BAND_META: Record<string, { label: string; tone: Tone }> = {
+  strong: { label: "Strong", tone: "success" },
+  possible: { label: "Possible", tone: "warn" },
+  weak: { label: "Weak", tone: "neutral" },
+};
+
 function scoreTone(score: number): Tone {
   if (score >= 70) return "success";
   if (score >= 45) return "accent";
@@ -202,6 +212,11 @@ function ProspectRow({
                 {discovered && (
                   <Badge tone={scoreTone(p.score)}>
                     <CountUp to={p.score} />% match
+                  </Badge>
+                )}
+                {discovered && p.band && BAND_META[p.band] && (
+                  <Badge tone={BAND_META[p.band].tone} dot>
+                    {BAND_META[p.band].label}
                   </Badge>
                 )}
                 {!discovered && (

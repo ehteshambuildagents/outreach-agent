@@ -52,16 +52,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         <ApiAuthBridge />
         <Sidebar collapsed={collapsed} onToggle={toggle} />
+        {/* Fixed-height flex column: the chrome (top bar + demo banner) is flex-none,
+            and `main` takes exactly the leftover height and owns the scroll. This is
+            what lets a full-height page like Chat pin its composer to the bottom
+            regardless of how tall the demo banner wraps — no viewport-height maths
+            that forgets the banner and pushes the composer below the fold. */}
         <div
           className={cn(
-            "transition-[padding] duration-300 ease-smooth",
+            "app-shell-viewport flex flex-col transition-[padding] duration-300 ease-smooth",
             collapsed ? "lg:pl-0" : "lg:pl-[var(--rail-w)]",
           )}
         >
           <Topbar collapsed={collapsed} onExpand={toggle} />
           <DemoBanner />
           <DemoWaitlistPrompt />
-          <main className="mx-auto max-w-[1240px] px-5 pb-28 pt-6 md:px-8 md:py-8">{children}</main>
+          <main className="mx-auto w-full min-h-0 max-w-[1240px] flex-1 overflow-y-auto px-5 pb-28 pt-6 md:px-8 md:py-8">
+            {children}
+          </main>
         </div>
       </div>
     </ChatNavProvider>
