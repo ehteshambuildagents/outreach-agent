@@ -451,6 +451,27 @@ class CustomerLikelihoodTests(unittest.TestCase):
         self.assertGreater(scoring.score_prospect(small, plan).access,
                            scoring.score_prospect(public, plan).access)
 
+    def test_hiring_a_different_role_is_not_a_positive_signal(self):
+        """#6: when a specific role was asked for, "hiring, but not that role" must
+        contribute nothing to hiring-relevance. Presenting a company hiring content
+        creators as a match for an SDR search is the exact mislabelling to avoid."""
+        plan = intent.parse("b2b founders hiring an sdr")
+        self.assertTrue(plan.roles)
+        p_any = Prospect(company_name="A", website="https://a.com", domain="a.com",
+                         hiring={"verified": True, "match": "any", "summary": "3 roles"})
+        p_role = Prospect(company_name="B", website="https://b.com", domain="b.com",
+                          hiring={"verified": True, "match": "role", "summary": "SDR"})
+        self.assertEqual(scoring._hiring(p_any, plan)[0], 0.0)   # not that role -> 0
+        self.assertEqual(scoring._hiring(p_role, plan)[0], 1.0)  # the role -> full
+
+    def test_hiring_any_still_mildly_relevant_when_no_role_was_asked(self):
+        # No specific role in the ask -> any active hiring keeps its old mild credit.
+        plan = intent.parse("b2b fintech companies in europe")
+        self.assertFalse(plan.roles)
+        p_any = Prospect(company_name="A", website="https://a.com", domain="a.com",
+                         hiring={"verified": True, "match": "any", "summary": "roles"})
+        self.assertEqual(scoring._hiring(p_any, plan)[0], 0.35)
+
     def test_enterprise_companies_are_demoted_below_a_founder_led_one(self):
         """The mega-corp bug: a role search returned Amazon and Microsoft at the
         top because they post the most jobs. A public / nine-figure company is not

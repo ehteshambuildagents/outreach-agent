@@ -114,6 +114,31 @@ class ResearchToolTests(unittest.TestCase):
             tools.execute("research_company", {"query": "acme.com", "refresh": True}, conv)
         rc.assert_called_once()
 
+    def test_a_different_company_is_researched_not_reused(self):
+        # #7/#12: HackerRank is on file; "research Apple" must actually research
+        # Apple, not reuse HackerRank's research and keep talking about it.
+        conv = Conversation(workspace={
+            "research": _research_ok("HackerRank"), "company": "HackerRank",
+            "company_url": "https://hackerrank.com"})
+        with mock.patch("chat.tools.research_company",
+                        return_value=_research_ok("Apple")) as rc:
+            result = tools.execute("research_company", {"query": "Apple"}, conv)
+        rc.assert_called_once()                              # Apple was researched
+        self.assertEqual(result.workspace_updates["company"], "Apple")
+
+    def test_switching_back_reuses_cached_research(self):
+        # After researching Apple over a HackerRank thread, going BACK to HackerRank
+        # reuses the cached research instead of paying to crawl it again.
+        conv = Conversation(workspace={
+            "research": _research_ok("Apple"), "company": "Apple",
+            "company_url": "https://apple.com",
+            "research_cache": {"hackerrank.com": _research_ok("HackerRank")}})
+        with mock.patch("chat.tools.research_company") as rc:
+            result = tools.execute("research_company",
+                                   {"query": "hackerrank.com"}, conv)
+        rc.assert_not_called()                               # served from cache
+        self.assertEqual(result.workspace_updates["company"], "HackerRank")
+
     def test_research_error_is_reported_not_raised(self):
         conv = Conversation()
         err = {"status": "error", "error": "Could not resolve that host name"}
@@ -880,7 +905,7 @@ class StreamingTurnTests(unittest.TestCase):
             # does through discovery/narration.py) and returns a card.
             prog = getattr(conv, "_progress", None)
             if prog:
-                prog("Searching Apollo's company database")
+                prog("Searching company databases")
                 prog("Most of these are recruiters, dropping them.", "thought")
             return ToolResult(summary="ok", message=Message(
                 role="assistant", kind="prospects", content="Found 1.",
@@ -896,7 +921,7 @@ class StreamingTurnTests(unittest.TestCase):
         self.assertIn("message", kinds)
         self.assertEqual(kinds[-1], "done")            # always terminates cleanly
         labels = [d.get("label") for e, d in events if e == "step"]
-        self.assertIn("Searching Apollo's company database", labels)  # tool stage streamed live
+        self.assertIn("Searching company databases", labels)  # tool stage streamed live
         # The WHY streams as its own event kind, so the UI can render it as
         # reasoning rather than as another checklist stage.
         self.assertIn("thought", kinds)
@@ -962,6 +987,140 @@ class DiscoveryRefinementTests(unittest.TestCase):
     def test_no_prior_search_means_no_refinement(self):
         c = self._capture({"query": "companies in Europe", "location": "Europe"}, {})
         self.assertNotIn("ai video", c["raw"])
+
+
+class WriteEmailInvariantTests(unittest.TestCase):
+    """#8: when the assistant PROMISES an email, the turn must hand back a draft
+    (or a concrete ask), never a promise with nothing behind it."""
+
+    def test_promised_email_is_fulfilled_when_model_forgets_the_tool(self):
+        # The model answers directly, committing to write, but never calls the tool.
+        conv = Conversation(workspace={"research": _research_ok()})
+        script = [_final("Sure. Let me draft the email for you so you can see it.")]
+        with mock.patch("chat.agent.claude_client.call_with_tools", side_effect=script), \
+             mock.patch("chat.tools.write_email", return_value=_email_ok()) as we:
+            agent.respond(conv, "write a cold email for Acme")
+        we.assert_called_once()                         # invariant drove the writer
+        self.assertIn(EMAIL, [m.kind for m in conv.messages])   # user got the draft
+
+    def test_bare_promise_fulfils_when_user_asked_for_an_email(self):
+        # The exact reported phrasing: "let me write it anyway" with no email word,
+        # but the user's message this turn was clearly about an email.
+        conv = Conversation(workspace={"research": _research_ok()})
+        script = [_final("Let me write it anyway so you can see what it looks like.")]
+        with mock.patch("chat.agent.claude_client.call_with_tools", side_effect=script), \
+             mock.patch("chat.tools.write_email", return_value=_email_ok()) as we:
+            agent.respond(conv, "draft the cold email")
+        we.assert_called_once()
+        self.assertIn(EMAIL, [m.kind for m in conv.messages])
+
+    def test_promised_email_without_a_company_asks_instead_of_going_silent(self):
+        conv = Conversation()                           # nothing to write about
+        script = [_final("Okay, let me write the email now.")]
+        with mock.patch("chat.agent.claude_client.call_with_tools", side_effect=script), \
+             mock.patch("chat.tools.write_email") as we:
+            agent.respond(conv, "draft the email")
+        we.assert_not_called()                          # no source -> writer not run
+        self.assertNotIn(EMAIL, [m.kind for m in conv.messages])
+        self.assertIn("which company", conv.messages[-1].content.lower())
+
+    def test_offer_to_draft_is_not_a_surprise_email(self):
+        # A QUESTION offering to draft must not auto-trigger the writer.
+        conv = Conversation(workspace={"research": _research_ok()})
+        script = [_final("Acme looks like a strong fit. Want me to draft an opener?")]
+        with mock.patch("chat.agent.claude_client.call_with_tools", side_effect=script), \
+             mock.patch("chat.tools.write_email") as we:
+            agent.respond(conv, "is acme a good prospect?")
+        we.assert_not_called()
+        self.assertNotIn(EMAIL, [m.kind for m in conv.messages])
+
+    def test_email_written_via_tool_does_not_double_write(self):
+        # When the model DOES call write_email, the invariant must not fire again.
+        conv = Conversation(workspace={"research": _research_ok()})
+        script = [_tool_use("write_email", {}),
+                  _final("Drafted the email. Want a shorter version?")]
+        with mock.patch("chat.agent.claude_client.call_with_tools", side_effect=script), \
+             mock.patch("chat.tools.write_email", return_value=_email_ok()) as we:
+            agent.respond(conv, "draft the email")
+        we.assert_called_once()                         # exactly one draft, not two
+        self.assertEqual([m.kind for m in conv.messages].count(EMAIL), 1)
+
+
+class DiscoveryBandTests(unittest.TestCase):
+    """#6: discovered cards carry an honest Strong/Possible/Weak band, and a
+    company hiring for a DIFFERENT role than asked is never Strong or recommended."""
+
+    def _entry(self, confidence, *, tier="company", hiring=None):
+        from chat.research_pipeline import discovery_entries
+        p = {"company_name": "Acme", "website": "https://acme.com",
+             "confidence": confidence, "tier": tier, "hiring": hiring}
+        return discovery_entries([p])[0]
+
+    def test_low_confidence_is_weak_not_recommended(self):
+        e = self._entry(0.22)
+        self.assertEqual(e["band"], "weak")
+        self.assertFalse(e["recommended"])
+
+    def test_high_confidence_role_match_is_strong(self):
+        e = self._entry(0.72, hiring={"verified": True, "match": "role"})
+        self.assertEqual(e["band"], "strong")
+        self.assertTrue(e["recommended"])
+
+    def test_hiring_a_different_role_caps_at_possible(self):
+        # Exactly the reported bug: a strong-looking company whose only hiring
+        # signal is a non-matching role must not be presented as a strong match.
+        e = self._entry(0.72, hiring={"verified": True, "match": "any"})
+        self.assertEqual(e["band"], "possible")
+        self.assertFalse(e["recommended"])
+
+    def test_fallback_source_is_always_weak(self):
+        e = self._entry(0.9, tier="fallback")
+        self.assertEqual(e["band"], "weak")
+        self.assertFalse(e["recommended"])
+
+
+class TurnResilienceTests(unittest.TestCase):
+    """#5: one failing tool must never leave the turn hanging after 'thinking'.
+    The turn always reaches a terminal message, prior work survives, and the
+    conversation is persisted so a refresh doesn't lose it."""
+
+    def test_a_tool_that_raises_does_not_sink_the_turn(self):
+        conv = Conversation()
+        script = [_tool_use("research_company", {"query": "acme.com"}),
+                  _final("Here's what I can do without that step.")]
+        with mock.patch("chat.agent.claude_client.call_with_tools", side_effect=script), \
+             mock.patch("chat.agent.tools.execute",
+                        side_effect=RuntimeError("boom")):
+            agent.respond(conv, "research acme.com")     # must NOT raise
+        # Ends on the model's clean wrap-up, with a visible notice about the failure.
+        self.assertEqual(conv.messages[-1].content,
+                         "Here's what I can do without that step.")
+        self.assertTrue(any(m.kind == "notice" for m in conv.messages))
+
+    def test_stream_terminates_with_done_even_when_a_tool_raises(self):
+        conv = Conversation()
+        script = [_tool_use("research_company", {"query": "acme.com"}),
+                  _final("Wrapped up.")]
+        with mock.patch("chat.agent.claude_client.call_with_tools", side_effect=script), \
+             mock.patch("chat.agent.tools.execute", side_effect=RuntimeError("boom")):
+            events = list(agent.respond_stream(conv, "research acme.com"))
+        self.assertEqual(events[-1][0], "done")          # always terminates cleanly
+        notices = [d["message"] for e, d in events
+                   if e == "message" and d["message"].get("kind") == "notice"]
+        self.assertTrue(notices)                         # the failure was surfaced
+
+    def test_turn_is_persisted_even_when_a_tool_raises(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = ConversationStore(directory=d)
+            conv = Conversation()
+            script = [_tool_use("research_company", {"query": "acme.com"}),
+                      _final("Saved anyway.")]
+            with mock.patch("chat.agent.claude_client.call_with_tools", side_effect=script), \
+                 mock.patch("chat.agent.tools.execute", side_effect=RuntimeError("boom")):
+                agent.respond(conv, "research acme.com", store=store)
+            reloaded = store.load(conv.id)               # survives a "refresh"
+            self.assertIsNotNone(reloaded)
+            self.assertEqual(reloaded.messages[-1].content, "Saved anyway.")
 
 
 if __name__ == "__main__":

@@ -161,6 +161,30 @@ class DemoDependencyTests(unittest.TestCase):
         with mock.patch("limits.is_paused", side_effect=lambda u: u == did):
             self.assertEqual(self.c.get("/api/company", headers=headers).status_code, 403)
 
+    def test_streamed_turn_decrements_the_demo_allowance(self):
+        # End-to-end on the path the UI actually uses (/messages/stream): each
+        # eligible user message reserves exactly one turn, the status endpoint
+        # reflects it immediately, and the turn AFTER the cap is refused. This is
+        # the "5 messages left forever" regression, pinned server-side.
+        from config import settings as _s
+        headers, _did = self._demo()
+        cid = self.c.post("/api/conversations", headers=headers).json()["id"]
+        fake = {"stop_reason": "end_turn", "text": "ok", "tool_uses": [],
+                "assistant_content": [{"type": "text", "text": "ok"}]}
+        with mock.patch.object(_s, "DEMO_SESSION_TURNS", 3), \
+             mock.patch("chat.agent.claude_client.call_with_tools", return_value=fake):
+            for i in range(3):
+                r = self.c.post(f"/api/conversations/{cid}/messages/stream",
+                                headers=headers, json={"text": "hi"})
+                self.assertEqual(r.status_code, 200)
+                _ = r.text  # drain the SSE body
+                st = self.c.get("/api/demo/session", headers=headers).json()
+                self.assertEqual(st["turns_used"], i + 1,
+                                 f"turn {i + 1} should have been counted")
+            blocked = self.c.post(f"/api/conversations/{cid}/messages/stream",
+                                  headers=headers, json={"text": "hi"})
+            self.assertEqual(blocked.status_code, 429)
+
     def test_demo_never_pollutes_the_access_queue(self):
         before = {r.get("user_id") for r in access.list_all()}
         headers, did = self._demo()
