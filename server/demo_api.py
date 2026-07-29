@@ -187,17 +187,26 @@ def demo_turns_used(demo_id: str) -> int:
 
 
 def reserve_demo_turn(demo_id: str) -> tuple[bool, str]:
-    """Admit ONE demo chat turn or return (False, message). Reserves the turn
-    up front (increment-then-check) so concurrent turns can't both slip under the
-    per-session cap, enforces the SAME global $ ceiling as pipeline runs, and
-    meters the turn's estimated cost into the shared demo budget."""
+    """Admit ONE demo chat turn or return (False, message). Uses a bounded atomic
+    increment so the stored count reflects ACCEPTED turns only: a rejected attempt
+    (cap reached) never increments, concurrent tabs can't over-admit, and retrying
+    a rejected request doesn't move the count. Also enforces the SAME global $
+    ceiling as pipeline runs and meters an accepted turn into the shared budget.
+
+    Counting note: the previous implementation did increment-then-check
+    (``incr_expiring`` then compare), which admitted correctly but LEFT the counter
+    incremented for rejected attempts — so the authoritative "turns used" reported
+    every attempt, not accepted turns (9 attempts on a cap of 5 stored 9). This
+    only ever over-counted (never over-admitted), but the consumed-count semantics
+    were wrong; ``incr_if_below`` fixes them at the source."""
     if _global_budget_reached():
         return False, CAPACITY_MESSAGE
     try:
-        used = redis.incr_expiring(_turn_key(demo_id), settings.DEMO_SESSION_TTL_SECONDS)
+        admitted = redis.incr_if_below(_turn_key(demo_id), settings.DEMO_SESSION_TURNS,
+                                       settings.DEMO_SESSION_TTL_SECONDS)
     except Exception:  # noqa: BLE001 - fail closed on a public paid path
         return False, UNAVAILABLE_MESSAGE
-    if used > settings.DEMO_SESSION_TURNS:
+    if admitted is None:                       # cap reached: no turn consumed
         return False, TURNS_MESSAGE
     try:
         limits_store.add_usage(settings.DEMO_LEDGER_USER, "demo_chat",

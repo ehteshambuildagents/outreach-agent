@@ -109,6 +109,20 @@ class _MemoryStore:
             self._d[key] = (str(n), exp)
             return n
 
+    def incr_if_below(self, key, cap, window):
+        """Increment ONLY while the counter is below ``cap``; return the new value,
+        or None when already at the cap (no increment). Atomic under the lock, so
+        the stored count reflects ACCEPTED increments, never rejected attempts."""
+        with self._lock:
+            cur = self._live(key)
+            n = int(cur) if cur is not None else 0
+            if n >= cap:
+                return None
+            n += 1
+            exp = self._d[key][1] if cur is not None else time.time() + window
+            self._d[key] = (str(n), exp)
+            return n
+
     def expire(self, key, ex):
         with self._lock:
             if self._live(key) is None:
@@ -190,6 +204,30 @@ def incr_expiring(key, window) -> int:
     if not configured():
         return _mem.incr_expiring(key, window)
     return int(_command("EVAL", _INCR_EXPIRE_LUA, "1", key, str(window)))
+
+
+# Bounded, atomic "consume one unit of an allowance": INCR only while below the
+# cap, arm the TTL on the first unit. Rejected attempts do NOT increment, so the
+# stored value is the number of ACCEPTED units (e.g. demo turns actually spent),
+# and it can never exceed the cap even under concurrent callers.
+_INCR_IF_BELOW_LUA = (
+    "local n = tonumber(redis.call('GET', KEYS[1]) or '0') "
+    "if n >= tonumber(ARGV[1]) then return -1 end "
+    "n = redis.call('INCR', KEYS[1]) "
+    "if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end "
+    "return n")
+
+
+def incr_if_below(key, cap, window):
+    """Atomically increment ``key`` only while it is below ``cap``. Returns the new
+    count when admitted, or ``None`` when the cap is already reached (no increment).
+    Atomic on both backends, so concurrent callers can never over-admit and the
+    stored count equals accepted increments, not attempts."""
+    cap, window = int(cap), int(window)
+    if not configured():
+        return _mem.incr_if_below(key, cap, window)
+    n = int(_command("EVAL", _INCR_IF_BELOW_LUA, "1", key, str(cap), str(window)))
+    return None if n < 0 else n
 
 
 # ── Higher-level primitives ────────────────────────────────────────────
