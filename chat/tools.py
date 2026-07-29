@@ -618,6 +618,38 @@ def _variation_id(label) -> str:
     return "version-" + str(label).strip().lower().replace(" ", "-")
 
 
+def _dedupe_sequence_steps(emails, source, conversation, max_fixes: int = 2):
+    """Regenerate any sequence step that repeats an earlier one, so a batch is
+    genuinely varied instead of the same email reskinned. Bounded (at most
+    ``max_fixes`` regenerations) and best-effort: a failed rewrite keeps the
+    original step rather than dropping it."""
+    if len(emails) < 2:
+        return emails
+    bodies = [e.get("body") or "" for e in emails]
+    fixes = 0
+    for j in range(1, len(emails)):
+        if fixes >= max_fixes:
+            break
+        sim, _issue = _writer_review.repetition_against(bodies[j], bodies[:j])
+        if sim < _writer_review._REPEAT_JACCARD:
+            continue
+        try:
+            new = write_email(
+                source, allow_thin=True, prior_bodies=bodies[:j],
+                guidance=("Rewrite this as a clearly DIFFERENT step from the earlier "
+                          "ones: a new opening line, a different angle, and different "
+                          "sentence shapes. Keep it a short follow-up."),
+                style_note=_style_note(conversation))
+        except Exception:  # noqa: BLE001 - repair is additive, never fatal
+            continue
+        if new.get("status") == "ok" and new.get("body"):
+            emails[j] = {**emails[j], "body": new["body"],
+                         "subject": new.get("subject") or emails[j].get("subject")}
+            bodies[j] = new["body"]
+            fixes += 1
+    return emails
+
+
 def _do_sequence(source, conversation, count, allow_thin) -> ToolResult:
     try:
         result = write_sequence(source, count=int(count) if count else 4,
@@ -629,6 +661,9 @@ def _do_sequence(source, conversation, count, allow_thin) -> ToolResult:
     if result.get("status") != "ok" or not emails:
         return ToolResult(summary="Could not produce a sequence: "
                           + (result.get("reason") or "no valid steps") + ".")
+    # Auto-repair repetitive steps: regenerate any step that echoes an earlier one
+    # so the batch is actually varied, rather than only warning about it.
+    emails = _dedupe_sequence_steps(emails, source, conversation)
     for e in emails:
         e["id"] = f"email-{e['step']}"           # stable slot id (internal)
     messages = [_artifact_card(

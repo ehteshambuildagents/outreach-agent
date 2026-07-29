@@ -16,6 +16,7 @@ Everything runs offline: in-memory Redis, local SQLite, a fixed demo secret.
 
 import os
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -291,6 +292,26 @@ class DemoSessionEndpointTests(unittest.TestCase):
             ok, msg = demo_api.reserve_demo_turn(did)
             self.assertFalse(ok)
             self.assertIn("message limit", msg.lower())
+
+    def test_concurrent_reservations_never_exceed_the_cap(self):
+        # Multiple tabs / rapid concurrent requests share ONE server-side counter,
+        # so no more than the cap is ever admitted even when they race. This is the
+        # "multi-tab / concurrent" guarantee, proven server-side.
+        from server import demo_api
+        did = demo_session.new_demo_id()
+        admitted = []
+        with mock.patch.object(settings, "DEMO_SESSION_TURNS", 5), \
+             mock.patch.object(demo_api, "_global_budget_reached", return_value=False), \
+             mock.patch.object(demo_api.limits_store, "add_usage"):
+            def reserve():
+                admitted.append(demo_api.reserve_demo_turn(did)[0])
+            threads = [threading.Thread(target=reserve) for _ in range(9)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        self.assertEqual(sum(admitted), 5)          # exactly the cap, no over-admit
+        self.assertEqual(demo_api.demo_turns_used(did), 9)  # every attempt counted
 
 
 class DemoToolPolicyTests(unittest.TestCase):

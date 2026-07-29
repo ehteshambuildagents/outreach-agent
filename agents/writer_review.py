@@ -103,44 +103,55 @@ def _trigrams(text: str) -> set:
 _REPEAT_JACCARD = 0.32
 
 
+def _pair_similarity(a: str, b: str) -> float:
+    """Similarity of two drafts, 0..1. A reused OPENING line maxes it (a batch that
+    all starts the same way is the loudest tell); otherwise it's word-trigram
+    Jaccard. Symmetric, so it's a proper pair score."""
+    sa, sb = _split_sentences(a), _split_sentences(b)
+    if sa and sb and _norm(sa[0]) and _norm(sa[0]) == _norm(sb[0]):
+        return 1.0
+    ta, tb = _trigrams(a), _trigrams(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+_REPEAT_OPEN_ISSUE = ("Opens with the same line as an earlier draft; write a "
+                      "genuinely fresh opening for this one.")
+_REPEAT_BODY_ISSUE = ("Reuses too much phrasing and structure from an earlier "
+                      "draft; vary the wording, the angle, and the sentence shapes.")
+
+
 def repetition_against(body: str, prior_bodies) -> tuple:
     """How much ``body`` repeats any earlier draft. Returns (similarity 0..1,
-    issue|None). A reused OPENING line is the loudest tell (a batch that all starts
-    the same way), so it maxes the score; otherwise it's word-trigram overlap.
+    issue|None), where similarity is the MAX over the priors.
 
     This is what catches "repetitive multi-email batches" and "identical sentence
     architecture across drafts" that a single-draft review can't see."""
     priors = [p for p in (prior_bodies or []) if isinstance(p, str) and p.strip()]
     if not body or not priors:
         return 0.0, None
-    new_tri = _trigrams(body)
-    new_sents = _split_sentences(body)
-    new_open = _norm(new_sents[0]) if new_sents else ""
-    worst = 0.0
-    for prior in priors:
-        ps = _split_sentences(prior)
-        if new_open and ps and _norm(ps[0]) == new_open:
-            return 1.0, ("Opens with the same line as an earlier draft; write a "
-                         "genuinely fresh opening for this one.")
-        pt = _trigrams(prior)
-        if new_tri and pt:
-            worst = max(worst, len(new_tri & pt) / len(new_tri | pt))
-    if worst >= _REPEAT_JACCARD:
-        return worst, ("Reuses too much phrasing and structure from an earlier "
-                       "draft; vary the wording, the angle, and the sentence shapes.")
-    return worst, None
+    sims = [_pair_similarity(body, p) for p in priors]
+    worst = max(sims)
+    if worst < _REPEAT_JACCARD:
+        return worst, None
+    # An exact-opening reuse (score 1.0) gets the opening-specific fix.
+    issue = _REPEAT_OPEN_ISSUE if worst >= 0.999 else _REPEAT_BODY_ISSUE
+    return worst, issue
 
 
 def batch_distinctiveness(bodies) -> tuple:
     """Worst pairwise similarity across a batch of drafts (a sequence or an A/B/C
-    set). Returns (worst_similarity 0..1, (i, j)|None) so a caller can flag or
-    regenerate the offending pair. Used by the sequence path and the benchmark."""
+    set). Returns (worst_similarity 0..1, (i, j)|None) naming the ACTUAL most-similar
+    pair — not an assumed adjacent one — so a caller can flag or regenerate exactly
+    the offending draft. ``i < j``. Used by the sequence path and the benchmark."""
     bodies = [b for b in (bodies or []) if isinstance(b, str) and b.strip()]
     worst, pair = 0.0, None
-    for i in range(len(bodies)):
-        sim, _ = repetition_against(bodies[i], bodies[:i])
-        if sim > worst:
-            worst, pair = sim, (i - 1, i)
+    for j in range(len(bodies)):
+        for i in range(j):
+            sim = _pair_similarity(bodies[i], bodies[j])
+            if sim > worst:
+                worst, pair = sim, (i, j)
     return worst, (pair if worst >= _REPEAT_JACCARD else None)
 
 

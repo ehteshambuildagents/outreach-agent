@@ -344,6 +344,31 @@ class ArtifactIdTests(unittest.TestCase):
         ce.assert_not_called()
         self.assertIn("paste", result.summary.lower())
 
+    def test_repetitive_sequence_steps_are_auto_repaired(self):
+        # #9 gap: a repetitive multi-email batch must be REPAIRED, not just warned
+        # about. write_sequence returns two identical steps; the repeated one is
+        # regenerated (via write_email) into a distinct draft, so the final batch
+        # is no longer flagged as repetitive.
+        from agents import writer_review
+        rep = {"status": "ok", "company": "Acme", "to": "Bob", "emails": [
+            {"step": 1, "angle": "hook", "delay_days": 0, "subject": "s1",
+             "body": "Hey Bob, saw Acme's warehouse robots for logistics teams. "
+                     "Worth a quick look at how we help?"},
+            {"step": 2, "angle": "value", "delay_days": 3, "subject": "s2",
+             "body": "Hey Bob, saw Acme's warehouse robots for logistics teams. "
+                     "Worth a quick look at how we help?"}]}
+        distinct = _email_ok(
+            body="Following up with a different angle: the pilot numbers you shared "
+                 "point to a real timing window this quarter. Open to comparing notes?")
+        conv = Conversation(workspace={"research": _research_ok()})
+        with mock.patch("chat.tools.write_sequence", return_value=rep), \
+             mock.patch("chat.tools.write_email", return_value=distinct) as we:
+            r = tools.execute("write_email", {"mode": "sequence"}, conv)
+        we.assert_called()                                   # repair regenerated a step
+        bodies = [e["body"] for e in r.workspace_updates["sequence"]]
+        _worst, pair = writer_review.batch_distinctiveness(bodies)
+        self.assertIsNone(pair, "sequence still repetitive after auto-repair")
+
     def test_sequence_returns_multiple_cards(self):
         conv = Conversation(workspace={"research": _research_ok()})
         seq = {"status": "ok", "company": "Acme", "to": "Bob", "emails": [
@@ -1077,6 +1102,36 @@ class DiscoveryBandTests(unittest.TestCase):
         e = self._entry(0.9, tier="fallback")
         self.assertEqual(e["band"], "weak")
         self.assertFalse(e["recommended"])
+
+    def test_off_role_hiring_is_rejected_as_a_signal_not_recommended(self):
+        # #4: a company whose only hiring signal is a DIFFERENT role must not be
+        # recommended and must not be labelled Strong (the signal is rejected).
+        e = self._entry(0.6, hiring={"verified": True, "match": "any",
+                                     "summary": "Hiring a content creator"})
+        self.assertFalse(e["recommended"])
+        self.assertNotEqual(e["band"], "strong")
+
+
+class DecisionMakerTests(unittest.TestCase):
+    """#14: a researched prospect surfaces a named decision-maker when the research
+    found one, and honestly says so when it did not."""
+
+    def test_primary_contact_is_used(self):
+        from chat.research_pipeline import _decision_maker
+        self.assertEqual(
+            _decision_maker({"primary_contact_name": "Bob Vance",
+                             "primary_contact_role": "CEO"}),
+            {"name": "Bob Vance", "role": "CEO"})
+
+    def test_falls_back_to_first_team_member(self):
+        from chat.research_pipeline import _decision_maker
+        self.assertEqual(
+            _decision_maker({"team_members": [{"name": "Amy Lee", "role": "CTO"}]}),
+            {"name": "Amy Lee", "role": "CTO"})
+
+    def test_none_when_no_named_person(self):
+        from chat.research_pipeline import _decision_maker
+        self.assertIsNone(_decision_maker({"what_they_do": "robots"}))
 
 
 class TurnResilienceTests(unittest.TestCase):

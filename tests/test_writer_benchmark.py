@@ -60,6 +60,20 @@ class BatchRepetitionTests(unittest.TestCase):
         worst, pair = reviewer.batch_distinctiveness(bench.VARIED_BATCH)
         self.assertIsNone(pair, f"varied batch wrongly flagged (worst {worst:.2f})")
 
+    def test_batch_pair_names_the_actual_similar_pair_not_the_adjacent_one(self):
+        # body[2] duplicates body[0]; body[1] is unrelated. The reported pair must
+        # be (0, 2), not the assumed-adjacent (1, 2). Regression for the off-by-one
+        # pair bug in batch_distinctiveness.
+        a = ("Karri, the keyboard-first workflow is genuinely sharp and rare. We've "
+             "been cutting triage time for Series A teams. Worth a quick look?")
+        b = ("Completely separate note about spend management, treasury launches, "
+             "and finance operations, sharing nothing with the other two messages.")
+        c = ("Karri, the keyboard-first workflow is genuinely sharp and rare. We've "
+             "been cutting triage time for Series A teams. Worth a quick look?")
+        worst, pair = reviewer.batch_distinctiveness([a, b, c])
+        self.assertEqual(pair, (0, 2))
+        self.assertGreaterEqual(worst, reviewer._REPEAT_JACCARD)
+
     def test_repetition_lowers_a_drafts_score_when_priors_are_given(self):
         # The same draft scores lower when it echoes a prior one than in isolation.
         _, subject, body, data = bench.STRONG[0]

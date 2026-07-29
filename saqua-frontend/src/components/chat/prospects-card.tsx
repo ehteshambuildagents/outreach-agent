@@ -379,6 +379,21 @@ function ProspectRow({
                 )}
 
                 {researched && (
+                  <Section label="Decision-maker">
+                    {detail.decision_maker?.name ? (
+                      <p className="text-xs leading-5 text-text-2">
+                        {detail.decision_maker.name}
+                        {detail.decision_maker.role ? ` · ${detail.decision_maker.role}` : ""}
+                      </p>
+                    ) : (
+                      <p className="text-xs leading-5 text-muted">
+                        No named contact found yet, so outreach would go to a general route.
+                      </p>
+                    )}
+                  </Section>
+                )}
+
+                {researched && (
                   <Section label="Why this score">
                     <p className="text-xs leading-5 text-text-2">{p.score_reason || "-"}</p>
                     {(detail.strongest_signals?.length ?? 0) > 0 && (

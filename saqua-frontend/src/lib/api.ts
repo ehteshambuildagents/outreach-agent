@@ -381,6 +381,9 @@ export interface ProspectEntry {
       corroboration?: number;
     } | null;
     is_public?: boolean;
+    /** A named contact to reach on a researched prospect (decision-maker
+     *  availability), or null when the research surfaced no named person. */
+    decision_maker?: { name: string; role?: string | null } | null;
     /** USD, from Apollo. Used to caveat very large PRIVATE companies, which are
      *  demoted as buyers just like listed ones. */
     annual_revenue?: number | null;

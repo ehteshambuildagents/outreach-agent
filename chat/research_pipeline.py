@@ -289,6 +289,23 @@ def _research_one(lead, icp, research_fn, qualify_fn, resolve_fn) -> dict:
     return _entry(company, website, lead.get("discovery"), research, qual)
 
 
+def _decision_maker(data: dict):
+    """A named contact to reach, from the research, or None. Prefers an explicit
+    primary contact / founder, then the first named team member."""
+    if not isinstance(data, dict):
+        return None
+    name = data.get("primary_contact_name") or data.get("founder_name")
+    role = data.get("primary_contact_role") or data.get("founder_role")
+    if not name:
+        for member in data.get("team_members") or []:
+            if isinstance(member, dict) and member.get("name"):
+                name, role = member.get("name"), role or member.get("role")
+                break
+    if not name:
+        return None
+    return {"name": str(name), "role": (str(role) if role else None)}
+
+
 def _default_resolve(name: str) -> str:
     """Resolve a bare company NAME to its official website, reusing chat.resolver
     (the same company-lookup the resolve_company tool uses). Returns a URL or "".
@@ -342,6 +359,9 @@ def _entry(company, website, discovery, research, qual) -> dict:
             "strongest_signals": qual.get("strongest_signals") or [],
             "missing_information": qual.get("missing_information") or [],
             "disqualifiers": qual.get("disqualifiers") or [],
+            # Decision-maker availability (#14): a named contact from the research,
+            # or None so the card can honestly say "no named contact yet".
+            "decision_maker": _decision_maker(data),
         },
         "actions": list(PROSPECT_ACTIONS),
     }
