@@ -48,7 +48,14 @@ const planTiers = [
 
 export default function SettingsPage() {
   const { isDemo } = useDemo();
-  const { user } = useUser();
+  const { user, isLoaded } = useUser();
+  // Every /api call attaches the Clerk session token from window.Clerk. On first
+  // mount that session may not have hydrated yet, so a fetch fired too early goes
+  // out with no Authorization header and comes back 401 — which is why the plan
+  // card used to hang on "Loading…" and Company details showed "Please sign in".
+  // Gate all data fetches on Clerk being loaded (a demo visitor authenticates via
+  // an already-present same-origin cookie, so it needs no wait).
+  const authReady = isDemo || isLoaded;
   const [accounts, setAccounts] = useState<OAuthAccount[]>([]);
   const [connectionState, setConnectionState] = useState<"loading" | "loaded" | "error">("loading");
   const [connectionError, setConnectionError] = useState("");
@@ -65,12 +72,6 @@ export default function SettingsPage() {
   const [checkoutBusy, setCheckoutBusy] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState("");
   const [checkoutNotice, setCheckoutNotice] = useState<"success" | "cancel" | null>(null);
-
-  function reloadBilling() {
-    void api.billing().then((result) => {
-      if (result.ok) setBilling(result.data);
-    });
-  }
 
   function startCheckout(plan: string) {
     setCheckoutBusy(plan);
@@ -163,6 +164,7 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
+    if (!authReady) return;
     let mounted = true;
     setConnectionState("loading");
     void api.connections().then((result) => {
@@ -179,9 +181,10 @@ export default function SettingsPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [authReady]);
 
   useEffect(() => {
+    if (!authReady) return;
     let mounted = true;
     setCompanyState("loading");
     void api.company().then((result) => {
@@ -200,21 +203,46 @@ export default function SettingsPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [authReady]);
 
-  // Returning from Lemon Squeezy Checkout: show a confirmation/cancel note and, on
-  // success, refetch the plan (the webhook may have just flipped it) — then strip
-  // the ?checkout= flag so a refresh doesn't re-show the banner.
+  // Returning from Lemon Squeezy Checkout: show a confirmation/cancel note and
+  // strip the ?checkout= flag so a refresh doesn't re-show the banner. The plan
+  // refetch is handled by the poll effect below (it needs Clerk loaded first).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const outcome = params.get("checkout");
     if (outcome !== "success" && outcome !== "cancel") return;
     setCheckoutNotice(outcome);
-    if (outcome === "success") reloadBilling();
     params.delete("checkout");
     const qs = params.toString();
     window.history.replaceState({}, "", window.location.pathname + (qs ? `?${qs}` : ""));
   }, []);
+
+  // After a successful checkout the webhook flips the plan a beat later, so a
+  // single fetch can race it. Once Clerk is loaded, poll briefly until the paid
+  // subscription shows up (or we give up), so the card reflects the new plan
+  // without a manual refresh.
+  useEffect(() => {
+    if (checkoutNotice !== "success" || !authReady) return;
+    let cancelled = false;
+    let attempts = 0;
+    const tick = () => {
+      void api.billing().then((result) => {
+        if (cancelled) return;
+        if (result.ok) {
+          setBilling(result.data);
+          // Stop as soon as an active/paid subscription is attributed.
+          if (result.data.status && result.data.status !== "none") return;
+        }
+        attempts += 1;
+        if (attempts < 6) setTimeout(tick, 1500);
+      });
+    };
+    tick();
+    return () => {
+      cancelled = true;
+    };
+  }, [checkoutNotice, authReady]);
 
   return (
     <div>
