@@ -111,8 +111,9 @@ def discover(owner, query, *, store=None, exclude_domains=None,
     plan: a discovery.intent.SearchPlan. Omitted, one is parsed from the query,
     so callers that only have the user's words still get plan-driven search.
     progress: optional ``callable(str)`` invoked with human-readable stage labels
-    ("Searching Apollo", "Verifying live job postings") so a streaming caller can
-    narrate the real pipeline instead of faking steps on a timer. Never raises.
+    ("Searching company databases", "Checking their live job postings") so a
+    streaming caller narrates the real pipeline instead of faking steps on a timer.
+    Never raises.
     """
     say = Narrator(progress)
     if isinstance(query, dict):
@@ -235,7 +236,11 @@ def _search_until_good(query, seen, pool, plan=None, progress=None):
             # source we never reached would be exactly the false narration the
             # grounding rule forbids; the gap line below says so instead.
             if first and sources.providers_available().get("apollo"):
-                say.step("Searching Apollo's company database")
+                # Generic stage label on purpose: naming one vendor here reads as a
+                # thin wrapper, and Saqua's value is the verify-and-rank that follows.
+                # The SPECIFIC provider ("In Apollo's company database…") is still shown
+                # per result on the card, which is where provenance belongs.
+                say.step("Searching company databases")
             found = sources.search_apollo(
                 query, plan=plan, keywords=step.get("apollo_tags"),
                 job_titles=step.get("apollo_titles"), page=step["apollo_page"],

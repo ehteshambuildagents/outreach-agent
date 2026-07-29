@@ -173,14 +173,22 @@ def _buying(p) -> tuple:
 def _hiring(p, plan) -> tuple:
     hiring = getattr(p, "hiring", None) or {}
     match = hiring.get("match")
+    role_asked = bool(getattr(plan, "roles", None))
     if not hiring.get("verified"):
         # No hiring signal asked for => this factor is neutral, not a penalty.
-        return (0.5 if not getattr(plan, "roles", None) else 0.0), []
+        return (0.0 if role_asked else 0.5), []
     if match == "role":
         return 1.0, [hiring.get("summary") or "Hiring for the role you asked about"]
+    # "Hiring, but not for that role" must NOT count as hiring-RELEVANCE when a
+    # specific role was asked for: presenting a company hiring content creators as
+    # a match for an SDR search is exactly the mislabelling to avoid. The fact that
+    # they're hiring at all is still credited once, as a buying signal (see
+    # _buying's open_roles). When no role was asked, any active hiring is mildly
+    # relevant, so the old weights stand.
     if match == "any":
-        return 0.35, [hiring.get("summary") or "Hiring, but not for that role"]
-    return 0.2, [hiring.get("summary") or "Has a careers page"]
+        return (0.0 if role_asked else 0.35), [
+            hiring.get("summary") or "Hiring, but not for the role you asked about"]
+    return (0.0 if role_asked else 0.2), [hiring.get("summary") or "Has a careers page"]
 
 
 # ── 4. Founder accessibility: can this actually be sold to by one person? ──

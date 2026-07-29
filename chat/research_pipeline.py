@@ -119,15 +119,21 @@ def discovery_entries(prospects) -> list:
         confidence = float(p.get("confidence") or 0)
         hiring = p.get("hiring") or None
         reasons = [r for r in (p.get("match_reasons") or []) if r]
+        band = _qualification_band(confidence, p.get("tier"), hiring)
         entries.append({
             "company": p.get("company_name") or "",
             "website": p.get("website") or "",
             "status": "discovered",
             "score": int(round(confidence * 100)),
             "fit_level": p.get("tier") or "company",
+            # Honest Strong / Possible / Weak label the card shows instead of a bare
+            # percentage, so a 22% match reads as "Weak", never as a recommendation.
+            "band": band,
             "priority": "none",
             "recommendation": "",
-            "recommended": confidence >= 0.55 and (p.get("tier") == "company"),
+            # Only a genuinely strong candidate is "recommended". A company hiring
+            # for a different role can never clear this bar (see _qualification_band).
+            "recommended": band == "strong",
             "score_reason": p.get("why_it_matches") or "",
             "preview": _discovery_preview(p, hiring, reasons),
             "actions": ["research_prospect"],
@@ -150,6 +156,22 @@ def discovery_entries(prospects) -> list:
             },
         })
     return entries
+
+
+def _qualification_band(confidence: float, tier, hiring) -> str:
+    """Turn a customer-likelihood confidence into an honest Strong / Possible / Weak
+    label. A fallback source (job board / aggregator) or a low score is Weak; a
+    company whose only hiring signal is for a DIFFERENT role than asked is capped at
+    Possible, so "hiring, but not that role" is never dressed up as a strong match."""
+    if tier and tier != "company":
+        return "weak"
+    if confidence < 0.35:
+        return "weak"
+    band = "strong" if confidence >= 0.55 else "possible"
+    # A verified-but-non-matching hiring signal can never be "strong".
+    if isinstance(hiring, dict) and hiring.get("verified") and hiring.get("match") != "role":
+        band = "possible" if band == "strong" else band
+    return band
 
 
 def _discovery_preview(p, hiring, reasons) -> str:
