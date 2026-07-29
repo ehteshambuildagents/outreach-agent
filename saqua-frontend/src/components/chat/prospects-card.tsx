@@ -387,7 +387,7 @@ function ProspectRow({
                       </p>
                     ) : (
                       <p className="text-xs leading-5 text-muted">
-                        No named contact found yet, so outreach would go to a general route.
+                        No relevant decision-maker verified yet.
                       </p>
                     )}
                   </Section>

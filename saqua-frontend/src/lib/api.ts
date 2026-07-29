@@ -330,6 +330,9 @@ export interface Conversation {
   title: string;
   messages: ChatMessage[];
   panel?: unknown;
+  /** The true active research target (workspace.company), for the "Researching: X"
+   *  indicator. Null when no company is on file yet. */
+  active_company?: string | null;
 }
 
 /** Sidebar row from GET /api/conversations (list_summaries). */

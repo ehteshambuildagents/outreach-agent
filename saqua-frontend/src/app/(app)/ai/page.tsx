@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Loader2, AlertTriangle, User, Check } from "lucide-react";
+import { ArrowUp, Loader2, AlertTriangle, User, Check, Search } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -63,6 +63,9 @@ export default function AIChatPage() {
   // is doing, `thought` is WHY (grounded in the run's real state, never canned).
   const [steps, setSteps] = useState<TraceLine[]>([]);
   const [artifact, setArtifact] = useState<{ idx: number; data: EmailCardData } | null>(null);
+  // The TRUE active research target, from the server (workspace.company). Shown as a
+  // persistent "Researching: X" chip and updated the moment a turn changes it.
+  const [activeCompany, setActiveCompany] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Index boundary marking where the CURRENT turn's assistant output begins. Any
   // message before it belongs to a prior turn and must never be re-animated — that
@@ -96,6 +99,7 @@ export default function AIChatPage() {
       setArtifact(null);
       setSteps([]);
       setError("");
+      setActiveCompany(null);
       return;
     }
     let cancelled = false;
@@ -113,6 +117,7 @@ export default function AIChatPage() {
       // Loaded history is complete: nothing in it should type itself out.
       turnStartRef.current = loaded.length;
       setMessages(loaded);
+      setActiveCompany(res.data.active_company ?? null);
     });
     return () => {
       cancelled = true;
@@ -183,6 +188,10 @@ export default function AIChatPage() {
         onMessage: (m) => setMessages((prev) => [...prev, m]),
         onError: (msg) => setError(reachError(msg)),
         onDone: () => setSteps([]),
+        // The final canonical state carries the true active target, so an explicit
+        // target change ("research Apple") updates the indicator the moment the
+        // turn lands, not from guessing at message content.
+        onFinal: (conv) => setActiveCompany(conv.active_company ?? null),
       });
 
       setSending(false);
@@ -209,6 +218,13 @@ export default function AIChatPage() {
       <OnboardingTour />
       {/* Conversation (chat history now lives in the single app sidebar) */}
       <section data-tour="artifact-hint" className="flex min-w-0 flex-1 flex-col">
+        {activeCompany && (
+          <div className="flex items-center gap-2 border-b border-border-faint bg-black/[0.015] px-4 py-2 text-xs">
+            <Search className="size-3.5 shrink-0 text-accent" />
+            <span className="text-muted">Researching</span>
+            <span className="truncate font-medium text-text">{activeCompany}</span>
+          </div>
+        )}
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
             {empty ? (

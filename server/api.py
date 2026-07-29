@@ -407,6 +407,9 @@ def _conversation_public(conv: Conversation) -> dict:
         "title": conv.title,
         "messages": [_message_public(m) for m in conv.messages],
         "panel": _panel_public(conv.workspace),
+        # The TRUE active research target (workspace.company), so the UI can show a
+        # persistent "Researching: X" tied to real state, not guessed from messages.
+        "active_company": (conv.workspace or {}).get("company") or None,
     }
 
 

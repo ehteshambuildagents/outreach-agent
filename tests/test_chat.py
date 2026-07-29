@@ -1113,25 +1113,67 @@ class DiscoveryBandTests(unittest.TestCase):
 
 
 class DecisionMakerTests(unittest.TestCase):
-    """#14: a researched prospect surfaces a named decision-maker when the research
-    found one, and honestly says so when it did not."""
+    """#14: a person is surfaced as a decision-maker ONLY when their role matches an
+    approved buying persona. A named employee is never treated as authority just by
+    existing; an irrelevant role or a missing role yields None."""
 
-    def test_primary_contact_is_used(self):
+    def _dm(self, data):
         from chat.research_pipeline import _decision_maker
+        return _decision_maker(data)
+
+    def test_relevant_founder(self):
         self.assertEqual(
-            _decision_maker({"primary_contact_name": "Bob Vance",
-                             "primary_contact_role": "CEO"}),
+            self._dm({"primary_contact_name": "Jane Doe",
+                      "primary_contact_role": "Co-Founder"}),
+            {"name": "Jane Doe", "role": "Co-Founder"})
+
+    def test_relevant_sales_leader(self):
+        self.assertEqual(
+            self._dm({"team_members": [{"name": "Sam Ray", "role": "VP of Sales"}]}),
+            {"name": "Sam Ray", "role": "VP of Sales"})
+
+    def test_irrelevant_engineer_is_not_a_decision_maker(self):
+        self.assertIsNone(
+            self._dm({"primary_contact_name": "Ada L", "primary_contact_role": "Staff Software Engineer"}))
+
+    def test_recruiter_is_not_a_decision_maker(self):
+        # "Sales Recruiter" brushes the sales pattern but must be excluded.
+        self.assertIsNone(
+            self._dm({"team_members": [{"name": "Rick R", "role": "Sales Recruiter"}]}))
+
+    def test_missing_role_is_not_verified(self):
+        self.assertIsNone(self._dm({"primary_contact_name": "Bob Vance"}))
+
+    def test_picks_the_relevant_person_not_the_first_listed(self):
+        dm = self._dm({"team_members": [
+            {"name": "Ada L", "role": "Software Engineer"},
+            {"name": "Grace H", "role": "Head of Sales"}]})
+        self.assertEqual(dm, {"name": "Grace H", "role": "Head of Sales"})
+
+    def test_no_verified_person_returns_none(self):
+        self.assertIsNone(self._dm({"what_they_do": "robots"}))
+
+    def test_ceo_primary_contact_qualifies(self):
+        self.assertEqual(
+            self._dm({"primary_contact_name": "Bob Vance", "primary_contact_role": "CEO"}),
             {"name": "Bob Vance", "role": "CEO"})
 
-    def test_falls_back_to_first_team_member(self):
-        from chat.research_pipeline import _decision_maker
-        self.assertEqual(
-            _decision_maker({"team_members": [{"name": "Amy Lee", "role": "CTO"}]}),
-            {"name": "Amy Lee", "role": "CTO"})
 
-    def test_none_when_no_named_person(self):
-        from chat.research_pipeline import _decision_maker
-        self.assertIsNone(_decision_maker({"what_they_do": "robots"}))
+class ActiveTargetIndicatorTests(unittest.TestCase):
+    """#12 A/B: the conversation payload exposes the TRUE active target, and it
+    updates the instant the target changes (so the 'Researching: X' chip is tied to
+    real state, not guessed from messages)."""
+
+    def test_active_company_is_exposed_and_updates_on_target_change(self):
+        from server.api import _conversation_public
+        conv = Conversation(workspace={"company": "HackerRank"})
+        self.assertEqual(_conversation_public(conv)["active_company"], "HackerRank")
+        conv.workspace["company"] = "Apple"          # explicit switch
+        self.assertEqual(_conversation_public(conv)["active_company"], "Apple")
+
+    def test_active_company_is_none_before_any_target(self):
+        from server.api import _conversation_public
+        self.assertIsNone(_conversation_public(Conversation())["active_company"])
 
 
 class TurnResilienceTests(unittest.TestCase):

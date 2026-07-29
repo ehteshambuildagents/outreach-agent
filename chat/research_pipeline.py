@@ -21,6 +21,7 @@ Every run is telemetry-scoped exactly like the other pipeline runs, so the real
 research/qualify model calls underneath are attributed and cost-tracked.
 """
 
+import re
 import uuid
 
 from agents import qualification
@@ -289,21 +290,73 @@ def _research_one(lead, icp, research_fn, qualify_fn, resolve_fn) -> dict:
     return _entry(company, website, lead.get("discovery"), research, qual)
 
 
+# Roles that can actually buy an AI SDR / outbound tool. A named employee is NOT a
+# decision-maker just because they exist; their role has to match one of these, or
+# we return nothing rather than inventing buying authority. Ordered loosely by how
+# directly they own the outbound-buying decision.
+_BUYING_ROLE_PATTERNS = [
+    r"\bco[-\s]?founders?\b",
+    r"\bfounders?\b",
+    r"\bceo\b", r"\bchief executive\b",
+    r"\bcro\b", r"\bchief revenue\b",
+    r"\bvp\b[^.]*\bsales\b", r"\bvice president\b[^.]*\bsales\b",
+    r"\bhead of sales\b", r"\bsales director\b", r"\bdirector of sales\b",
+    r"\bhead of growth\b", r"\bvp\b[^.]*\bgrowth\b", r"\bgrowth lead\b",
+    r"\bhead of revenue\b", r"\bchief growth\b",
+    r"\bsales operations?\b", r"\brev[\s-]?ops\b", r"\bsales ops\b",
+    r"\bbusiness development\b", r"\bhead of bd\b",
+    r"\bpresident\b", r"\bowner\b", r"\bmanaging director\b",
+    r"\bcmo\b", r"\bchief marketing\b",
+]
+_BUYING_ROLE_RE = re.compile("|".join(_BUYING_ROLE_PATTERNS), re.IGNORECASE)
+# Roles that must NEVER pass even if a loose pattern brushes them (e.g. "sales
+# recruiter" contains "sales"): sourcing/support/engineering are not the buyer.
+_NON_BUYER_RE = re.compile(
+    r"\b(recruit\w*|talent|sourcer|engineer\w*|developer|designer|support|"
+    r"success|intern|assistant|coordinator|analyst)\b", re.IGNORECASE)
+
+
+def _is_buying_role(role) -> bool:
+    """True only when a role title maps to an approved buying persona and is not an
+    excluded non-buyer role. Empty/unknown roles are False (unverified)."""
+    r = re.sub(r"\s+", " ", str(role or "")).strip()
+    if not r:
+        return False
+    if _NON_BUYER_RE.search(r):
+        return False
+    return bool(_BUYING_ROLE_RE.search(r))
+
+
+def _normalize_role(role) -> str:
+    """Tidy a role title for display (collapse whitespace, trim)."""
+    return re.sub(r"\s+", " ", str(role or "")).strip()
+
+
 def _decision_maker(data: dict):
-    """A named contact to reach, from the research, or None. Prefers an explicit
-    primary contact / founder, then the first named team member."""
+    """A RELEVANT decision-maker to reach, or None.
+
+    A person is surfaced only when their role matches an approved buying persona
+    (founder / CEO / CRO / VP or Head of Sales / Head of Growth / revenue or sales-
+    ops leader / owner / president / CMO). A named employee with an irrelevant role
+    (engineer, recruiter) or no role is NOT a decision-maker — we return None rather
+    than invent buying authority. When several people qualify, the first APPROVED
+    one wins, not merely the first listed."""
     if not isinstance(data, dict):
         return None
-    name = data.get("primary_contact_name") or data.get("founder_name")
-    role = data.get("primary_contact_role") or data.get("founder_role")
-    if not name:
-        for member in data.get("team_members") or []:
-            if isinstance(member, dict) and member.get("name"):
-                name, role = member.get("name"), role or member.get("role")
-                break
-    if not name:
-        return None
-    return {"name": str(name), "role": (str(role) if role else None)}
+    # Candidates in priority order: an explicit founder, the primary contact, then
+    # each team member. Only those whose role qualifies are eligible.
+    candidates = []
+    if data.get("founder_name"):
+        candidates.append((data["founder_name"], data.get("founder_role") or "Founder"))
+    if data.get("primary_contact_name"):
+        candidates.append((data["primary_contact_name"], data.get("primary_contact_role")))
+    for member in data.get("team_members") or []:
+        if isinstance(member, dict) and member.get("name"):
+            candidates.append((member.get("name"), member.get("role")))
+    for name, role in candidates:
+        if _is_buying_role(role):
+            return {"name": str(name), "role": _normalize_role(role)}
+    return None
 
 
 def _default_resolve(name: str) -> str:
