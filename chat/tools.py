@@ -101,6 +101,37 @@ def resolve_url(query: str):
     return f"https://{slug}.com", True     # a name -> guessed domain
 
 
+def _domain_key(url: str) -> str:
+    """Registrable-ish host key for comparing/caching companies: lowercased host
+    without ``www.`` (``https://www.Acme.com/x`` -> ``acme.com``)."""
+    host = (urlparse(url or "").hostname or url or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def _same_company(query: str, conversation) -> bool:
+    """True when ``query`` refers to the company ALREADY on file (so cached research
+    may be reused), False when it names a DIFFERENT company (which must trigger fresh
+    research). Empty query means "the current one". This is what stops "research
+    Apple" from being answered with the HackerRank research still on file."""
+    q = (query or "").strip().lower()
+    if not q:
+        return True
+    cur_dom = _domain_key(conversation.workspace.get("company_url") or "")
+    q_url, _ = resolve_url(query)
+    q_dom = _domain_key(q_url or "")
+    if cur_dom and q_dom and cur_dom == q_dom:
+        return True
+    # No URL on file (or a guessed one): fall back to comparing the query's core
+    # token against the company label ("acme.com" / "Acme Robotics" vs "Acme").
+    label = (conversation.workspace.get("company") or "").strip().lower()
+    if label:
+        core = re.sub(r"\.[a-z]{2,}.*$", "", q).replace("www.", "").split("/")[0].strip()
+        first = label.split()[0] if label.split() else label
+        if core and (core in label or label in core or first in core):
+            return True
+    return False
+
+
 def _company_label(result: dict, fallback_url: str) -> str:
     data = (result or {}).get("data") or {}
     name = data.get("company_name")
@@ -266,7 +297,12 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
     find_founder = bool(inp.get("find_founder"))
 
     existing = conversation.workspace.get("research")
-    if existing and existing.get("status") == "ok" and not refresh and not find_founder:
+    # Reuse the current research ONLY when the ask is about the SAME company. A
+    # different company name must research afresh — reusing the previous target's
+    # research here was the "kept answering about HackerRank after I asked for
+    # Apple" bug: the active target never actually moved.
+    if (existing and existing.get("status") == "ok" and not refresh
+            and not find_founder and _same_company(query, conversation)):
         label = conversation.workspace.get("company") or "this company"
         return ToolResult(
             summary=(f"Research for {label} is already on file — reuse it, do not "
@@ -277,6 +313,20 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
     url, guessed = resolve_url(query)
     if not url:
         return ToolResult(summary="No company website or name was provided to research.")
+
+    # Switch-back: if THIS company was researched earlier in the thread, reuse that
+    # cached research instead of paying to crawl it again — so a user can move from
+    # HackerRank to Apple and back without losing either one's work.
+    cache = conversation.workspace.get("research_cache") or {}
+    cached = cache.get(_domain_key(url)) if not refresh and not find_founder else None
+    if cached and cached.get("status") == "ok":
+        label = _company_label(cached, url)
+        return ToolResult(
+            summary=(f"Research for {label} is already on file from earlier in this "
+                     "thread — reuse it, do not research again. Current facts:\n"
+                     + research_digest(cached)),
+            workspace_updates={"research": cached, "company": label,
+                               "company_url": url})
 
     # Free-tier gate: a new prospect beyond the plan cap is not researched.
     if _free_slot_blocked(conversation, _prospect_key(company=query, url=url)):
@@ -302,6 +352,11 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
 
     label = _company_label(result, url)
     updates = {"research": result, "company": label, "company_url": url}
+    # Cache by domain so a later switch BACK to this company reuses the work instead
+    # of re-crawling (bounded so a long thread can't grow the workspace unbounded).
+    cache = dict(conversation.workspace.get("research_cache") or {})
+    cache[_domain_key(url)] = result
+    updates["research_cache"] = dict(list(cache.items())[-10:])
 
     # The site refused automation and this came from public sources instead. Say
     # so plainly: the facts are second-hand and the user should know that.
@@ -583,11 +638,19 @@ def _do_sequence(source, conversation, count, allow_thin) -> ToolResult:
         angle=e.get("angle")) for e in emails]
     steps = "; ".join(f"Email {e['step']} (day {e['delay_days']}, {e.get('angle')})"
                       for e in emails)
+    # A sequence whose steps all read the same is the "repetitive multi-email batch"
+    # failure. Flag it deterministically so the agent is honest about it rather than
+    # presenting three reskins of one email as a varied cadence.
+    _worst, pair = _writer_review.batch_distinctiveness([e.get("body") for e in emails])
+    rep_note = ("" if not pair else
+                " NOTE: two of these steps are very similar to each other. Tell the "
+                "user you'd tighten the variety, and offer to rewrite the repeated "
+                "step with a fresh angle.")
     return ToolResult(
         summary=(f"Wrote a {len(emails)}-email sequence, each shown as its own card "
                  "with its send-day label. Briefly tell the user the shape of the "
                  "sequence (one short line naming each step's angle and timing): "
-                 + steps + ". Don't repeat the full email text."),
+                 + steps + ". Don't repeat the full email text." + rep_note),
         messages=messages,
         workspace_updates={"sequence": emails})
 
@@ -1161,6 +1224,21 @@ def _tool_find_prospects(inp: dict, conversation) -> ToolResult:
     verified = quality.get("hiring_verified") or 0
     role = quality.get("role_terms") or []
     notes = []
+    # How many are genuinely STRONG vs padding. The agent must lead honestly: a
+    # page of weak matches should be described as such, never as recommendations.
+    strong_n = sum(1 for e in entries if e.get("band") == "strong")
+    weak_n = sum(1 for e in entries if e.get("band") == "weak")
+    if strong_n == 0:
+        notes.append("NONE of these is a strong match. Say that plainly, offer to "
+                     "widen or refine the search, and do NOT present any of them as a "
+                     "recommended prospect.")
+    elif strong_n < 5:
+        notes.append(f"Only {strong_n} of these are strong matches; the rest are "
+                     "weaker. Recommend the strong ones and be honest the others are "
+                     "a stretch, rather than padding the list.")
+    if weak_n:
+        notes.append(f"{weak_n} are weak matches (shown but labelled Weak); don't "
+                     "describe them as good fits.")
     if role and not verified:
         notes.append(
             f"NOTE: none of these currently has an open posting matching "
