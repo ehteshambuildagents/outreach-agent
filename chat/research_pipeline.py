@@ -248,10 +248,12 @@ def _name_tokens(name: str) -> list:
 
 def _is_generic_token(t: str) -> bool:
     """True when a token is generic vocabulary — matched whole (never as a
-    substring), with a light plural fold so 'companies'/'reps'/'roles' count."""
+    substring), with a light plural fold so 'reps'/'roles'/'sdrs' count. The fold
+    only applies to stems of 3+ chars, so a short brand/acronym like 'Srs' is not
+    mistaken for the plural of 'sr' (senior)."""
     if t in _GENERIC_TOKENS:
         return True
-    if t.endswith("s") and t[:-1] in _GENERIC_TOKENS:   # reps -> rep, roles -> role
+    if t.endswith("s") and len(t) - 1 >= 3 and t[:-1] in _GENERIC_TOKENS:
         return True
     return False
 

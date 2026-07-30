@@ -1327,7 +1327,10 @@ class DiscoveryBandTests(unittest.TestCase):
         for name in ["Software AG", "Career Karma", "Greenhouse Software",
                      "Sales Layer", "HubSpot", "Salesforce", "Outreach",
                      "Acme Inc", "Digital Ocean", "The Trade Desk", "Gong",
-                     "Salesloft", "Front"]:
+                     "Salesloft", "Front",
+                     # short brand/acronym must not be read as a plural of a
+                     # 2-char role word ("srs" -> "sr"/senior).
+                     "Srs"]:
             self.assertFalse(
                 _malformed_prospect({"company_name": name,
                                      "website": "https://example.com"}),
