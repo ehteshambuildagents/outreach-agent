@@ -564,10 +564,87 @@ def _data_from_intel(intel: dict) -> dict:
 # ──────────────────────────────────────────────────────────────────────
 #  Tool: write / revise / subjects / variations (reuses research + intel)
 # ──────────────────────────────────────────────────────────────────────
+def _retarget_write(requested: str, conversation) -> Optional[dict]:
+    """Point the writer at ``requested`` when the user names a company that ISN'T
+    the one on file, so a draft can never silently be written for the previous
+    target (the "asked for Anthropic, drafted Apple" bug).
+
+    Succeeds ONLY when that company was already researched to a usable ("ok")
+    state earlier in the thread (its research is cached by domain): switches the
+    active company in place and clears every artifact tied to the OLD target
+    (intel/qualification/strategy/current draft) so nothing bleeds across, then
+    returns the same switch as workspace_updates so it persists. Returns None when
+    there is no usable research for ``requested`` — the caller then refuses and
+    asks to research it first, rather than writing for the wrong company.
+    """
+    url, _ = resolve_url(requested)
+    if not url:
+        return None
+    cache = conversation.workspace.get("research_cache") or {}
+    cached = cache.get(_domain_key(url))
+    if not (cached and cached.get("status") == "ok"):
+        return None
+    label = _company_label(cached, url)
+    updates = {"research": cached, "company": label, "company_url": url,
+               "intel": None, "qualification": None, "strategy": None, "email": None}
+    # Apply in place too, so _writer_source (which reads the live workspace) builds
+    # the source for the NEW company within this same call.
+    conversation.workspace.update(updates)
+    return updates
+
+
+def _labels_match(a: str, b: str) -> bool:
+    """True when two company labels/domains denote the same company for the target
+    invariant. Compares on the alphanumeric core so ``Anthropic`` matches
+    ``Anthropic PBC`` and ``anthropic.com``, while ``Apple`` never matches
+    ``Anthropic``."""
+    a = re.sub(r"[^a-z0-9]", "", (a or "").lower())
+    b = re.sub(r"[^a-z0-9]", "", (b or "").lower())
+    # Drop a trailing tld token so "anthropiccom" still cores to "anthropic".
+    a = re.sub(r"(com|io|ai|co|net|org|inc)$", "", a) or a
+    b = re.sub(r"(com|io|ai|co|net|org|inc)$", "", b) or b
+    return bool(a and b and (a == b or a in b or b in a))
+
+
+def _claimed_draft_companies(result: "ToolResult") -> list:
+    """Every company label a produced draft/card actually claims — from the EMAIL
+    cards it appended AND the email/variations it persisted. This is the "displayed
+    recipient/company" side of the invariant: it's what the user will see, so it's
+    what we check, not what the model intends to say."""
+    labels = []
+    cards = ([result.message] if result.message is not None else []) + list(result.messages or [])
+    for m in cards:
+        if getattr(m, "kind", None) == EMAIL:
+            label = (getattr(m, "data", None) or {}).get("company")
+            if label:
+                labels.append(label)
+    updates = result.workspace_updates or {}
+    em = updates.get("email")
+    if isinstance(em, dict) and em.get("company"):
+        labels.append(em["company"])
+    return labels
+
+
+def _target_invariant_error(result: "ToolResult", target_label: str) -> Optional[str]:
+    """Return a human reason when a produced draft is for a DIFFERENT company than
+    the explicit ``target_label`` (draft_target), else None. This is the final
+    consistency gate: requested == research == draft == displayed. When it fires the
+    caller must NOT surface the draft."""
+    if not target_label:
+        return None
+    for claimed in _claimed_draft_companies(result):
+        if not _labels_match(claimed, target_label):
+            return f"the draft came back addressed to {claimed}, but the target is {target_label}"
+    return None
+
+
 def _tool_write_email(inp: dict, conversation) -> ToolResult:
     mode = str(inp.get("mode") or "").strip().lower() or "auto"
     guidance = str(inp.get("guidance") or "").strip() or None
     count = inp.get("count")
+    # Accept either `company` or `target_company` — the explicit target the user
+    # named this turn always takes precedence over stale workspace state.
+    requested = str(inp.get("company") or inp.get("target_company") or "").strip()
 
     # Critique needs only the pasted email text — no company/research required.
     if mode == "critique":
@@ -575,21 +652,67 @@ def _tool_write_email(inp: dict, conversation) -> ToolResult:
     if mode == "compare":
         return _do_compare(conversation)
 
+    # Keep requested == researched == drafted. If the user named a company that
+    # isn't the one on file, retarget to it (reusing research already gathered this
+    # thread) or refuse and ask to research it — never draft for the wrong company.
+    switch_updates = None
+    if requested and not _same_company(requested, conversation):
+        switch_updates = _retarget_write(requested, conversation)
+        if switch_updates is None:
+            on_file = conversation.workspace.get("company")
+            return ToolResult(
+                summary=(f"You asked to write for {requested}, but the research on "
+                         f"file is for {on_file or 'a different company'}. Do NOT "
+                         f"draft yet — research {requested} first with "
+                         f"research_company, then write. Never write an email for a "
+                         f"company that has not been researched."))
+        # A new target is a fresh draft, not a revision of the previous company's.
+        guidance = None
+
     source, allow_thin = _writer_source(conversation.workspace)
     if source is None:
         return ToolResult(
             summary="There's no company on file yet. Ask the user which company "
                     "this email is for (or research one first).")
 
+    # The draft target is set explicitly and independently here, from the resolved
+    # workspace (post-retarget), and NOT re-derived downstream. Every produced draft
+    # is checked against it before it can reach the user.
+    draft_target = str(conversation.workspace.get("company") or "").strip()
+
     if mode == "subjects":
-        return _do_subjects(source, conversation, count)
-    if mode == "variations":
-        return _do_variations(source, conversation, count, allow_thin, guidance)
-    if mode == "follow_up":
-        return _do_followup(source, conversation)
-    if mode == "sequence":
-        return _do_sequence(source, conversation, count, allow_thin)
-    return _do_email(source, conversation, guidance, allow_thin)
+        result = _do_subjects(source, conversation, count)
+    elif mode == "variations":
+        result = _do_variations(source, conversation, count, allow_thin, guidance)
+    elif mode == "follow_up":
+        result = _do_followup(source, conversation)
+    elif mode == "sequence":
+        result = _do_sequence(source, conversation, count, allow_thin)
+    else:
+        result = _do_email(source, conversation, guidance, allow_thin)
+
+    # Final invariant: requested == research == draft == displayed. If a produced
+    # draft names a DIFFERENT company than the target, do NOT return it — surface a
+    # transparent error and PRESERVE the research (never emit a wrong-company email).
+    mismatch = _target_invariant_error(result, draft_target)
+    if mismatch:
+        _tele_event("ai", "write_target_mismatch", entity_id=draft_target,
+                    detail=mismatch[:200])
+        # Keep the (correct) research switched in; only the bad draft is dropped.
+        preserved = dict(switch_updates or {})
+        preserved["email"] = None
+        return ToolResult(
+            summary=(f"Blocked a wrong-company email: {mismatch}. Do NOT show any "
+                     f"draft or claim one was written. Tell the user plainly that you "
+                     f"couldn't reliably draft for {draft_target} just now and offer "
+                     f"to try again. The research for {draft_target} is preserved."),
+            workspace_updates=preserved)
+
+    # Persist the retarget alongside whatever the writer produced, so the active
+    # company stays switched for follow-up turns.
+    if switch_updates:
+        result.workspace_updates = {**switch_updates, **(result.workspace_updates or {})}
+    return result
 
 
 def _style_note(conversation) -> str:
@@ -779,8 +902,15 @@ def _do_email(source, conversation, guidance, allow_thin) -> ToolResult:
     explain = _writer_review.explain_change(prev_body, email.get("body")) if prev_body else ""
     guidance_hint = (" Then, in ONE short sentence, tell the user what changed: "
                      f'"{explain}"') if explain else ""
-    summary = (f"{verb} the email{detail}. It's shown as a card — give a brief,"
-               " natural one-line note (never mention tools or modes)."
+    # Ground the narration in the ACTUAL returned draft, not the model's intent:
+    # name the exact company (and recipient) the draft is for, so the prose can
+    # never claim a different company than the card shows.
+    drafted_for = email.get("company") or "the company"
+    recipient = email.get("to")
+    who = f" to {recipient}" if recipient else ""
+    summary = (f"{verb} the email{detail} for {drafted_for}{who}. It's shown as a "
+               f"card — give a brief, natural one-line note that refers to "
+               f"{drafted_for} (and no other company); never mention tools or modes."
                + guidance_hint
                + (f" Quality read you may mention if useful: {note}." if note else ""))
 
@@ -1172,6 +1302,11 @@ def _last_user_text(conversation) -> str:
     return ""
 
 
+# The card shows only the strongest qualified companies — a focused shortlist, not
+# a padded page. Discovery may surface more; the rest are held back, not shown.
+_FIND_DISPLAY_MAX = 10
+
+
 def _tool_find_prospects(inp: dict, conversation) -> ToolResult:
     """Discover companies matching an ICP. Deterministic (Tavily+Exa); it does
     NOT research, qualify, or write — it hands leads to the rest of the pipeline.
@@ -1241,61 +1376,90 @@ def _tool_find_prospects(inp: dict, conversation) -> ToolResult:
                           workspace_updates={"prospects_last": []})
 
     public = [p.public() for p in result.prospects]
-    entries = research_pipeline.discovery_entries(public)
+    all_entries = research_pipeline.discovery_entries(public)
     quality = result.quality or {}
+
+    # Show only the STRONGEST QUALIFIED companies, best-first, capped at
+    # _FIND_DISPLAY_MAX — never pad the card with weak/zero matches or job-board
+    # fallbacks just to reach a count. `discovery_entries` already dropped malformed
+    # rows and ranked them; a "weak" band means below the qualification floor (which
+    # is exactly what rendered as a page of ~0% junk). If fewer than the cap qualify,
+    # we show fewer. If NONE qualify, we show no card and say so honestly.
+    qualified = [e for e in all_entries if e.get("band") in ("strong", "possible")]
+    entries = qualified[:_FIND_DISPLAY_MAX]
+    shown_names = {e.get("company") for e in entries}
+    public = [p for p in public if p.get("company_name") in shown_names]
+    dropped = len(all_entries) - len(entries)
+
+    if not entries:
+        # Everything found was weak/malformed. Be honest; do not present junk.
+        considered = quality.get("candidates_considered", 0)
+        return ToolResult(
+            summary=(f"Searched and considered {considered} companies, but NONE cleared "
+                     "the bar to show as a qualified match (they were weak fits, job "
+                     "boards, or unreachable enterprises). Do NOT present any prospect "
+                     "as a recommendation. Tell the user plainly that nothing strong "
+                     "came back for those filters and offer to widen or refine the "
+                     "search (a different role, industry, or size)."),
+            workspace_updates={"prospects_last": [],
+                               "discovery_last": {
+                                   "raw": q.raw, "industry": q.industry,
+                                   "location": q.location,
+                                   "employee_range": q.employee_range,
+                                   "funding_stage": q.funding_stage,
+                                   "keywords": q.keywords,
+                                   "exclude_keywords": q.exclude_keywords}})
 
     # The list is a CARD, so the reply must not repeat it. The old instruction
     # here asked for "a clean numbered list", which is exactly the mechanical
     # markdown dump we were trying to get away from.
     lines = []
-    for p in result.prospects:
-        hiring = (p.hiring or {}).get("summary") or ""
+    for e in entries:
+        detail = e.get("detail") or {}
+        hiring = (detail.get("hiring") or {}).get("summary") or ""
         lines.append(
-            f"  - {p.company_name} ({p.domain}) match {round(p.confidence * 100)}%"
+            f"  - {e.get('company')} ({e.get('website')}) match {e.get('score')}% "
+            f"[{e.get('band')}]"
             + (f" — {hiring}" if hiring else "")
-            + (f" — {p.why_it_matches}" if p.why_it_matches else ""))
+            + (f" — {e.get('score_reason')}" if e.get("score_reason") else ""))
 
-    top = result.prospects[0] if result.prospects else None
+    top_name = entries[0].get("company") if entries else None
+    top_score = entries[0].get("score") if entries else None
     verified = quality.get("hiring_verified") or 0
     role = quality.get("role_terms") or []
     notes = []
-    # How many are genuinely STRONG vs padding. The agent must lead honestly: a
-    # page of weak matches should be described as such, never as recommendations.
+    # How many are genuinely STRONG vs a stretch. The agent must lead honestly.
     strong_n = sum(1 for e in entries if e.get("band") == "strong")
-    weak_n = sum(1 for e in entries if e.get("band") == "weak")
     if strong_n == 0:
-        notes.append("NONE of these is a strong match. Say that plainly, offer to "
-                     "widen or refine the search, and do NOT present any of them as a "
-                     "recommended prospect.")
+        notes.append("NONE of the shown companies is a STRONG match — they're "
+                     "plausible but unproven. Say that plainly, offer to widen or "
+                     "refine, and do NOT present any as a confident recommendation.")
     elif strong_n < 5:
         notes.append(f"Only {strong_n} of these are strong matches; the rest are "
-                     "weaker. Recommend the strong ones and be honest the others are "
-                     "a stretch, rather than padding the list.")
-    if weak_n:
-        notes.append(f"{weak_n} are weak matches (shown but labelled Weak); don't "
-                     "describe them as good fits.")
+                     "plausible-but-weaker. Recommend the strong ones and be honest "
+                     "the others are more of a stretch.")
+    if dropped:
+        notes.append(f"{dropped} other companies were found but held back as weak "
+                     "fits or job-board/enterprise noise, so this list is the "
+                     "qualified subset, not everything.")
     if role and not verified:
         notes.append(
             f"NOTE: none of these currently has an open posting matching "
             f"\"{role[0]}\" (checked against Apollo's live job postings). They match "
             "the category, not that specific role. Say this plainly rather than "
             "implying they are hiring for it.")
-    if quality.get("returned_fallback"):
-        notes.append(f"{quality['returned_fallback']} of these are job boards or "
-                     "marketplaces included only because there were not enough real "
-                     "companies. Flag them as such.")
     more = " More are available if they ask for another batch." if result.has_more else ""
 
     return ToolResult(
         summary=(
-            f"Found {result.returned} companies ({quality.get('candidates_considered', 0)} "
-            f"considered, {quality.get('demoted_intermediaries', 0)} job boards/"
-            f"aggregators demoted, stopped because {quality.get('stopped_because', 'n/a')}).\n"
+            f"Showing the {len(entries)} strongest qualified companies "
+            f"({quality.get('candidates_considered', 0)} considered, {dropped} weaker/"
+            f"noise held back, stopped because {quality.get('stopped_because', 'n/a')}).\n"
             "They are ALREADY SHOWN to the user as interactive cards with the website, "
             "match confidence, sources, and hiring signal. So DO NOT restate them as a "
             "numbered list or a table.\n"
             "Reply conversationally, the way you would talk to a colleague: lead with "
-            f"the single best one ({top.company_name if top else 'the top match'}) and "
+            f"the single best one ({top_name or 'the top match'}) and "
             "WHY it stands out, then mention two or three you would prioritise next in "
             "prose, then say what you can do next (research one properly, draft an "
             "opener, or widen the search). Two short paragraphs at most."
@@ -1303,15 +1467,15 @@ def _tool_find_prospects(inp: dict, conversation) -> ToolResult:
             + "\n\nThe candidates (for your reasoning, not for pasting):\n"
             + "\n".join(lines)),
         message=Message(role="assistant", kind=PROSPECTS,
-                        content=f"Found {result.returned} companies matching that.",
+                        content=f"Found {len(entries)} qualified companies matching that.",
                         data={"prospects": entries,
-                              "summary": {"total": result.returned,
-                                          "discovered": result.returned,
+                              "summary": {"total": len(entries),
+                                          "discovered": len(entries),
                                           "considered": quality.get("candidates_considered"),
                                           "demoted": quality.get("demoted_intermediaries"),
-                                          "top": (f"{top.company_name} "
-                                                  f"({round(top.confidence * 100)}% match)"
-                                                  if top else None)},
+                                          "held_back": dropped,
+                                          "top": (f"{top_name} ({top_score}% match)"
+                                                  if top_name else None)},
                               "quality": quality}),
         workspace_updates={
             "prospects_last": public,
@@ -1855,7 +2019,10 @@ register(Tool(
     description=(
         "Write, revise, or vary the personalized cold email from what's on file "
         "(website research AND any multi-source intel). It does NOT research "
-        "again — reuse existing context. Modes:\n"
+        "again — reuse existing context. ALWAYS pass `company` (the company the "
+        "user wants this email for) on a first draft. If that company is not the "
+        "one currently researched, research it FIRST with research_company, then "
+        "write — never draft for a company that has not been researched. Modes:\n"
         "- mode='draft' (default): write/revise one email. Pass `guidance` to "
         "revise the current draft (e.g. 'make it shorter', 'more founder-like', "
         "'target the CTO', 'rewrite only the CTA', 'rewrite the opening', 'warmer', "
@@ -1880,6 +2047,13 @@ register(Tool(
     input_schema={
         "type": "object",
         "properties": {
+            "company": {"type": "string",
+                        "description": "The company this email is for (name or "
+                                       "website). Pass it on a first draft so the "
+                                       "email targets the right company; if it is "
+                                       "not the one already researched, research it "
+                                       "first. Omit only for revisions of the "
+                                       "current draft (mode='draft' with guidance)."},
             "mode": {"type": "string",
                      "enum": ["draft", "subjects", "variations", "follow_up",
                               "sequence", "critique", "compare"],

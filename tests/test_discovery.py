@@ -297,7 +297,7 @@ class ChatToolTests(unittest.TestCase):
         result = DiscoveryResult(
             "ok", prospects=[Prospect(company_name="Wave", website="https://wave.com",
                                       industry="fintech", why_it_matches="Matches fintech",
-                                      discovery_source="exa")],
+                                      confidence=0.62, discovery_source="exa")],
             returned=1, has_more=True)
         with mock.patch("chat.tools.discovery_engine.discover", return_value=result):
             r = tools.execute("find_prospects",
@@ -314,6 +314,65 @@ class ChatToolTests(unittest.TestCase):
             r = tools.execute("find_prospects", {"industry": "fintech"}, self._conv())
         self.assertIn("No more matches", r.summary)
         self.assertEqual(r.workspace_updates["prospects_last"], [])
+
+    def _mixed_result(self, n_strong=12, n_weak=6):
+        from discovery.engine import DiscoveryResult
+        strong = [Prospect(company_name=f"Strong{i}",
+                           website=f"https://strong{i}.com", confidence=0.70,
+                           discovery_source="apollo") for i in range(n_strong)]
+        weak = [Prospect(company_name=f"Weak{i}", website=f"https://weak{i}.com",
+                         confidence=0.10, discovery_source="exa")
+                for i in range(n_weak)]
+        prospects = strong + weak
+        return DiscoveryResult("ok", prospects=prospects, returned=len(prospects),
+                               quality={"candidates_considered": len(prospects)})
+
+    def test_only_strongest_qualified_shown_capped_at_ten(self):
+        # #4/#5: 12 strong + 6 weak found. The card shows only the top 10 qualified,
+        # never the weak ones, and never pads to reach a count.
+        import chat.tools as tools
+        with mock.patch("chat.tools.discovery_engine.discover",
+                        return_value=self._mixed_result()):
+            r = tools.execute("find_prospects", {"industry": "saas"}, self._conv())
+        shown = r.message.data["prospects"]
+        self.assertEqual(len(shown), 10)                       # capped
+        self.assertTrue(all(e["band"] != "weak" for e in shown))
+        self.assertTrue(all("Weak" not in e["company"] for e in shown))
+        # No shown company displays a misleading 0% — they're real qualified scores.
+        self.assertTrue(all(e["score"] >= 35 for e in shown))
+        self.assertEqual(len(r.workspace_updates["prospects_last"]), 10)
+
+    def test_no_padding_when_few_qualify(self):
+        # Only 3 strong exist among noise: show exactly 3, do not pad with weak ones.
+        import chat.tools as tools
+        with mock.patch("chat.tools.discovery_engine.discover",
+                        return_value=self._mixed_result(n_strong=3, n_weak=15)):
+            r = tools.execute("find_prospects", {"industry": "saas"}, self._conv())
+        self.assertEqual(len(r.message.data["prospects"]), 3)
+
+    def test_all_weak_returns_no_card_and_is_honest(self):
+        # #1: a page of weak/zero matches is NOT shown as junk — no card, honest text.
+        import chat.tools as tools
+        with mock.patch("chat.tools.discovery_engine.discover",
+                        return_value=self._mixed_result(n_strong=0, n_weak=12)):
+            r = tools.execute("find_prospects", {"industry": "saas"}, self._conv())
+        self.assertIsNone(r.message)
+        self.assertEqual(r.workspace_updates["prospects_last"], [])
+        self.assertIn("none", r.summary.lower())
+
+    def test_score_is_stable_across_message_serialization(self):
+        # #2: the score shown live must survive a reload unchanged (it's persisted in
+        # the card entry, not recomputed).
+        import chat.tools as tools
+        from chat.models import Message
+        with mock.patch("chat.tools.discovery_engine.discover",
+                        return_value=self._mixed_result(n_strong=4, n_weak=2)):
+            r = tools.execute("find_prospects", {"industry": "saas"}, self._conv())
+        before = [e["score"] for e in r.message.data["prospects"]]
+        round_tripped = Message.from_dict(r.message.to_dict())
+        after = [e["score"] for e in round_tripped.data["prospects"]]
+        self.assertEqual(before, after)
+        self.assertTrue(all(s > 0 for s in after))             # never a bare 0%
 
 
 if __name__ == "__main__":

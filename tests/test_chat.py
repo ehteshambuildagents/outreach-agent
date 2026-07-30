@@ -51,13 +51,13 @@ def _research_ok(company="Acme"):
     }
 
 
-def _email_ok(subject="warehouse robots", body=None):
+def _email_ok(subject="warehouse robots", body=None, company="Acme", to="Bob"):
     if body is None:
         body = ("Hey Bob, saw Acme's warehouse robots focus on logistics teams. "
                 "Turning that pilot detail into specific account-by-account outreach "
                 "feels useful for warehouse buyers; worth a quick look?")
     return {"status": "ok", "subject": subject, "body": body,
-            "company": "Acme", "to": "Bob", "used_reveal": False}
+            "company": company, "to": to, "used_reveal": False}
 
 
 def _tool_use(name, tool_input, tuid="t1"):
@@ -274,6 +274,167 @@ class WriteEmailToolTests(unittest.TestCase):
             result = tools.execute("write_email", {"mode": "follow_up"}, conv)
         wf.assert_not_called()
         self.assertIn("follow up", result.summary.lower())
+
+    # A realistic writer stand-in: the draft it returns is for the company named in
+    # the research SOURCE it was handed (exactly like agents.writer.write_email,
+    # which reads company_name off the source data). This is what makes the target
+    # invariant meaningful in tests — a wrong source produces a wrong-company draft.
+    @staticmethod
+    def _writer_for_source():
+        def _w(source, **kw):
+            name = ((source or {}).get("data") or {}).get("company_name") or "Unknown"
+            return _email_ok(subject=f"{name} hook", company=name,
+                             to=(source["data"].get("primary_contact_name") or "there"))
+        return _w
+
+    def test_research_apple_then_email_anthropic_refuses(self):
+        # #29: research Apple, then ask for an email to Anthropic (never researched).
+        # The writer must NOT run; no wrong-company draft; agent told to research.
+        conv = Conversation(workspace={
+            "research": _research_ok("Apple"), "company": "Apple",
+            "company_url": "https://apple.com"})
+        with mock.patch("chat.tools.write_email") as we:
+            result = tools.execute("write_email", {"company": "Anthropic"}, conv)
+        we.assert_not_called()
+        self.assertIsNone(result.message)
+        self.assertIn("anthropic", result.summary.lower())
+        self.assertIn("research", result.summary.lower())
+        self.assertEqual(conv.workspace["company"], "Apple")   # unchanged
+
+    def test_write_retargets_to_a_named_cached_company(self):
+        # The user asks to write for Anthropic while Apple is the active company.
+        # Anthropic was researched earlier (cached), so the writer is given
+        # ANTHROPIC's research, the draft is for Anthropic, and the active company
+        # switches — the "asked for Anthropic, drafted Apple" bug.
+        conv = Conversation(workspace={
+            "research": _research_ok("Apple"), "company": "Apple",
+            "company_url": "https://apple.com",
+            "intel": _intel_ok(), "email": _email_ok(),
+            "research_cache": {"anthropic.com": _research_ok("Anthropic")}})
+        captured = {}
+        def capture(source, **kw):
+            captured["source"] = source
+            return self._writer_for_source()(source, **kw)
+        with mock.patch("chat.tools.write_email", side_effect=capture) as we:
+            result = tools.execute("write_email", {"company": "Anthropic"}, conv)
+        we.assert_called_once()
+        self.assertEqual(captured["source"]["data"]["company_name"], "Anthropic")
+        self.assertEqual(result.message.kind, EMAIL)
+        self.assertEqual(result.message.data["company"], "Anthropic")   # card matches
+        # The switch persists and stale artifacts from Apple are cleared.
+        self.assertEqual(result.workspace_updates["company"], "Anthropic")
+        self.assertIsNone(result.workspace_updates["intel"])
+        self.assertEqual(conv.workspace["company_url"], "https://anthropic.com")
+
+    def test_research_anthropic_switch_to_apple_then_anthropic_again(self):
+        # #30: research Anthropic, switch active to Apple, then ask for Anthropic
+        # again. Both are cached; the second ask must retarget back to Anthropic and
+        # draft for Anthropic, never for the currently-active Apple.
+        conv = Conversation(workspace={
+            "research": _research_ok("Apple"), "company": "Apple",
+            "company_url": "https://apple.com",
+            "research_cache": {"anthropic.com": _research_ok("Anthropic"),
+                               "apple.com": _research_ok("Apple")}})
+        with mock.patch("chat.tools.write_email",
+                        side_effect=self._writer_for_source()):
+            result = tools.execute("write_email", {"company": "Anthropic"}, conv)
+        self.assertEqual(result.message.data["company"], "Anthropic")
+        self.assertEqual(conv.workspace["company"], "Anthropic")
+
+    def test_cached_target_switching_draws_the_right_research(self):
+        # Cached target switching: the writer receives the CACHED research for the
+        # requested company, not the active one's.
+        conv = Conversation(workspace={
+            "research": _research_ok("Apple"), "company": "Apple",
+            "company_url": "https://apple.com",
+            "research_cache": {"anthropic.com": _research_ok("Anthropic")}})
+        captured = {}
+        def capture(source, **kw):
+            captured["name"] = source["data"]["company_name"]
+            return self._writer_for_source()(source, **kw)
+        with mock.patch("chat.tools.write_email", side_effect=capture):
+            tools.execute("write_email", {"company": "anthropic.com"}, conv)
+        self.assertEqual(captured["name"], "Anthropic")
+
+    def test_write_refuses_a_company_that_was_never_researched(self):
+        # Unknown company: named target isn't active AND has no research on file: the
+        # writer must NOT be called (no wrong-company draft); agent told to research.
+        conv = Conversation(workspace={
+            "research": _research_ok("Apple"), "company": "Apple",
+            "company_url": "https://apple.com"})
+        with mock.patch("chat.tools.write_email") as we:
+            result = tools.execute("write_email", {"company": "Netflix"}, conv)
+        we.assert_not_called()
+        self.assertIsNone(result.message)
+        self.assertIn("netflix", result.summary.lower())
+        self.assertIn("research", result.summary.lower())
+        self.assertEqual(conv.workspace["company"], "Apple")   # unchanged
+
+    def test_write_reports_writer_failure_without_a_draft(self):
+        # Research failure path from the writer: a non-ok result yields no card and
+        # never claims success.
+        conv = Conversation(workspace={"research": _research_ok("Acme"),
+                                       "company": "Acme",
+                                       "company_url": "https://acme.com"})
+        with mock.patch("chat.tools.write_email",
+                        return_value={"status": "insufficient",
+                                      "reason": "not enough detail"}):
+            result = tools.execute("write_email", {"company": "acme.com"}, conv)
+        self.assertIsNone(result.message)
+        self.assertIn("could not", result.summary.lower())
+
+    def test_explicit_company_overrides_stale_active_company(self):
+        # #34: explicit company with a stale active_company. Active is Apple but the
+        # user names Anthropic (cached) — the explicit target wins.
+        conv = Conversation(workspace={
+            "research": _research_ok("Apple"), "company": "Apple",
+            "company_url": "https://apple.com", "email": _email_ok(company="Apple"),
+            "research_cache": {"anthropic.com": _research_ok("Anthropic")}})
+        with mock.patch("chat.tools.write_email",
+                        side_effect=self._writer_for_source()):
+            result = tools.execute("write_email", {"company": "Anthropic"}, conv)
+        self.assertEqual(result.message.data["company"], "Anthropic")
+        self.assertEqual(result.workspace_updates["email"]["company"], "Anthropic")
+
+    def test_narration_summary_names_the_actual_draft_company(self):
+        # #35: the narration handed to the model names the ACTUAL drafted company, so
+        # the prose cannot claim a different one than the card shows.
+        conv = Conversation(workspace={
+            "research": _research_ok("Apple"), "company": "Apple",
+            "company_url": "https://apple.com",
+            "research_cache": {"anthropic.com": _research_ok("Anthropic")}})
+        with mock.patch("chat.tools.write_email",
+                        side_effect=self._writer_for_source()):
+            result = tools.execute("write_email", {"company": "Anthropic"}, conv)
+        self.assertIn("Anthropic", result.summary)
+        self.assertNotIn("Apple", result.summary)
+
+    def test_invariant_blocks_a_wrong_company_draft(self):
+        # #37: if the writer somehow returns a draft for a DIFFERENT company than the
+        # target, the tool must emit NO email card and preserve research.
+        conv = Conversation(workspace={"research": _research_ok("Acme"),
+                                       "company": "Acme",
+                                       "company_url": "https://acme.com"})
+        # Writer returns an Apple draft while the target is Acme (a writer bug).
+        with mock.patch("chat.tools.write_email",
+                        return_value=_email_ok(company="Apple")):
+            result = tools.execute("write_email", {"company": "acme.com"}, conv)
+        self.assertIsNone(result.message)
+        self.assertNotIn("email", result.summary.lower().split("wrong-company")[0])
+        self.assertIn("blocked", result.summary.lower())
+        # Research preserved; only the bad draft dropped.
+        self.assertIsNone(result.workspace_updates.get("email"))
+        self.assertEqual(conv.workspace["research"]["data"]["company_name"], "Acme")
+
+    def test_write_with_matching_company_drafts_normally(self):
+        # Passing the company that is ALREADY on file must not trigger a retarget.
+        conv = Conversation(workspace={"research": _research_ok("Acme"),
+                                       "company": "Acme",
+                                       "company_url": "https://acme.com"})
+        with mock.patch("chat.tools.write_email", return_value=_email_ok()) as we:
+            result = tools.execute("write_email", {"company": "acme.com"}, conv)
+        we.assert_called_once()
+        self.assertEqual(result.message.kind, EMAIL)
 
 
 _VARS = {"status": "ok", "company": "Acme", "to": "Bob", "variations": [
@@ -703,7 +864,8 @@ class ResolveInAgentLoopTests(unittest.TestCase):
                         return_value={"status": "resolved", "url": "https://stripe.com"}) as rcn, \
              mock.patch("chat.tools.research_company",
                         return_value=_research_ok("Stripe")) as rc, \
-             mock.patch("chat.tools.write_email", return_value=_email_ok()) as we:
+             mock.patch("chat.tools.write_email",
+                        return_value=_email_ok(company="Stripe")) as we:
             agent.respond(conv, "Stripe")
 
         rcn.assert_called_once()
@@ -1110,6 +1272,66 @@ class DiscoveryBandTests(unittest.TestCase):
                                      "summary": "Hiring a content creator"})
         self.assertFalse(e["recommended"])
         self.assertNotEqual(e["band"], "strong")
+
+    def test_malformed_prospects_are_dropped(self):
+        # Scraped job-posting fragments / nameless rows must never render as a
+        # prospect. Only the one real company survives.
+        from chat.research_pipeline import discovery_entries
+        rows = [
+            {"company_name": "We're hiring a Senior SDR", "website": "https://x.com",
+             "confidence": 0.6},                       # a job posting, not a company
+            {"company_name": "", "website": "https://y.com", "confidence": 0.6},  # no name
+            {"company_name": "Acme", "website": "", "confidence": 0.6},           # no site
+            {"company_name": "Acme", "website": "not-a-url", "confidence": 0.6},  # junk site
+            {"company_name": "RealCo", "website": "https://realco.com",
+             "confidence": 0.6},                       # the only valid one
+        ]
+        entries = discovery_entries(rows)
+        self.assertEqual([e["company"] for e in entries], ["RealCo"])
+
+    def test_live_qa_junk_rows_are_dropped(self):
+        # Exact regression for the two malformed rows found during live QA: a
+        # category phrase and a job title, each with a valid-looking domain and a
+        # short name. Both must be dropped; only the real company survives.
+        from chat.research_pipeline import discovery_entries
+        rows = [
+            {"company_name": "B2B SaaS",
+             "website": "https://dover.com/careers/123", "confidence": 0.6},
+            {"company_name": "Senior SDR Software Engineer",
+             "website": "https://tcibr.com/job/45", "confidence": 0.6},
+            {"company_name": "Acme", "website": "https://acme.com",
+             "confidence": 0.6},
+        ]
+        entries = discovery_entries(rows)
+        self.assertEqual([e["company"] for e in entries], ["Acme"])
+
+    def test_category_and_role_phrases_are_rejected(self):
+        # Generic category names, role titles, job-board headings and query
+        # fragments are not companies, regardless of a valid domain.
+        from chat.research_pipeline import _malformed_prospect
+        for name in ["B2B SaaS", "SaaS companies", "Software company",
+                     "Startups hiring SDRs", "Tech startups", "AI companies",
+                     "Senior SDR Software Engineer",
+                     "Sales Development Representative", "Account Executive",
+                     "Growth Marketing Manager", "Software Engineer",
+                     "Careers at Google"]:
+            self.assertTrue(
+                _malformed_prospect({"company_name": name,
+                                     "website": "https://example.com/x"}),
+                f"expected {name!r} to be rejected as a non-company")
+
+    def test_legit_companies_are_not_over_rejected(self):
+        # A distinctive/brand token, or a legal-entity suffix, keeps a real
+        # company even when the name CONTAINS Careers/Hiring/Software/Sales.
+        from chat.research_pipeline import _malformed_prospect
+        for name in ["Software AG", "Career Karma", "Greenhouse Software",
+                     "Sales Layer", "HubSpot", "Salesforce", "Outreach",
+                     "Acme Inc", "Digital Ocean", "The Trade Desk", "Gong",
+                     "Salesloft", "Front"]:
+            self.assertFalse(
+                _malformed_prospect({"company_name": name,
+                                     "website": "https://example.com"}),
+                f"expected {name!r} to be kept as a real company")
 
 
 class DecisionMakerTests(unittest.TestCase):

@@ -117,6 +117,10 @@ def discovery_entries(prospects) -> list:
     for p in prospects or []:
         if not isinstance(p, dict):
             continue
+        if _malformed_prospect(p):
+            # A scraped job posting / listing fragment that leaked in as a
+            # "company" is never shown — it isn't a prospect anyone can sell to.
+            continue
         confidence = float(p.get("confidence") or 0)
         hiring = p.get("hiring") or None
         reasons = [r for r in (p.get("match_reasons") or []) if r]
@@ -157,6 +161,136 @@ def discovery_entries(prospects) -> list:
             },
         })
     return entries
+
+
+# Fragments that mean "this row is a job posting / listing, not a company". Kept
+# multi-word so a legitimate company name ("Hiring.com", "Career Karma") is safe.
+_JUNK_NAME_MARKERS = (
+    "we're hiring", "we are hiring", "now hiring", "job description",
+    "apply now", "careers at", "job at ", "full-time", "part-time",
+    "view job", "job opening", "see all jobs", "no title",
+)
+
+# ── Prospect entity validation ─────────────────────────────────────────────
+# A discovered "company" is only ever shown if it names a REAL, addressable
+# business. Search/discovery occasionally leaks JOB TITLES, INDUSTRY/CATEGORY
+# PHRASES, and SEARCH-QUERY FRAGMENTS into the company slot — e.g. the exact
+# junk found in live QA: company_name="B2B SaaS" (dover.com) and
+# company_name="Senior SDR Software Engineer" (tcibr.com). These have valid
+# domains and short names, so structure alone (length / URL shape / junk
+# markers) can't catch them.
+#
+# We classify the NAME's tokens instead. A name whose EVERY meaningful word is
+# generic vocabulary — an industry/category word, a job-title word, or a query
+# filler — is not a company. A single distinctive/brand token is enough to keep
+# a row: "Karma" in "Career Karma", "AG" in "Software AG", "Layer" in "Sales
+# Layer", "Greenhouse" in "Greenhouse Software", or a bare brand like "HubSpot"
+# / "Salesforce". That is precisely how a legitimate name that merely CONTAINS
+# Careers/Hiring/Software is preserved while a pure category/role phrase is not.
+
+# Legal-entity suffixes: a strong positive signal of a registered company. Their
+# presence alone keeps a row (protects "Software AG", "Acme Inc", "Foo GmbH").
+_LEGAL_SUFFIX = {
+    "inc", "incorporated", "llc", "ltd", "limited", "corp", "corporation",
+    "gmbh", "ag", "sa", "nv", "bv", "plc", "pbc", "lp", "llp", "pty", "oy",
+    "ab", "as", "srl", "spa", "kg", "kk", "aps", "sas", "sarl",
+}
+
+# Job-title vocabulary: seniority modifiers, role functions, and role head nouns.
+# A name built ENTIRELY from these (plus connectors) is a role, not a company.
+_SENIORITY = {"senior", "junior", "jr", "sr", "lead", "principal", "staff",
+              "chief", "head", "entry", "mid", "level", "global", "regional",
+              "vp", "svp", "evp", "avp"}
+_ROLE_FUNCTION = {"sales", "marketing", "growth", "business", "development",
+                  "account", "customer", "product", "engineering", "software",
+                  "data", "revenue", "operations", "ops", "people", "talent",
+                  "content", "brand", "demand", "field", "inside", "outbound",
+                  "technical", "partnerships", "community", "success",
+                  "acquisition", "generation", "enablement"}
+_ROLE_NOUN = {"engineer", "developer", "representative", "rep", "executive",
+              "manager", "director", "analyst", "designer", "recruiter",
+              "coordinator", "specialist", "consultant", "officer", "intern",
+              "administrator", "architect", "scientist", "technician", "agent",
+              "advisor", "strategist", "generalist", "assistant", "salesperson",
+              "seller", "sdr", "bdr", "ae", "csm", "am"}
+
+# Industry / market descriptors and the head nouns that turn a descriptor into a
+# "category phrase" ("SaaS companies", "Software company", "Startups hiring").
+_INDUSTRY = {"saas", "b2b", "b2c", "d2c", "software", "tech", "technology",
+             "fintech", "ai", "ml", "healthtech", "edtech", "ecommerce",
+             "martech", "adtech", "cybersecurity", "security", "biotech",
+             "cloud", "enterprise", "hardware", "digital", "mobile", "crypto",
+             "web3", "devtools", "hr", "insurtech", "proptech", "legaltech",
+             "logistics", "manufacturing", "retail", "media", "gaming"}
+_CATEGORY_HEAD = {"companies", "company", "startups", "startup", "businesses",
+                  "business", "firms", "firm", "vendors", "vendor", "brands",
+                  "brand", "organizations", "organization", "orgs", "providers",
+                  "provider", "platforms", "platform", "tools", "solutions",
+                  "agencies", "agency", "players", "sector", "industry",
+                  "market", "space", "leaders", "list", "directory", "category"}
+# Words that only ever appear as scaffolding around a search query, never as a
+# company's actual name on their own.
+_QUERY_FILLER = {"hiring", "hire", "hires", "jobs", "job", "top", "best",
+                 "leading", "growing", "fastest", "new", "emerging", "popular",
+                 "remote", "open", "roles", "role", "positions", "position",
+                 "openings", "opening", "vacancies", "careers", "career",
+                 "for", "with", "that", "who", "of", "and", "the", "a", "an",
+                 "in", "at", "to", "or"}
+
+_GENERIC_TOKENS = (_SENIORITY | _ROLE_FUNCTION | _ROLE_NOUN | _INDUSTRY
+                   | _CATEGORY_HEAD | _QUERY_FILLER)
+
+
+def _name_tokens(name: str) -> list:
+    """Lowercased alphanumeric word tokens of a company name."""
+    return [t for t in re.split(r"[^a-z0-9]+", name.lower()) if t]
+
+
+def _is_generic_token(t: str) -> bool:
+    """True when a token is generic vocabulary — matched whole (never as a
+    substring), with a light plural fold so 'companies'/'reps'/'roles' count."""
+    if t in _GENERIC_TOKENS:
+        return True
+    if t.endswith("s") and t[:-1] in _GENERIC_TOKENS:   # reps -> rep, roles -> role
+        return True
+    return False
+
+
+def _looks_like_non_company(name: str) -> bool:
+    """True when a name denotes a JOB TITLE, an INDUSTRY/CATEGORY phrase, or a
+    SEARCH-QUERY fragment rather than a real company.
+
+    Fires only when EVERY meaningful token is generic vocabulary — one
+    distinctive/brand token keeps the row, so a legitimate name that merely
+    contains Careers/Hiring/Software survives ("Career Karma", "Greenhouse
+    Software", "Sales Layer"). A legal-entity suffix (Inc/LLC/AG/GmbH…) is proof
+    of a real company and always keeps the row ("Software AG")."""
+    tokens = _name_tokens(name)
+    if not tokens:
+        return False  # emptiness is handled by the missing-name check
+    if any(t in _LEGAL_SUFFIX for t in tokens):
+        return False
+    return all(_is_generic_token(t) for t in tokens)
+
+
+def _malformed_prospect(p: dict) -> bool:
+    """True when a discovered row is not a real, addressable company: missing a
+    name or a website, a website that isn't even a plausible URL/domain, an
+    over-long scraped headline rather than a name, an obvious job-posting/listing
+    fragment, or a name that is purely a job title / category / query phrase
+    (see ``_looks_like_non_company``). These are dropped, never shown."""
+    name = (p.get("company_name") or "").strip()
+    site = (p.get("website") or p.get("domain") or "").strip()
+    if not name or not site:
+        return True
+    if "." not in site and "://" not in site:   # not even a plausible URL/domain
+        return True
+    if len(name) > 80:                            # a headline, not a company name
+        return True
+    low = name.lower()
+    if any(marker in low for marker in _JUNK_NAME_MARKERS):
+        return True
+    return _looks_like_non_company(name)
 
 
 def _qualification_band(confidence: float, tier, hiring) -> str:
