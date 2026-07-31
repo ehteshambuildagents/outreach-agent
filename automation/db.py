@@ -19,6 +19,7 @@ import os
 import sqlite3
 import sys
 import threading
+import time
 from contextlib import contextmanager
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,6 +28,26 @@ _SQLITE_DEFAULT = os.path.join(_ROOT, "automation.db")
 
 def _env_true(name: str) -> bool:
     return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes")
+
+
+def _sqlite_retry(fn):
+    """Run a SQLite write, retrying briefly on a transient ``database is locked``.
+
+    ``busy_timeout`` serialises most WAL writers, but a few contention edges
+    (e.g. a write-lock upgrade racing a checkpoint) still surface an immediate
+    ``SQLITE_BUSY`` the busy handler never sees. A concurrent double-submit must
+    not turn that into a 500, so we retry with a short backoff before giving up.
+    Postgres never takes this path. Deterministic and bounded (~1.5s worst case).
+    """
+    delay = 0.02
+    for attempt in range(8):
+        try:
+            return fn()
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or attempt == 7:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.4)
 
 
 def database_url() -> str:
@@ -174,7 +195,10 @@ class Database:
 
     # -- single autocommit write ---------------------------------------
     def execute(self, sql: str, params=()) -> int:
-        cur = self._conn().execute(self._adapt(sql), tuple(params))
+        adapted = self._adapt(sql)
+        if self.backend == "sqlite":
+            return _sqlite_retry(lambda: self._conn().execute(adapted, tuple(params)).rowcount)
+        cur = self._conn().execute(adapted, tuple(params))
         return cur.rowcount
 
     # -- transactional block (dialect-neutral) -------------------------
@@ -187,7 +211,7 @@ class Database:
             with conn.transaction():
                 yield _Tx(conn, self._adapt)
         else:
-            conn.execute("BEGIN IMMEDIATE")
+            _sqlite_retry(lambda: conn.execute("BEGIN IMMEDIATE"))
             try:
                 yield _Tx(conn, self._adapt)
                 conn.execute("COMMIT")
