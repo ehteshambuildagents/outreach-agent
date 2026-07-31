@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p 3200",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.39.5",
@@ -23,6 +24,7 @@
     "tailwind-merge": "2.5.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@types/node": "20.14.15",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
