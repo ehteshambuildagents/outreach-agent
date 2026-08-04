@@ -11,7 +11,7 @@ export function EmptyState({
   icon: LucideIcon;
   title: string;
   body: string;
-  action: ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <Card className="overflow-hidden border-dashed">
@@ -22,7 +22,7 @@ export function EmptyState({
         </div>
         <div className="relative text-sm font-semibold text-text">{title}</div>
         <p className="relative mx-auto mt-2 max-w-sm text-sm leading-6 text-muted">{body}</p>
-        <div className="relative mt-5">{action}</div>
+        {action ? <div className="relative mt-5">{action}</div> : null}
       </div>
     </Card>
   );

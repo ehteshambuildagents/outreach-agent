@@ -59,7 +59,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             that forgets the banner and pushes the composer below the fold. */}
         <div
           className={cn(
-            "app-shell-viewport flex flex-col transition-[padding] duration-300 ease-smooth",
+            "app-shell-viewport flex flex-col bg-[#F8F8FB] transition-[padding] duration-300 ease-smooth",
             collapsed ? "lg:pl-0" : "lg:pl-[var(--rail-w)]",
           )}
         >

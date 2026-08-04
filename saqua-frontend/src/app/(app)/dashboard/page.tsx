@@ -160,11 +160,6 @@ export default function DashboardPage() {
                 icon={Megaphone}
                 title="No campaigns running yet"
                 body="Describe who you want to reach and Saqua will find the companies, research them, and draft the emails. You review everything before anything sends."
-                action={
-                  <Button asChild variant="primary">
-                    <Link href="/campaigns/new">Create campaign</Link>
-                  </Button>
-                }
               />
             )}
             {state.status !== "loading" && activeCampaigns.map((workflow) => (
@@ -187,19 +182,26 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <Card className="mt-4 overflow-hidden border-accent-line bg-[linear-gradient(135deg,rgba(124,92,255,.14),rgba(19,19,24,1)_55%)]">
-        <CardContent className="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <div className="text-lg font-semibold text-text">Ready to launch the next campaign?</div>
-            <p className="mt-1 text-sm text-text-2">Define your ICP, let Saqua find the leads, then review before sending.</p>
+      {hasCampaigns && (
+        <div className="relative mt-4 overflow-hidden rounded-xl border border-white/10 bg-[#13141A]">
+          {/* A very subtle blue-purple accent anchored near the button, not a large gradient. */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute right-0 top-1/2 size-64 -translate-y-1/2 translate-x-1/3 rounded-full bg-[radial-gradient(circle,rgba(124,92,255,0.16),transparent_70%)]"
+          />
+          <div className="relative flex flex-col gap-4 px-7 py-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-base font-semibold text-white">Ready to launch the next campaign?</div>
+              <p className="mt-1 text-sm text-white/60">Define your ICP, let Saqua find the leads, then review before sending.</p>
+            </div>
+            <Button asChild variant="primary" className="shrink-0">
+              <Link href="/campaigns/new">
+                <Plus className="size-4" /> Create campaign
+              </Link>
+            </Button>
           </div>
-          <Button asChild variant="primary">
-            <Link href="/campaigns/new">
-              <Plus className="size-4" /> Create campaign
-            </Link>
-          </Button>
-        </CardContent>
-      </Card>
+        </div>
+      )}
     </div>
   );
 }
