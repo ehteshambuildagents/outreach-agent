@@ -186,6 +186,55 @@ class DemoDependencyTests(unittest.TestCase):
                                   headers=headers, json={"text": "hi"})
             self.assertEqual(blocked.status_code, 429)
 
+    def test_streamed_turn_persists_the_conversation_and_survives_a_refresh(self):
+        # The production regression this pins: an accepted streamed turn must (a)
+        # increment the SERVER-authoritative count, (b) have that count survive a
+        # fresh /api/demo/session read (a "refresh"), and (c) persist the
+        # conversation with both the user and assistant messages so a reload shows
+        # the thread. All three are read back through the real HTTP surface.
+        headers, _did = self._demo()
+        cid = self.c.post("/api/conversations", headers=headers).json()["id"]
+        self.assertEqual(self.c.get("/api/demo/session", headers=headers).json()["turns_used"], 0)
+        fake = {"stop_reason": "end_turn", "text": "ok", "tool_uses": [],
+                "assistant_content": [{"type": "text", "text": "ok"}]}
+        with mock.patch("chat.agent.claude_client.call_with_tools", return_value=fake):
+            r = self.c.post(f"/api/conversations/{cid}/messages/stream",
+                            headers=headers, json={"text": "who should we target?"})
+            self.assertEqual(r.status_code, 200)
+            _ = r.text  # drain the SSE body
+        # (a) counted, and (b) a separate status read still reflects it (refresh).
+        self.assertEqual(self.c.get("/api/demo/session", headers=headers).json()["turns_used"], 1)
+        self.assertEqual(self.c.get("/api/demo/session", headers=headers).json()["turns_used"], 1)
+        # (c) persists: it lists, loads, and carries the turn's messages.
+        listed = self.c.get("/api/conversations", headers=headers).json()["conversations"]
+        self.assertIn(cid, [c["id"] for c in listed])
+        conv = self.c.get(f"/api/conversations/{cid}", headers=headers).json()
+        roles = [m["role"] for m in conv["messages"]]
+        self.assertIn("user", roles)
+        self.assertIn("assistant", roles)
+        # A DIFFERENT demo principal cannot see this conversation (isolation holds).
+        h2, _ = self._demo()
+        self.assertEqual(self.c.get(f"/api/conversations/{cid}", headers=h2).status_code, 404)
+
+    def test_a_clarifying_turn_that_runs_the_model_still_consumes_one_turn(self):
+        # Policy pin: every accepted message that reaches the paid model consumes a
+        # turn, EVEN when the assistant only asks a clarifying question and returns
+        # no results. Reservation happens before the turn runs, so an empty/clarify
+        # result cannot make it free (nor is it refunded).
+        headers, _did = self._demo()
+        cid = self.c.post("/api/conversations", headers=headers).json()["id"]
+        clarify = {"stop_reason": "end_turn",
+                   "text": "Which vertical did you mean, lending or payments?",
+                   "tool_uses": [],
+                   "assistant_content": [{"type": "text",
+                                          "text": "Which vertical did you mean?"}]}
+        with mock.patch("chat.agent.claude_client.call_with_tools", return_value=clarify):
+            r = self.c.post(f"/api/conversations/{cid}/messages/stream",
+                            headers=headers, json={"text": "find me fintech"})
+            self.assertEqual(r.status_code, 200)
+            _ = r.text
+        self.assertEqual(self.c.get("/api/demo/session", headers=headers).json()["turns_used"], 1)
+
     def test_demo_never_pollutes_the_access_queue(self):
         before = {r.get("user_id") for r in access.list_all()}
         headers, did = self._demo()
@@ -358,6 +407,127 @@ class DemoToolPolicyTests(unittest.TestCase):
         member = {s["name"] for s in t.tool_specs(user_id="user_real")}
         self.assertIn("send_email", member)
         self.assertIn("launch_campaign", member)
+
+
+class DemoAutomationDashboardTests(unittest.TestCase):
+    """The dashboard's automation reads (/api/automation/workflows + /metrics) are
+    now demo-aware, mirroring /api/campaigns and /api/prospects. A demo visitor gets
+    its OWN (empty) workflows and metrics scoped to itself — never the global
+    process counters — while every create/control route stays member-only.
+    """
+
+    def setUp(self):
+        from automation import redis
+        os.environ["WAITLIST_REQUIRE_SHARED_REDIS"] = "0"
+        redis.reset()
+        api.app.dependency_overrides.clear()
+        # Same posture as production: a member-only route 401s a no-bearer request.
+        self._auth = mock.patch("server.auth.auth_enabled", return_value=True)
+        self._auth.start()
+        self.c = TestClient(api.app)
+
+    def tearDown(self):
+        self._auth.stop()
+        api.app.dependency_overrides.clear()
+        os.environ.pop("WAITLIST_REQUIRE_SHARED_REDIS", None)
+
+    def _demo(self, did=None):
+        did = did or demo_session.new_demo_id()
+        tok, _ = demo_session.mint_token(did)
+        return {demo_session.HEADER_NAME: tok}, did
+
+    def test_valid_demo_lists_its_own_empty_workflows(self):
+        headers, _ = self._demo()
+        r = self.c.get("/api/automation/workflows", headers=headers)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"workflows": []})
+
+    def test_valid_demo_gets_scoped_metrics_not_global_counters(self):
+        # Make the GLOBAL process counters non-zero, then prove the demo response
+        # still reports zeros — i.e. it never leaks another user's aggregate data.
+        from automation import metrics as m
+        m.incr("emails_sent", 7)
+        m.incr("replies", 3)
+        try:
+            headers, _ = self._demo()
+            r = self.c.get("/api/automation/metrics", headers=headers)
+            self.assertEqual(r.status_code, 200)
+            body = r.json()
+            self.assertEqual(body, {"metrics": {"emails_sent": 0, "replies": 0,
+                                                "reply_rate": 0.0}, "by_state": {}})
+            # None of the global-only snapshot fields leak into the demo response.
+            self.assertNotIn("avg_send_latency_ms", body["metrics"])
+            self.assertNotIn("stop_rate", body["metrics"])
+        finally:
+            m.reset()
+
+    def test_member_metrics_still_return_the_global_snapshot(self):
+        # A real member (bearer) keeps the existing global process snapshot — the
+        # demo-scoping branch must not change their workspace.
+        with mock.patch("server.demo_auth.require_user", return_value="user_m1"):
+            r = self.c.get("/api/automation/metrics",
+                           headers={"authorization": "Bearer x"})
+        self.assertEqual(r.status_code, 200)
+        # Global-only fields the scoped demo view never includes.
+        self.assertIn("avg_send_latency_ms", r.json()["metrics"])
+        self.assertIn("stop_rate", r.json()["metrics"])
+
+    def test_invalid_demo_token_is_unauthorized(self):
+        bad = {demo_session.HEADER_NAME: "demo_x.1.bad"}
+        self.assertEqual(self.c.get("/api/automation/workflows", headers=bad).status_code, 401)
+        self.assertEqual(self.c.get("/api/automation/metrics", headers=bad).status_code, 401)
+
+    def test_no_credentials_is_unauthorized(self):
+        self.assertEqual(self.c.get("/api/automation/workflows").status_code, 401)
+        self.assertEqual(self.c.get("/api/automation/metrics").status_code, 401)
+
+    def test_expired_demo_session_is_unauthorized(self):
+        tok, _ = demo_session.mint_token(demo_session.new_demo_id(), ttl_seconds=-5)
+        h = {demo_session.HEADER_NAME: tok}
+        self.assertEqual(self.c.get("/api/automation/workflows", headers=h).status_code, 401)
+        self.assertEqual(self.c.get("/api/automation/metrics", headers=h).status_code, 401)
+
+    def test_demo_cannot_see_a_members_workflows_or_count_them(self):
+        from automation import engine
+        from server import automation_api
+        # Seed one workflow owned by a real member directly in the shared store.
+        engine.create_workflow(
+            automation_api._store, "user_real_owner",
+            [{"subject": "Hi", "body": "Body", "delay_days": 0}],
+            company="Acme", to_email="a@acme.com", provider="dryrun")
+        headers, _ = self._demo()
+        # The member's workflow is invisible to the demo principal…
+        wfs = self.c.get("/api/automation/workflows", headers=headers).json()["workflows"]
+        self.assertEqual(wfs, [])
+        # …and does not appear in the demo's scoped metrics either.
+        body = self.c.get("/api/automation/metrics", headers=headers).json()
+        self.assertEqual(body["by_state"], {})
+        self.assertEqual(body["metrics"]["emails_sent"], 0)
+
+    def test_two_demo_sessions_are_isolated_on_the_dashboard(self):
+        from automation import engine
+        from server import automation_api
+        _h1, did1 = self._demo()
+        # Seed a workflow owned by the FIRST demo principal.
+        engine.create_workflow(
+            automation_api._store, did1,
+            [{"subject": "Hi", "body": "Body", "delay_days": 0}],
+            company="Acme", to_email="a@acme.com", provider="dryrun")
+        # A DIFFERENT demo principal sees none of it.
+        h2, _ = self._demo()
+        self.assertEqual(self.c.get("/api/automation/workflows", headers=h2).json()["workflows"], [])
+        self.assertEqual(self.c.get("/api/automation/metrics", headers=h2).json()["by_state"], {})
+
+    def test_demo_cannot_create_or_control_workflows(self):
+        # Every write/destructive automation route stays member-only: a demo
+        # session is refused before the handler runs (401 from require_user).
+        headers, _ = self._demo()
+        self.assertEqual(self.c.post("/api/automation/workflows", headers=headers,
+                                     json={"to_email": "a@b.com", "steps": []}).status_code, 401)
+        for path in ("cancel", "pause", "resume", "run", "force-retry", "force-complete"):
+            self.assertEqual(
+                self.c.post(f"/api/automation/workflows/wf_x/{path}", headers=headers).status_code,
+                401, f"{path} must stay member-only")
 
 
 if __name__ == "__main__":

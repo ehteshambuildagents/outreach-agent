@@ -614,6 +614,76 @@ class AggregatorClassificationTests(unittest.TestCase):
             self.assertNotEqual((p.hiring or {}).get("match"), "role")
 
 
+class PublicationAndDirectoryRejectionTests(unittest.TestCase):
+    """A live 'B2B fintech startups that raised seed' run (2026-08-04) returned
+    publications and a directory as top 'prospects': natlawreview.com (a legal-news
+    publisher), thisweekinfintech.com (a newsletter), siliconsnark.com (a blog) and
+    vcbacked.co (a directory of VC-backed startups). A valid domain is not proof of
+    a company; these are content ABOUT the market, never buyers, and must drop."""
+
+    Q = DiscoveryQuery(raw="B2B fintech startups that raised a seed round",
+                       keywords=["fintech", "b2b"])
+
+    def test_the_exact_production_domains_are_classified_non_company(self):
+        for domain in ("natlawreview.com", "thisweekinfintech.com",
+                       "siliconsnark.com"):
+            self.assertEqual(aggregators.domain_kind(domain), aggregators.MEDIA, domain)
+        self.assertEqual(aggregators.domain_kind("vcbacked.co"),
+                         aggregators.LIST_SITE)
+
+    def test_the_exact_production_domains_are_dropped_by_assess(self):
+        for url, title in (
+                ("https://natlawreview.com/article/fintech-law",
+                 "The National Law Review"),
+                ("https://thisweekinfintech.com", "This Week in Fintech"),
+                ("https://siliconsnark.com", "Silicon Snark"),
+                ("https://vcbacked.co", "VC Backed Startups Directory")):
+            kind, drop = sources.assess({"url": url, "title": title,
+                                         "content": "fintech news and analysis"}, self.Q)
+            self.assertEqual(kind, "", f"{url} should be dropped")
+            self.assertTrue(drop, url)
+
+    def test_a_newsletter_title_on_an_unknown_domain_is_media(self):
+        # Title-anchored, so a publication on a domain the curated list has never
+        # seen is still caught (that is how the curated list stays finite).
+        for title in ("This Week in Payments", "The Fintech Newsletter",
+                      "Payments Weekly", "The Lending Digest", "Neobank Monthly",
+                      "Fintech Brew — Issue #142"):
+            self.assertEqual(
+                aggregators.page_kind("https://unknown-domain-xyz.com", title, ""),
+                aggregators.MEDIA, title)
+
+    def test_an_article_headline_title_is_media(self):
+        for title in ("The B2B Fintech Pricing Journey",
+                      "The Complete Guide to Embedded Finance",
+                      "A Founder's Playbook for Seed Fundraising",
+                      "The State of Fintech in 2026"):
+            self.assertEqual(
+                aggregators.page_kind("https://someblog.example", title, ""),
+                aggregators.MEDIA, title)
+
+    def test_real_companies_are_not_mistaken_for_publications(self):
+        # The false-positive guard. Real fintech/dev companies whose names brush the
+        # publication vocabulary (Postman, Timescale, Journey, Ramp, Brex, Mercury)
+        # must stay COMPANY: the domain has no publication token, and their home-page
+        # titles are brand+tagline, not a newsletter idiom or an article headline.
+        for domain in ("postman.com", "timescale.com", "journey.io", "ramp.com",
+                       "brex.com", "mercury.com", "stripe.com", "reviewflow.io"):
+            self.assertEqual(aggregators.domain_kind(domain),
+                             aggregators.COMPANY, domain)
+        for title, domain in (
+                ("Ramp — Corporate cards and spend management", "ramp.com"),
+                ("Postman | The API Platform", "postman.com"),
+                ("Timescale: Postgres for time-series and events", "timescale.com"),
+                ("Journey - Sales enablement software", "journey.io"),
+                ("Mercury - Banking for startups", "mercury.com")):
+            kind, drop = sources.assess(
+                {"url": f"https://{domain}", "title": title,
+                 "content": "Pricing, product and customers. Book a demo."}, self.Q)
+            self.assertNotEqual(kind, "", f"{title} must not be dropped")
+            self.assertEqual(kind, aggregators.COMPANY, title)
+
+
 class QueryInterpretationTests(unittest.TestCase):
     """Turning the ASK into the right query for each source."""
 

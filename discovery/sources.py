@@ -50,6 +50,12 @@ _EXTRA_EXCLUDE = frozenset({
     "explodingtopics.com", "starterstory.com", "eu-startups.com", "sifted.eu",
     "prnewswire.com", "tracxn.com", "startupsavant.com", "pitchbook.com",
     "dealroom.co", "privco.com",
+    # Publications / newsletters / a VC-backed directory surfaced as false
+    # "prospects" on a live fintech search (2026-08-04). Trade publishers that
+    # Apollo demotes by NAICS code (e.g. fintechfutures.com) are left out on
+    # purpose — hard-excluding them would break a legitimate role search.
+    "natlawreview.com", "thisweekinfintech.com", "siliconsnark.com",
+    "vcbacked.co",
 })
 _EXCLUDE = frozenset(EXCLUDED_RESOLUTION_DOMAINS) | _EXTRA_EXCLUDE
 
@@ -75,7 +81,9 @@ _BAD_TEXT_RE = re.compile(
     r"\b("
     r"wiki|fandom|episode|season|cast|trailer|film|movie|tv series|television|"
     r"rotten tomatoes|imdb|recap|review|article|blog post|listicle|top \d+|"
-    r"best \d+|directory|alternatives list"
+    r"best \d+|directory|alternatives list|"
+    r"newsletter|magazine|podcast|publication|op-ed|editorial|press release|"
+    r"this week in"
     r")\b",
     re.I,
 )

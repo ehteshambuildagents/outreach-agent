@@ -17,12 +17,40 @@ from automation import engine, health, tokens
 from automation.metrics import snapshot as metrics_snapshot
 from automation.store import WorkflowStore
 from server.auth import require_user
+from server.demo_auth import require_identity_or_demo
+from server.demo_session import is_demo_id
 
 log = logging.getLogger("saqua.automation_api")
 
 _store = WorkflowStore()
 _ALLOWED_PROVIDERS = {"dryrun", "gmail", "outlook"}
 _MAX_STEPS = 10
+
+
+def _scoped_metrics(user: str) -> dict:
+    """Metrics derived ONLY from a single principal's own workflows.
+
+    Used for the demo (and any per-user caller) so the response can never carry
+    another user's data: the global process counters in ``automation.metrics`` are
+    aggregate across every member, so a demo visitor must not see them. A demo
+    principal owns no workflows (creation stays member-only), so this is zeros —
+    but it is computed, not hard-coded, so it stays correct if that ever changes."""
+    by_state: dict[str, int] = {}
+    emails_sent = 0
+    replies = 0
+    for wf in _store.list_for_user(user):
+        st = engine.status(wf)
+        state = st.get("state", "")
+        by_state[state] = by_state.get(state, 0) + 1
+        emails_sent += int(st.get("current_step", 0) or 0)
+        if st.get("reply_detected"):
+            replies += 1
+    reply_rate = round(replies / emails_sent, 4) if emails_sent else 0.0
+    return {
+        "metrics": {"emails_sent": emails_sent, "replies": replies,
+                    "reply_rate": reply_rate},
+        "by_state": by_state,
+    }
 
 
 class StepIn(BaseModel):
@@ -116,7 +144,10 @@ def register(app, rl_read=None, rl_write=None):
 
     @app.get("/api/automation/workflows")
     def list_workflows(request: Request, _=Depends(_read),
-                       user: str = Depends(require_user)):
+                       user: str = Depends(require_identity_or_demo)):
+        # ``list_for_user`` filters by principal, so a demo visitor sees only its
+        # own (empty) workflows and never another user's. Reads only; every
+        # create/control route below stays member-only (``require_user``).
         return {"workflows": [engine.status(w) for w in _store.list_for_user(user)]}
 
     @app.get("/api/automation/workflows/{wid}")
@@ -184,7 +215,14 @@ def register(app, rl_read=None, rl_write=None):
 
     @app.get("/api/automation/metrics")
     def automation_metrics(request: Request, _=Depends(_read),
-                           user: str = Depends(require_user)):
+                           user: str = Depends(require_identity_or_demo)):
+        # Members keep the existing global process snapshot (their real workspace,
+        # unchanged). A demo visitor must NOT see those aggregate cross-user
+        # counters, so it gets metrics scoped to its own workflows only. Branch on
+        # the RESOLVED principal (demo_* namespace), not the request header, so the
+        # rule holds regardless of how identity was established.
+        if is_demo_id(user):
+            return _scoped_metrics(user)
         return {"metrics": metrics_snapshot(), "by_state": _store.count_by_state()}
 
     @app.get("/api/automation/health")

@@ -140,6 +140,8 @@ _LIST_SITES = frozenset({
     "eu-startups.com", "sifted.eu", "startupsavant.com", "toolify.ai",
     "futurepedia.io", "theresanaiforthat.com", "aitoolhunt.com", "topai.tools",
     "aitools.fyi", "insidr.ai", "supertools.therundown.ai",
+    # A directory of VC-backed startups — a page ABOUT companies, not a company.
+    "vcbacked.co",
 })
 
 _MEDIA = frozenset({
@@ -153,6 +155,13 @@ _MEDIA = frozenset({
     "pinterest.com", "facebook.com", "instagram.com", "tiktok.com",
     "twitter.com", "x.com", "github.io", "notion.site", "wordpress.com",
     "blogspot.com", "wixsite.com",
+    # Publications / newsletters / blogs surfaced as false "prospects" on a live
+    # fintech search (2026-08-04): a legal-news publisher, a fintech newsletter,
+    # and a tech blog. They cover the category, they do not operate in it.
+    # NB: trade publishers Apollo can identify by NAICS 513120 (e.g.
+    # fintechfutures.com) are intentionally NOT hard-dropped here — they are
+    # demoted via industry code so a genuine role posting still keeps them.
+    "natlawreview.com", "thisweekinfintech.com", "siliconsnark.com",
 })
 
 _BY_KIND = (
@@ -184,6 +193,45 @@ _LISTING_TEXT_RE = re.compile(
     r"|\balternatives\s+to\b|\bvs\.?\s+\w+\s+comparison\b"
     r"|\bsalar(?:y|ies)\s+(?:range|data|report|guide)\b"
     r"|\bcompany\s+profile\b|\bdirectory\s+listing\b"
+    r")",
+    re.I,
+)
+
+# Title conventions of a PUBLICATION / newsletter / blog, so one on an unlisted
+# domain is caught the way the curated set catches the known ones. Anchored on the
+# TITLE (a signal the search result always carries), not on the domain — a bare
+# domain token like "post" or "times" would wrongly flag real companies (Postman,
+# Timescale), so the publication word must appear as a distinct trailing noun or a
+# newsletter idiom. "we're hiring"/product words are absent on purpose.
+_PUBLICATION_TITLE_RE = re.compile(
+    r"(?:"
+    r"\bthis\s+week\s+in\b"                       # "This Week in Fintech"
+    r"|\bissue\s+#?\d+\b"                          # a newsletter issue number
+    r"|\bsubscribe\s+to\b|\bour\s+newsletter\b"
+    r"|\bsign\s+up\s+for\s+[\w\s]*newsletter\b"
+    r"|\b(?:the\s+)?[\w'&.-]+(?:\s+[\w'&.-]+){0,3}\s+"
+    r"(?:newsletter|weekly|biweekly|daily|digest|dispatch|gazette|chronicle|"
+    r"herald|tribune|journal|magazine|gazette|bulletin|podcast|"
+    r"times|review|monthly)\b"
+    r")",
+    re.I,
+)
+
+# Headline shape of an ARTICLE / content asset, never a company home page:
+# "The B2B Fintech Pricing Journey", "… Playbook", "… Deep Dive". Requires words
+# BEFORE the trailing noun so a company literally named "Journey" is untouched.
+_ARTICLE_TITLE_RE = re.compile(
+    r"(?:"
+    # Headline ending in a content-asset noun ("… Pricing Journey", "… Playbook").
+    r"^\s*(?:the\s+)?[\w'&,\-]+(?:\s+[\w'&,\-]+){1,7}\s+"
+    r"(?:journey|guide|playbook|handbook|report|breakdown|deep\s+dive|"
+    r"landscape|roadmap|checklist|tutorial|walkthrough|whitepaper|ebook|"
+    r"webinar|explained)\s*$"
+    # Common mid-title article idioms that a company home page never uses.
+    r"|\b(?:complete|ultimate|definitive|beginner'?s|founder'?s|quick|step-by-step)"
+    r"\s+guide\s+to\b"
+    r"|\bplaybook\s+for\b"
+    r"|\bthe\s+state\s+of\s+\w+"
     r")",
     re.I,
 )
@@ -252,6 +300,12 @@ def page_kind(url: str = "", title: str = "", content: str = "") -> str:
     domain: a listing page on an unknown domain is still a listing page."""
     path = (urlparse(url or "").path or "").lower()
     text = f"{title or ''}\n{content or ''}"
+    # A publication/newsletter title, or an article-headline title, marks content
+    # ABOUT a market rather than a company operating in it → MEDIA (dropped). Judged
+    # on the TITLE specifically so a body-copy mention can't misclassify a real site.
+    t = (title or "").strip()
+    if t and (_PUBLICATION_TITLE_RE.search(t) or _ARTICLE_TITLE_RE.search(t)):
+        return MEDIA
     if any(part in path for part in _LISTING_PATHS):
         return LIST_SITE if any(p in path for p in ("/best-", "/top-", "/compare/",
                                                     "/alternatives")) else DIRECTORY
