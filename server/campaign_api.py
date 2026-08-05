@@ -35,6 +35,7 @@ from research.pipeline import research_company
 from server.auth import require_user
 from server.demo_auth import require_identity_or_demo
 from server.campaign_store import CampaignStore
+from server import campaign_trail
 
 _campaigns = None
 _prospects = None
@@ -235,7 +236,8 @@ def register(app, rl_read=None, rl_write=None):
                        user: str = Depends(require_identity_or_demo)):
         # Demo principals resolve to their own (empty) prospect store, so a demo
         # visitor sees the real page with the real empty state — never a member's.
-        return {"prospects": [p.public() for p in _prospect_store().list_for_owner(user)]}
+        return {"prospects": [_prospect_public_with_trail(p.public())
+                              for p in _prospect_store().list_for_owner(user)]}
 
     @app.post("/api/campaigns/{campaign_id}/prospects/{domain}/recipient")
     def update_prospect_recipient(campaign_id: str, domain: str, body: ManualRecipientUpdate,
@@ -1053,10 +1055,31 @@ def _result_with_warnings(result: dict) -> dict:
         warning = _cadence_warning(pc)
         if warning:
             pc["cadence_warning"] = warning
+        # The canonical research trail, DERIVED from this prospect's real, persisted
+        # stage outcomes (never a fabricated live animation). Attached only when a
+        # stage genuinely produced a result, so a prospect that failed before any
+        # stage ran carries no invented trail. Same shape as the Chat trail, so the
+        # frontend renders it with the same <ResearchTrail> component.
+        trail = campaign_trail.prospect_trail(pc)
+        if trail:
+            pc["research_trail"] = trail
         enriched.append(pc)
     out = dict(result)
     out["prospects"] = enriched
     return out
+
+
+def _prospect_public_with_trail(pub: dict) -> dict:
+    """A discovered prospect's public JSON, plus its canonical research trail when
+    that trail is BACKED BY GENUINE EVIDENCE (a real discovery provider or a
+    validated source link). A row that only has bare database fields — a name and
+    nothing corroborating — gets no ``research_trail`` at all, so the UI never shows
+    an evidence-less trail card for it."""
+    trail = campaign_trail.discovery_trail(pub)
+    has_evidence = any(e.get("provider") or e.get("sources") for e in trail)
+    if trail and has_evidence:
+        return {**pub, "research_trail": trail}
+    return pub
 
 
 # ── Launch-time cadence assembly (pure; no model or guard calls here) ────

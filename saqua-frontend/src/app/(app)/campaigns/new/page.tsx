@@ -5,10 +5,7 @@ import Link from "next/link";
 import {
   Rocket,
   Radar,
-  Search,
-  Target,
   Sparkles,
-  PenLine,
   ShieldCheck,
   AlertTriangle,
   CheckCircle2,
@@ -31,15 +28,6 @@ import { cn } from "@/lib/utils";
 
 type Phase = "form" | "running" | "results" | "launched" | "error";
 type Provider = "dryrun" | "gmail" | "outlook";
-
-const PIPELINE = [
-  { label: "Discovery", icon: Radar },
-  { label: "Research", icon: Search },
-  { label: "Qualification", icon: Target },
-  { label: "Strategy", icon: Sparkles },
-  { label: "Writer", icon: PenLine },
-  { label: "Guard", icon: ShieldCheck },
-];
 
 function parseList(v: string): string[] {
   return v
@@ -481,30 +469,20 @@ function ManualRecipientModal({
 }
 
 function RunningState() {
+  // One honest, neutral loading state. The backend runs the campaign as a single
+  // blocking request with no live per-stage events, so we do NOT animate individual
+  // stages as if they were completing in real time. The real, evidence-backed
+  // Research Trail is rendered per prospect once the response returns.
   return (
     <Card className="overflow-hidden">
       <div className="relative p-10 text-center">
         <div className="accent-glow absolute inset-0 opacity-40" />
         <Loader2 className="relative mx-auto mb-4 size-7 animate-spin text-accent" />
-        <div className="relative text-sm font-semibold text-text">Saqua is working through your prospects…</div>
+        <div className="relative text-sm font-semibold text-text">Running the campaign pipeline…</div>
         <p className="relative mx-auto mt-1.5 max-w-md text-xs leading-5 text-muted">
-          Discovery → Research → Qualification → Strategy → Writer → Guard. This runs live on real websites, so it can take a
-          few minutes.
+          Saqua is discovering, researching, qualifying, writing, and guarding each prospect on real websites. This runs as a
+          single pass and can take a minute or two. The full evidence trail for every prospect appears here when it finishes.
         </p>
-        <div className="relative mx-auto mt-6 flex max-w-lg flex-wrap items-center justify-center gap-2">
-          {PIPELINE.map((s, i) => (
-            <motion.div
-              key={s.label}
-              initial={{ opacity: 0.35 }}
-              animate={{ opacity: [0.35, 1, 0.35] }}
-              transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.22 }}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-black/[0.03] px-3 py-1 text-[11px] text-text-2"
-            >
-              <s.icon className="size-3.5 text-accent" />
-              {s.label}
-            </motion.div>
-          ))}
-        </div>
       </div>
     </Card>
   );

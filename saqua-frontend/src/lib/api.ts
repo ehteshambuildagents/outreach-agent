@@ -270,6 +270,10 @@ export interface CampaignPreviewProspect {
     planned_steps: number;
     message: string;
   };
+  /** Canonical research trail derived from this prospect's real, persisted stage
+   *  outcomes (backend server/campaign_trail.py). Present only when a stage
+   *  genuinely ran; reuses the same ResearchTrailEvent shape as Chat. */
+  research_trail?: ResearchTrailEvent[];
 }
 
 export interface CampaignDetail {
@@ -321,6 +325,10 @@ export interface DiscoveryProspect {
   why_it_matches?: string | null;
   discovery_source?: string | null;
   basic_signals?: string[] | null;
+  /** Canonical research trail (backend server/campaign_trail.py), present only when
+   *  the discovery is backed by genuine evidence (a real provider or validated
+   *  source link). Reuses the same ResearchTrailEvent shape as Chat. */
+  research_trail?: ResearchTrailEvent[];
 }
 
 export interface ManualRecipientRequest {

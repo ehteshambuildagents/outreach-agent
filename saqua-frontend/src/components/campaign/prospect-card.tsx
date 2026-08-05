@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { CampaignPreviewProspect } from "@/lib/api";
+import { ResearchTrail } from "@/components/chat/research-trail";
 
 export const FINAL_STATUS: Record<string, { label: string; tone: "success" | "warn" | "danger" | "neutral" | "accent" }> = {
   sendable: { label: "Ready to send", tone: "success" },
@@ -162,6 +163,16 @@ export function ProspectCard({
                   )}
                 </div>
               </div>
+
+              {/* The honest, evidence-backed research trail for this prospect, derived
+                  from real persisted stage outcomes. Renders nothing when there is no
+                  trail, so it never adds an empty card. `live` is false: this is
+                  restored data, never replayed as if it were happening now. */}
+              {p.research_trail && p.research_trail.length > 0 && (
+                <div className="px-5 pb-4">
+                  <ResearchTrail events={p.research_trail} live={false} />
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>

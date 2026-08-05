@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DataTable, Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { ResearchTrail } from "@/components/chat/research-trail";
 import { api, type DiscoveryProspect } from "@/lib/api";
 
 type State =
@@ -231,6 +232,16 @@ function ProspectDrawer({ prospect: p, onClose }: { prospect: DiscoveryProspect;
                 ))}
               </CardContent>
             </Card>
+          )}
+
+          {/* The evidence-backed research trail, shown only when this prospect has a
+              genuine one (the backend omits it otherwise). Reuses the same component
+              as Chat; `live` is false so restored data is never replayed as active. */}
+          {p.research_trail && p.research_trail.length > 0 && (
+            <div>
+              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">Research trail</div>
+              <ResearchTrail events={p.research_trail} live={false} defaultOpen />
+            </div>
           )}
 
           <Button asChild variant="primary" className="w-full">
