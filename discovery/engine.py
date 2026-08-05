@@ -33,8 +33,8 @@ from config.settings import (
     DISCOVERY_PROVIDER_POOL,
     DISCOVERY_STRONG_CONFIDENCE,
 )
-from discovery import (aggregators, display_gate, intent, narration, scoring,
-                       sources)
+from discovery import (aggregators, constraints, display_gate, intent, narration,
+                       scoring, sources)
 from discovery.models import DiscoveryQuery, registrable_domain
 from discovery.store import ProspectStore
 
@@ -174,8 +174,36 @@ def discover(owner, query, *, store=None, exclude_domains=None,
     if gate_dropped:
         log.info("discovery_display_gate query=%r dropped=%s", search_query, gate_dropped)
     quality["display_gate_dropped"] = gate_dropped
-    companies = gate_passed
+
+    # HARD-CONSTRAINT VERIFICATION (after entity validation, before display). A
+    # prospect is only QUALIFIED when every hard constraint the user stated has
+    # supporting evidence. A funding-stage ask is verified against Apollo's funding
+    # history (round type, date, amount, source URL) on the finalists; a company
+    # that cannot be verified at the requested stage is EXCLUDED, never shown as
+    # satisfying the request and never used to pad the page.
+    hard = constraints.parse(plan, query)
+    if constraints.needs_funding_verification(hard) and gate_passed:
+        say.step("Verifying the funding stage on each company")
+        try:
+            # Enrich the whole gate-passed pool (bounded), so a qualified company is
+            # never dropped merely because it sat outside a small finalist window.
+            sources.verify_funding(gate_passed[:40], hard.funding_stage,
+                                   limit=min(len(gate_passed), 40))
+        except Exception:  # noqa: BLE001 - verification is a gate, never fatal
+            log.info("funding verification failed; treating unverified as unmet")
+    companies, constraint_dropped = constraints.apply(gate_passed, hard)
+    if constraint_dropped:
+        log.info("discovery_constraint_gate query=%r dropped=%s",
+                 search_query, constraint_dropped)
+    quality["constraint_dropped"] = constraint_dropped
+    if hard.funding_stage:
+        quality["funding_verified"] = sum(
+            1 for p in companies if (p.funding or {}).get("verified"))
     fallback = [p for p in ranked if p.tier != "company"]
+    # A funding-stage ask must never be padded with demoted intermediaries — they
+    # carry no funding evidence and would violate the request. Return fewer instead.
+    if hard.funding_stage:
+        fallback = []
     start = 0 if skip_seen else query.page * query.limit
     page_items = companies[start:start + query.limit]
     if len(page_items) < query.limit and DISCOVERY_ALLOW_FALLBACK_TIER:
@@ -197,12 +225,17 @@ def discover(owner, query, *, store=None, exclude_domains=None,
         say.thought(narration.empty(
             considered=quality.get("candidates_considered", 0),
             demoted=quality.get("demoted_intermediaries", 0)))
+        if query.page > 0:
+            empty_reason = "No more new matches — try broadening the filters or a new query."
+        elif hard.funding_stage:
+            empty_reason = (f"No companies could be individually verified as "
+                            f"{hard.funding_stage}-stage for those filters. Rather "
+                            f"than show unverified companies, none are returned.")
+        else:
+            empty_reason = "No matching companies found for those filters."
         return DiscoveryResult(
             "empty", page=query.page, limit=query.limit, providers=avail,
-            quality=quality,
-            reason=("No more new matches — try broadening the filters or a new query."
-                    if query.page > 0 else
-                    "No matching companies found for those filters."))
+            quality=quality, reason=empty_reason)
     quality["returned_companies"] = sum(1 for p in page_items if p.tier == "company")
     quality["returned_fallback"] = sum(1 for p in page_items if p.tier != "company")
     # How much of this page is actually worth acting on, said plainly.

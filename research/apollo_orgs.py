@@ -45,6 +45,7 @@ log = logging.getLogger("research.apollo_orgs")
 
 _SEARCH_ENDPOINT = "https://api.apollo.io/api/v1/mixed_companies/search"
 _POSTINGS_ENDPOINT = "https://api.apollo.io/api/v1/organizations/{org_id}/job_postings"
+_ENRICH_ENDPOINT = "https://api.apollo.io/api/v1/organizations/enrich"
 _ENV = "APOLLO_API_KEY"
 _PROVIDER = "apollo"
 _CACHE_PREFIX = "apollo_orgs:"
@@ -258,6 +259,72 @@ def matching_postings(postings, role_terms) -> list:
                 out.append(p)
                 break
     return out
+
+
+# ── Organization enrichment (funding evidence) ─────────────────────────────
+def enrich(domain: str) -> dict:
+    """Enrich ONE company by domain. NEVER raises. Returns:
+
+        {"status": "ok"|"empty"|"unavailable"|"error",
+         "name": str, "domain": str,
+         "funding": {"latest_stage": str, "total": str,
+                     "events": [{"type","date","amount","currency","news_url",
+                                 "investors"}]}}
+
+    This is the funding counterpart to ``job_postings``: the search endpoint does
+    not return funding data, so verifying a "raised a seed round" constraint means
+    reading the company's structured funding history — the round TYPE, DATE, AMOUNT
+    and, crucially, a SOURCE URL for the announcement. Paid per company, so callers
+    run it on FINALISTS only. Straight off Apollo's own record, no inference.
+    """
+    if not available():
+        return _result("unavailable", reason="Apollo isn't configured.")
+    dom = _domain(domain)
+    if not dom:
+        return _result("error", reason="No domain to enrich.")
+
+    params = {"domain": dom}
+    cached = _cache_get(_ENRICH_ENDPOINT, params)
+    if cached is not None:
+        data = cached
+    else:
+        data = request_json("GET", _ENRICH_ENDPOINT, provider=_PROVIDER,
+                            headers=_headers(), params=params)
+        if data is None:
+            return _result("error", reason="Apollo enrichment failed.")
+        _cache_put(_ENRICH_ENDPOINT, params, data)
+
+    org = data.get("organization") or {}
+    if not org:
+        return _result("empty", reason="Apollo has no record for that domain.")
+    out = _result("ok")
+    out["name"] = (org.get("name") or "").strip()
+    out["domain"] = _domain(org.get("primary_domain") or org.get("website_url") or dom)
+    out["funding"] = funding_of(org)
+    return out
+
+
+def funding_of(org: dict) -> dict:
+    """Normalise an Apollo org's funding history to typed evidence."""
+    events = []
+    for e in (org.get("funding_events") or []):
+        if not isinstance(e, dict):
+            continue
+        events.append({
+            "type": (e.get("type") or "").strip(),
+            "date": (e.get("date") or "")[:10],
+            "amount": (e.get("amount") or "").strip() if e.get("amount") else "",
+            "currency": (e.get("currency") or "").strip() if e.get("currency") else "",
+            "news_url": (e.get("news_url") or "").strip(),
+            "investors": (e.get("investors") or "").strip() if e.get("investors") else "",
+        })
+    return {
+        "latest_stage": (org.get("latest_funding_stage") or "").strip(),
+        "total": (org.get("total_funding_printed") or "").strip()
+        if org.get("total_funding_printed") else "",
+        "latest_date": (org.get("latest_funding_round_date") or "")[:10],
+        "events": events,
+    }
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

@@ -122,6 +122,9 @@ class Prospect:
     match_reasons: List[str] = field(default_factory=list)
     sources: List[dict] = field(default_factory=list)   # [{provider, url}]
     hiring: Optional[dict] = None     # {verified, source, match, summary, postings[]}
+    # Verified funding evidence for a funding-stage constraint (discovery/constraints):
+    # {verified, stage, latest_stage, amount, date, source_url, summary}
+    funding: Optional[dict] = None
     growth: Optional[dict] = None     # {headcount_6mo, headcount_12mo}
     recent_activity: Optional[dict] = None             # {summary, url, source}
     apollo_id: str = ""
@@ -176,6 +179,7 @@ class Prospect:
             "match_reasons": self.match_reasons,
             "sources": self.sources,
             "hiring": self.hiring,
+            "funding": self.funding,
             "growth": self.growth,
             "recent_activity": self.recent_activity,
             "industry_kind": self.industry_kind,

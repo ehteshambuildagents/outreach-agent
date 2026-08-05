@@ -927,6 +927,83 @@ def search_apollo(query, *, plan=None, keywords=None, job_titles=None,
     return out
 
 
+def verify_funding(prospects, target_stage, *, limit: int = None) -> int:
+    """Verify a FUNDING-STAGE constraint on the top ``limit`` prospects by reading
+    Apollo's structured funding history, and attach the evidence. Returns how many
+    were verified as being at the requested stage with a cited round.
+
+    This is what makes "raised a seed round" trustworthy rather than inferred: a
+    company qualifies only when Apollo shows its CURRENT stage is seed-or-earlier
+    AND a seed/pre-seed round carries a source URL (see constraints.stage_satisfied_by).
+    A Series A+ company that raised a seed round years ago does NOT qualify, and a
+    company with no cited round does not qualify. Paid per company, so it runs on
+    finalists only and never raises.
+    """
+    from discovery import constraints
+    if not (APOLLO_ORG_SEARCH_ENABLED and apollo_orgs.available()):
+        return 0
+    if not target_stage:
+        return 0
+    from config.settings import APOLLO_JOB_POSTING_LOOKUPS
+    cap = APOLLO_JOB_POSTING_LOOKUPS if limit is None else limit
+    targets = [x for x in prospects if x.domain][:max(0, cap)]
+    if not targets:
+        return 0
+
+    lookups = {}
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(APOLLO_LOOKUP_CONCURRENCY, len(targets))) as pool:
+        futures = {pool.submit(apollo_orgs.enrich, p.domain): p for p in targets}
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                lookups[futures[fut].domain] = fut.result()
+            except Exception:  # noqa: BLE001 - one bad lookup must not sink the batch
+                continue
+
+    verified = 0
+    for p in targets:
+        res = lookups.get(p.domain) or {}
+        fund = res.get("funding") or {}
+        latest = fund.get("latest_stage") or ""
+        event = constraints.stage_satisfied_by(latest, fund.get("events") or [],
+                                               target_stage)
+        if not event:
+            # Record the honest negative so the reason is auditable, not silent.
+            p.funding = {"verified": False, "stage": target_stage,
+                         "latest_stage": latest,
+                         "reason": ("no cited seed round" if latest else
+                                    "no funding record")}
+            continue
+        amount = event.get("amount") or ""
+        cur = event.get("currency") or ""
+        when = event.get("date") or ""
+        src = _source_label(event.get("news_url"))
+        summary = (f"Raised a {event.get('type') or target_stage} round"
+                   + (f" ({cur}{amount})" if amount else "")
+                   + (f" on {when}" if when else "")
+                   + (f", per {src}" if src else ""))
+        p.funding = {
+            "verified": True, "stage": target_stage,
+            "latest_stage": latest, "round_type": event.get("type") or "",
+            "amount": (f"{cur}{amount}" if amount else ""), "date": when,
+            "investors": event.get("investors") or "",
+            "source_url": event.get("news_url") or "", "summary": summary,
+        }
+        if summary not in p.match_reasons:
+            p.match_reasons.insert(0, summary)
+        p.why_it_matches = "; ".join(p.match_reasons[:2])
+        verified += 1
+    log.info("discovery_funding_verified=%s of %s looked up (stage=%s)",
+             verified, len(targets), target_stage)
+    return verified
+
+
+def _source_label(url: str) -> str:
+    """A short human label for a citation URL: the registrable domain."""
+    dom = registrable_domain(url or "")
+    return dom or ""
+
+
 def verify_hiring(prospects, role_terms, *, limit: int = None) -> int:
     """Verify the hiring signal for the top ``limit`` prospects using Apollo's
     DATED job postings, and fold the result into confidence. Returns how many

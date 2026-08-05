@@ -1406,5 +1406,150 @@ class DisplayGateTests(unittest.TestCase):
         self.assertTrue(ok, reason)
 
 
+class HardConstraintVerificationTests(unittest.TestCase):
+    """The constraint-verification layer (prompt.fix.txt, 2026-08-05, iteration 2).
+
+    A search satisfied the ENTITY (a real fintech company) while violating a HARD
+    CONSTRAINT of the request (seed stage): Adyen and Airwallex are real fintechs
+    but not seed-stage startups. A prospect is QUALIFIED only when every hard
+    constraint has individually verified evidence — for "raised a seed round", an
+    actual seed/pre-seed round with a SOURCE URL, and a current stage no later than
+    seed. Unverifiable => excluded, never padded.
+    """
+
+    from discovery import constraints as _C
+
+    SEED = DiscoveryQuery(raw="B2B fintech startups that raised a seed round",
+                          keywords=["fintech", "b2b"])
+    HIRING = DiscoveryQuery(raw="SaaS companies hiring SDRs", keywords=["saas", "sdr"])
+
+    # Canned Apollo enrichment shapes, mirroring the LIVE records observed.
+    ENRICH = {
+        "adyen.com": {"funding": {"latest_stage": "", "events": []}},
+        "airwallex.com": {"funding": {"latest_stage": "Series H", "events": [
+            {"type": "Seed", "date": "2016-06-01", "amount": "3M", "currency": "$",
+             "news_url": "https://techcrunch.com/2016/07/08/airwallex", "investors": "X"}]}},
+        "zenskar.com": {"funding": {"latest_stage": "Series A", "events": [
+            {"type": "Seed", "date": "2022-10-01", "amount": "6.5M", "currency": "$",
+             "news_url": "https://zenskar.com/blog/seed", "investors": "Bessemer"}]}},
+        "getfwd.com": {"funding": {"latest_stage": "Seed", "events": [
+            {"type": "Seed", "date": "2024-05-01", "amount": "16M", "currency": "$",
+             "news_url": "https://techcrunch.com/2024/05/30/forward-16m",
+             "investors": "Fiserv, Commerce Ventures"}]}},
+        "nourl.com": {"funding": {"latest_stage": "Seed", "events": [
+            {"type": "Seed", "date": "2021-12-01", "amount": "6M", "news_url": ""}]}},
+    }
+
+    def _plan(self, q):
+        return intent.parse(q.raw, keywords=q.keywords)
+
+    def _prospect(self, name, domain, **kw):
+        return Prospect(company_name=name, website=f"https://{domain}", domain=domain,
+                        industry="fintech", discovery_source="exa", tier="company",
+                        **kw)
+
+    def _verify_funding(self, prospects):
+        def enrich(domain):
+            rec = self.ENRICH.get(domain)
+            return {"status": "ok", **rec} if rec else {"status": "empty", "funding": {}}
+        with mock.patch.object(sources, "APOLLO_ORG_SEARCH_ENABLED", True), \
+             mock.patch.object(apollo_orgs, "available", lambda: True), \
+             mock.patch.object(apollo_orgs, "enrich", enrich):
+            return sources.verify_funding(prospects, "seed", limit=10)
+
+    # ── pure stage matching ────────────────────────────────────────────────
+    def test_stage_matching_admits_seed_and_excludes_late_or_uncited(self):
+        C = self._C
+        self.assertTrue(C.stage_satisfied_by(
+            "Seed", self.ENRICH["getfwd.com"]["funding"]["events"], "seed"))
+        self.assertFalse(C.stage_satisfied_by("Series A",
+            self.ENRICH["zenskar.com"]["funding"]["events"], "seed"))
+        self.assertFalse(C.stage_satisfied_by("Series H",
+            self.ENRICH["airwallex.com"]["funding"]["events"], "seed"))
+        self.assertFalse(C.stage_satisfied_by("", [], "seed"))
+        self.assertFalse(C.stage_satisfied_by(  # a seed round but no source URL
+            "Seed", self.ENRICH["nourl.com"]["funding"]["events"], "seed"))
+
+    def test_parse_reads_funding_stage_only_when_stated(self):
+        self.assertEqual(self._C.parse(self._plan(self.SEED)).funding_stage, "seed")
+        self.assertEqual(self._C.parse(
+            intent.parse("B2B fintech companies", keywords=["fintech"])).funding_stage, "")
+
+    # ── the exact excluded companies ───────────────────────────────────────
+    def test_adyen_is_excluded_from_a_seed_stage_query(self):
+        p = self._prospect("Adyen", "adyen.com")
+        self._verify_funding([p])
+        self.assertFalse((p.funding or {}).get("verified"))
+        ok, unmet = self._C.verify(p, self._C.parse(self._plan(self.SEED)))
+        self.assertFalse(ok)
+        self.assertIn("funding_stage", unmet)
+
+    def test_airwallex_is_excluded_from_a_seed_stage_query(self):
+        # Airwallex HAS a seed event with a URL, but its CURRENT stage is Series H.
+        p = self._prospect("Airwallex", "airwallex.com")
+        self._verify_funding([p])
+        self.assertFalse((p.funding or {}).get("verified"))
+        ok, unmet = self._C.verify(p, self._C.parse(self._plan(self.SEED)))
+        self.assertFalse(ok)
+
+    # ── the accepted company, with evidence ────────────────────────────────
+    def test_a_verified_seed_fintech_is_accepted_with_evidence(self):
+        p = self._prospect("Getfwd", "getfwd.com")
+        n = self._verify_funding([p])
+        self.assertEqual(n, 1)
+        self.assertTrue(p.funding["verified"])
+        self.assertEqual(p.funding["round_type"], "Seed")
+        self.assertEqual(p.funding["amount"], "$16M")
+        self.assertTrue(p.funding["source_url"].startswith("https://techcrunch.com"))
+        self.assertIn("2024-05-01", p.funding["date"])
+        ok, unmet = self._C.verify(p, self._C.parse(self._plan(self.SEED)))
+        self.assertTrue(ok, unmet)
+
+    def test_missing_funding_evidence_is_rejected(self):
+        for name, domain in (("NoUrl", "nourl.com"), ("Unknown", "unknownco.com")):
+            p = self._prospect(name, domain)
+            self._verify_funding([p])
+            self.assertFalse((p.funding or {}).get("verified"))
+            ok, _ = self._C.verify(p, self._C.parse(self._plan(self.SEED)))
+            self.assertFalse(ok, name)
+
+    def test_apply_keeps_only_the_verified_seed_company(self):
+        adyen = self._prospect("Adyen", "adyen.com")
+        airwallex = self._prospect("Airwallex", "airwallex.com")
+        getfwd = self._prospect("Getfwd", "getfwd.com")
+        pool = [adyen, airwallex, getfwd]
+        self._verify_funding(pool)
+        kept, dropped = self._C.apply(pool, self._C.parse(self._plan(self.SEED)))
+        self.assertEqual([p.company_name for p in kept], ["Getfwd"])
+        self.assertEqual(dropped.get("funding_stage"), 2)
+
+    # ── the non-constraint case must NOT over-reject ───────────────────────
+    def test_fintech_without_a_funding_constraint_allows_later_stage(self):
+        plan = intent.parse("B2B fintech companies", keywords=["fintech"])
+        c = self._C.parse(plan)
+        # A late-stage fintech with NO funding evidence attached still qualifies,
+        # because no funding stage was requested.
+        p = self._prospect("Adyen", "adyen.com")
+        ok, unmet = self._C.verify(p, c)
+        self.assertTrue(ok, unmet)
+
+    # ── hiring constraint keeps its official-evidence requirement ──────────
+    def test_hiring_constraint_still_requires_official_hiring_evidence(self):
+        c = self._C.parse(self._plan(self.HIRING))
+        self.assertEqual(c.hiring_roles, ["sdr"])
+        web = Prospect(company_name="Acme", website="https://acme.com",
+                       domain="acme.com", discovery_source="exa", tier="company")
+        ok, unmet = self._C.verify(web, c)
+        self.assertFalse(ok)
+        self.assertIn("hiring", unmet)
+        web.hiring = {"verified": True, "source": "own_careers_page", "match": "role"}
+        ok, _ = self._C.verify(web, c)
+        self.assertTrue(ok)
+        apollo = Prospect(company_name="Clay", website="https://clay.com",
+                          domain="clay.com", discovery_source="apollo",
+                          apollo_id="a1", tier="company")
+        self.assertTrue(self._C.verify(apollo, c)[0])
+
+
 if __name__ == "__main__":
     unittest.main()
