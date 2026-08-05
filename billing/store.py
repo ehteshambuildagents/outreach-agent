@@ -46,7 +46,8 @@ def _new_id(prefix: str) -> str:
 
 
 # ── Subscriptions ──────────────────────────────────────────────────────
-def active_subscription(user_id: str, *, now: float = None, db: Database = None):
+def active_subscription(user_id: str, *, now: float = None, db: Database = None,
+                        strict: bool = False):
     """The user's current entitling subscription (newest), or None.
 
     Entitling = an active/on_trial subscription, OR a *cancelled* one still inside
@@ -58,7 +59,11 @@ def active_subscription(user_id: str, *, now: float = None, db: Database = None)
 
     Tolerant by design: if the billing tables do not exist yet (a dev DB that has
     not been migrated) or any read fails, callers get None and fall back to the
-    Free plan rather than erroring in a hot path. ``now`` is injectable for tests."""
+    Free plan rather than erroring in a hot path. ``now`` is injectable for tests.
+
+    ``strict=True`` disables that tolerance and RE-RAISES on a read failure — used by
+    the quota-enforcement path, which must fail closed (block) rather than silently
+    resolve a paid user to the Free window during a database outage."""
     if not user_id:
         return None
     db = db or _db()
@@ -74,6 +79,8 @@ def active_subscription(user_id: str, *, now: float = None, db: Database = None)
             f") ORDER BY updated_at DESC LIMIT 1",
             (user_id, *ACTIVE_STATUSES, now))
     except Exception:  # noqa: BLE001 - unmigrated/unavailable DB => treat as Free
+        if strict:
+            raise
         return None
     return dict(rows[0]) if rows else None
 
@@ -101,9 +108,17 @@ def open_subscription(user_id: str, *, db: Database = None):
     return dict(rows[0]) if rows else None
 
 
+# A sane default period length when the very first subscription event carries no
+# explicit start (a monthly cycle). Only ever used for the first period's *display*
+# start if the webhook omitted created_at; the anchor still resets correctly on
+# every renewal regardless, because the end timestamp advances.
+_DEFAULT_PERIOD_SECONDS = 30 * 24 * 3600
+
+
 def upsert_subscription(user_id: str, plan: str, status: str, *,
                         provider_subscription_id: str,
                         current_period_end: float = None,
+                        current_period_start: float = None,
                         provider: str = DEFAULT_PROVIDER, portal_url: str = None,
                         db: Database = None) -> dict:
     """Insert or update the subscription identified by its provider id.
@@ -112,36 +127,65 @@ def upsert_subscription(user_id: str, plan: str, status: str, *,
     updates the same row rather than creating a duplicate — which is what makes
     replaying an event a no-op. ``portal_url`` (LS's per-subscription customer
     portal link) is only written when provided, so a later event that omits it
-    never clobbers a good link."""
+    never clobbers a good link.
+
+    ``current_period_start`` scopes prospect usage to the billing period. It is
+    resolved with a carry-forward rule so only Lemon Squeezy timestamps are used:
+    an explicit start wins; otherwise, when the end advances past the stored end the
+    cycle has rolled, so the previous end becomes the new start (a fresh usage
+    window); otherwise the stored start is kept. On the first insert with no explicit
+    start it defaults to one month before the end."""
     db = db or _db()
     now = time.time()
     existing = db.query(
-        "SELECT id FROM billing_subscriptions WHERE provider_subscription_id=?",
+        "SELECT id, current_period_end, current_period_start "
+        "FROM billing_subscriptions WHERE provider_subscription_id=?",
         (provider_subscription_id,))
     if existing:
-        sub_id = existing[0]["id"]
+        row = existing[0]
+        sub_id = row["id"]
+        prev_start = row["current_period_start"]
+        prev_end = row["current_period_end"]
+        if current_period_start is not None:
+            period_start = current_period_start
+        elif (current_period_end is not None and prev_end is not None
+              and current_period_end > prev_end):
+            # The renewal advanced the period end -> the old end starts the new cycle.
+            period_start = prev_end
+        else:
+            period_start = prev_start
         if portal_url:
             db.execute(
                 "UPDATE billing_subscriptions SET user_id=?, plan=?, status=?, "
-                "provider=?, current_period_end=?, portal_url=?, updated_at=? WHERE id=?",
-                (user_id, plan, status, provider, current_period_end, portal_url,
-                 now, sub_id))
+                "provider=?, current_period_end=?, current_period_start=?, "
+                "portal_url=?, updated_at=? WHERE id=?",
+                (user_id, plan, status, provider, current_period_end, period_start,
+                 portal_url, now, sub_id))
         else:
             db.execute(
                 "UPDATE billing_subscriptions SET user_id=?, plan=?, status=?, "
-                "provider=?, current_period_end=?, updated_at=? WHERE id=?",
-                (user_id, plan, status, provider, current_period_end, now, sub_id))
+                "provider=?, current_period_end=?, current_period_start=?, "
+                "updated_at=? WHERE id=?",
+                (user_id, plan, status, provider, current_period_end, period_start,
+                 now, sub_id))
     else:
         sub_id = _new_id("bsub")
+        if current_period_start is not None:
+            period_start = current_period_start
+        elif current_period_end is not None:
+            period_start = current_period_end - _DEFAULT_PERIOD_SECONDS
+        else:
+            period_start = now
         db.execute(
             "INSERT INTO billing_subscriptions "
             "(id, user_id, plan, status, provider, provider_subscription_id, "
-            " current_period_end, portal_url, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " current_period_end, current_period_start, portal_url, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (sub_id, user_id, plan, status, provider, provider_subscription_id,
-             current_period_end, portal_url, now, now))
+             current_period_end, period_start, portal_url, now, now))
     return {"id": sub_id, "user_id": user_id, "plan": plan, "status": status,
-            "current_period_end": current_period_end}
+            "current_period_end": current_period_end,
+            "current_period_start": period_start}
 
 
 def set_subscription_status(provider_subscription_id: str, status: str, *,

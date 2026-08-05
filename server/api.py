@@ -173,6 +173,40 @@ def _log_proxy_secret_configuration() -> None:
         log.info("proxy: SAQUA_PROXY_SECRET unset (local/dev)")
 
 
+# Quota-schema health, filled at startup by _verify_quota_schema and surfaced on
+# /api/health. Optimistic default so a call before startup completes is not a false
+# alarm; the startup event corrects it against the real database.
+_QUOTA_SCHEMA = {"ok": True, "missing_tables": [], "missing_columns": []}
+
+
+@app.on_event("startup")
+def _verify_quota_schema() -> None:
+    """Fail LOUD if the durable prospect-quota schema is missing.
+
+    The Procfile runs migrations before the server starts, so a healthy deploy has
+    the schema. If it does not (a botched deploy, a hand-rolled DB), the app must not
+    quietly fall open on the quota or fall back to local _usage.json: /api/health
+    reports schema_ok=false so a monitor catches it, and production logs an error."""
+    global _QUOTA_SCHEMA
+    try:
+        from automation import migrate
+        from automation.db import Database
+        _QUOTA_SCHEMA = migrate.verify_schema(Database())
+    except Exception as exc:  # noqa: BLE001 - never let the check itself crash boot
+        _QUOTA_SCHEMA = {"ok": False, "missing_tables": ["<check-failed>"],
+                         "missing_columns": [], "error": type(exc).__name__}
+    if not _QUOTA_SCHEMA.get("ok"):
+        from config import settings
+        msg = ("PROSPECT-QUOTA SCHEMA MISSING: %s. The durable usage store is not "
+               "provisioned; run `python -m automation.migrate`. Quota enforcement "
+               "cannot be trusted until this is fixed.")
+        detail = {**_QUOTA_SCHEMA}
+        if settings.is_production():
+            log.error(msg, detail)
+        else:
+            log.warning(msg, detail)
+
+
 def _store_for(user_id: str) -> ConversationStore:
     safe = re.sub(r"[^A-Za-z0-9_-]", "", user_id or "") or "anonymous"
     return ConversationStore(directory=str(Path(_STORE_BASE) / safe))
@@ -516,6 +550,11 @@ def health():
         "ok": True,
         "redis": "upstash" if redis.configured() else "in-memory",
         "production": settings.is_production(),
+        # Whether the durable prospect-quota schema is provisioned. False means the
+        # DB was not migrated: quota enforcement is not trustworthy and a monitor
+        # should treat the deploy as unhealthy (the value the brief requires).
+        "schema_ok": bool(_QUOTA_SCHEMA.get("ok")),
+        "schema": _QUOTA_SCHEMA,
         # Billing posture (no secrets): whether Lemon Squeezy can transact and which
         # mode it is in, so a live deploy can be verified from outside to be enabled
         # and NOT still pointing at Test mode.

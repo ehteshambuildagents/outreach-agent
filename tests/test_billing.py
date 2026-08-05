@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timezone
 from unittest import mock
@@ -46,7 +47,7 @@ def setUpModule():
 def _reset_tables():
     db = Database()
     for t in ("billing_events", "billing_invoices", "billing_subscriptions",
-              "billing_customers"):
+              "billing_customers", "prospect_usage"):
         db.execute(f"DELETE FROM {t}")
 
 
@@ -680,11 +681,14 @@ class BillingApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
 
     def test_upgrade_pro_to_max_preserves_prospects_used(self):
-        # Usage lives in the per-user store, independent of the plan; upgrading the
-        # subscription must not reset it.
-        self.api._store_for("member1").save_usage(
-            {"prospects": ["a.com", "b.com", "c.com", "d.com", "e.com"]})
+        # Usage is durable and scoped to the billing PERIOD, independent of which
+        # plan the period is on; changing plan within the same period must not reset
+        # it. Start on pro (opens the paid period), consume 5, then upgrade pro->max
+        # (same subscription id => same period) and confirm the 5 are preserved.
+        from billing import usage
         webhook.handle_event(_sub_event("member1", "pro", "active", sub_id="up1"))
+        for k in ("a.com", "b.com", "c.com", "d.com", "e.com"):
+            usage.record_prospect_use("member1", k, limit=50)
         b1 = self.client.get("/api/billing").json()
         self.assertEqual(b1["plan"], "pro")
         self.assertEqual(b1["prospect_limit"], 50)
@@ -696,6 +700,11 @@ class BillingApiTests(unittest.TestCase):
         self.assertEqual(b2["plan"], "max")
         self.assertEqual(b2["prospect_limit"], 100)
         self.assertEqual(b2["prospects_used"], 5)   # preserved across the upgrade
+        # The brief's required GET /api/billing fields are all present.
+        for key in ("prospects_used", "prospect_limit", "period_start",
+                    "period_end", "remaining"):
+            self.assertIn(key, b2)
+        self.assertEqual(b2["remaining"], 95)       # 100 - 5
 
     def test_webhook_processes_signed_event_and_plan_flips(self):
         event = _sub_event("member1", "max", "active", sub_id="wh1")
@@ -805,6 +814,316 @@ class NewCustomerCheckoutAccessTests(unittest.TestCase):
         ent = billing.entitlements("newbie", 0)
         self.assertEqual(ent["plan"], "pro")
         self.assertTrue(ent.get("is_paid"))
+
+
+# ── Durable, billing-period-scoped prospect usage (the quota system) ───────
+class ProspectUsageDurableTests(unittest.TestCase):
+    """The production prospect-quota store: durable (Postgres/SQLite, not the old
+    ephemeral _usage.json), billing-period scoped, atomic, and deduped. Covers every
+    behavior the launch brief requires."""
+
+    def setUp(self):
+        _reset_tables()
+        from billing import usage
+        self.usage = usage
+
+    def _activate_pro(self, user, *, renews_at=None, created_at=None, sub_id="s1"):
+        """Give ``user`` an active pro subscription via the webhook (so the period
+        timestamps come through the real LS path)."""
+        ev = _sub_event(user, "pro", "active", sub_id=sub_id,
+                        renews_at=renews_at)
+        if created_at is not None:
+            ev["data"]["attributes"]["created_at"] = created_at
+        webhook.handle_event(ev)
+
+    def test_starter_blocks_at_50(self):
+        self._activate_pro("starter_u")
+        self.assertEqual(billing.limit_for_user("starter_u"), 50)
+        for i in range(50):
+            r = self.usage.record_prospect_use("starter_u", f"c{i}.com", limit=50)
+            self.assertTrue(r["allowed"])
+        self.assertEqual(self.usage.prospects_used("starter_u"), 50)
+        # The 51st distinct prospect is blocked and NOT recorded.
+        r = self.usage.record_prospect_use("starter_u", "c50.com", limit=50)
+        self.assertFalse(r["allowed"])
+        self.assertEqual(self.usage.prospects_used("starter_u"), 50)
+
+    def test_growth_blocks_at_100(self):
+        self._activate_pro("growth_u")   # start pro...
+        webhook.handle_event(_sub_event("growth_u", "max", "active", sub_id="s1",
+                                        etype="subscription_updated"))  # ...upgrade to max
+        self.assertEqual(billing.limit_for_user("growth_u"), 100)
+        for i in range(100):
+            self.assertTrue(
+                self.usage.record_prospect_use("growth_u", f"c{i}.com", limit=100)["allowed"])
+        self.assertEqual(self.usage.prospects_used("growth_u"), 100)
+        self.assertFalse(
+            self.usage.record_prospect_use("growth_u", "c100.com", limit=100)["allowed"])
+
+    def test_duplicate_company_does_not_consume_twice(self):
+        self._activate_pro("dup_u")
+        r1 = self.usage.record_prospect_use("dup_u", "acme.com", limit=50)
+        self.assertTrue(r1["allowed"])
+        self.assertFalse(r1["duplicate"])
+        self.assertEqual(r1["used"], 1)
+        # Re-research the SAME company: allowed, flagged duplicate, no new slot.
+        r2 = self.usage.record_prospect_use("dup_u", "acme.com", limit=50)
+        self.assertTrue(r2["allowed"])
+        self.assertTrue(r2["duplicate"])
+        self.assertEqual(self.usage.prospects_used("dup_u"), 1)
+        # The normalized key means www / trailing junk map to the same prospect.
+        self.assertEqual(self.usage.prospect_key(url="https://www.acme.com/pricing"),
+                         self.usage.prospect_key(url="http://acme.com"))
+
+    def test_durable_across_app_restart(self):
+        # "Restart" = a brand-new Database handle (new connection), same file.
+        self._activate_pro("persist_u")
+        self.usage.record_prospect_use("persist_u", "x.com", limit=50)
+        self.usage.record_prospect_use("persist_u", "y.com", limit=50)
+        # A fresh Database handle == a new process/connection over the same file.
+        from automation.db import Database as FreshDB
+        self.assertEqual(self.usage.prospects_used("persist_u", db=FreshDB()), 2)
+
+    def test_monthly_period_rollover_resets_to_zero(self):
+        # Period 1: end at T1. Consume the whole allowance.
+        now = time.time()
+        t1 = _iso(datetime.fromtimestamp(now + 10 * 86400, tz=timezone.utc))
+        self._activate_pro("roll_u", renews_at=t1,
+                           created_at=_iso(datetime.fromtimestamp(now - 20 * 86400,
+                                                                  tz=timezone.utc)))
+        for i in range(50):
+            self.usage.record_prospect_use("roll_u", f"c{i}.com", limit=50)
+        self.assertEqual(self.usage.prospects_used("roll_u"), 50)
+        anchor1 = self.usage.usage_period("roll_u")["anchor"]
+        # Renewal advances the period end -> a NEW billing period (updated event).
+        t2 = _iso(datetime.fromtimestamp(now + 40 * 86400, tz=timezone.utc))
+        webhook.handle_event(_sub_event("roll_u", "pro", "active", sub_id="s1",
+                                        renews_at=t2, etype="subscription_updated"))
+        anchor2 = self.usage.usage_period("roll_u")["anchor"]
+        self.assertNotEqual(anchor1, anchor2)             # the cycle rolled
+        self.assertEqual(self.usage.prospects_used("roll_u"), 0)   # fresh allowance
+        # The new period start == the previous period end (carry-forward), and the
+        # historical rows are NOT deleted (audit trail preserved).
+        rows = Database().query(
+            "SELECT COUNT(*) AS n FROM prospect_usage WHERE user_id=?", ("roll_u",))
+        self.assertEqual(int(rows[0]["n"]), 50)           # history intact
+
+    def test_concurrent_requests_cannot_exceed_quota(self):
+        import threading
+        self._activate_pro("race_u")
+        # 30 threads each try to claim a DISTINCT new prospect, cap is 10.
+        results = []
+        lock = threading.Lock()
+
+        def claim(i):
+            r = self.usage.record_prospect_use("race_u", f"r{i}.com", limit=10)
+            with lock:
+                results.append(r["allowed"])
+
+        threads = [threading.Thread(target=claim, args=(i,)) for i in range(30)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        # Exactly the cap is granted; the store never exceeds it.
+        self.assertEqual(sum(1 for a in results if a), 10)
+        self.assertEqual(self.usage.prospects_used("race_u"), 10)
+
+    def test_same_clerk_account_across_sessions_keeps_usage(self):
+        # Usage is keyed on the Clerk user id, not a cookie/session/browser — a new
+        # session (any request) reads the same durable count.
+        self._activate_pro("clerk_1")
+        self.usage.record_prospect_use("clerk_1", "a.com", limit=50)
+        self.usage.record_prospect_use("clerk_1", "b.com", limit=50)
+        # Different Database handle == different "session"; same user id.
+        from automation.db import Database as S2
+        self.assertEqual(self.usage.prospects_used("clerk_1", db=S2()), 2)
+        # A different user id is fully isolated (no cross-account leakage).
+        self.assertEqual(self.usage.prospects_used("clerk_2"), 0)
+
+    def test_expired_subscription_gets_no_paid_quota(self):
+        # Active pro: 50 cap, usage recorded in the paid period.
+        self._activate_pro("exp_u")
+        for i in range(3):
+            self.usage.record_prospect_use("exp_u", f"c{i}.com", limit=50)
+        self.assertEqual(billing.limit_for_user("exp_u"), 50)
+        # Subscription expires -> the user drops to Free, gets the FREE cap only,
+        # and the expired period's usage does not count against the free window.
+        webhook.handle_event(_sub_event("exp_u", "pro", "expired", sub_id="s1",
+                                        etype="subscription_expired"))
+        self.assertEqual(billing.limit_for_user("exp_u"), settings.FREE_PROSPECT_LIMIT)
+        self.assertFalse(self.usage.usage_period("exp_u")["paid"])
+        # No paid allowance: the free window starts at zero used.
+        self.assertEqual(self.usage.prospects_used("exp_u"), 0)
+
+    def test_cancelled_in_grace_period_keeps_access_and_usage(self):
+        # Cancelled but still inside the paid period (ends_at in the future) keeps the
+        # plan AND the usage counted in that period.
+        future = _iso(datetime.fromtimestamp(time.time() + 20 * 86400, tz=timezone.utc))
+        self._activate_pro("grace_u", renews_at=future)
+        self.usage.record_prospect_use("grace_u", "a.com", limit=50)
+        webhook.handle_event(_sub_event("grace_u", "pro", "cancelled", sub_id="s1",
+                                        ends_at=future, etype="subscription_cancelled"))
+        self.assertEqual(billing.limit_for_user("grace_u"), 50)      # access preserved
+        self.assertTrue(self.usage.usage_period("grace_u")["paid"])
+        self.assertEqual(self.usage.prospects_used("grace_u"), 1)    # usage preserved
+
+    def test_legacy_usage_json_import_is_idempotent(self):
+        # Migration: surviving _usage.json keys are imported into the current period
+        # (counts imported, not reset), and re-importing is a no-op.
+        keys = ["old1.com", "old2.com", "old3.com"]
+        self.assertEqual(self.usage.import_legacy_keys("legacy_u", keys), 3)
+        self.assertEqual(self.usage.prospects_used("legacy_u"), 3)
+        # Re-running imports nothing new (UNIQUE dedupe).
+        self.assertEqual(self.usage.import_legacy_keys("legacy_u", keys), 0)
+        self.assertEqual(self.usage.prospects_used("legacy_u"), 3)
+
+    def test_free_user_has_lifetime_window_at_anchor_zero(self):
+        # A user with no subscription is on the Free lifetime trial (anchor 0).
+        period = self.usage.usage_period("free_u")
+        self.assertFalse(period["paid"])
+        self.assertEqual(period["anchor"], 0.0)
+        for i in range(settings.FREE_PROSPECT_LIMIT):
+            self.assertTrue(
+                self.usage.record_prospect_use("free_u", f"c{i}.com",
+                                               limit=settings.FREE_PROSPECT_LIMIT)["allowed"])
+        # Beyond the free cap is blocked (when the cap is enabled).
+        if settings.FREE_PROSPECT_LIMIT > 0:
+            self.assertFalse(
+                self.usage.record_prospect_use(
+                    "free_u", "over.com", limit=settings.FREE_PROSPECT_LIMIT)["allowed"])
+
+
+# ── Fail-CLOSED enforcement when the durable store is unavailable ──────────
+class ProspectQuotaFailClosedTests(unittest.TestCase):
+    """A database outage must NEVER open the quota: research is blocked, no unmetered
+    slot is granted, and a duplicate cannot slip through either. Only off production
+    is there an explicit dev fallback."""
+
+    def setUp(self):
+        _reset_tables()
+        from billing import usage
+        self.usage = usage
+
+    def test_record_fails_closed_in_production_on_db_error(self):
+        # Simulate the durable store being unreachable (period resolution raises).
+        from billing import store as bstore
+        with mock.patch.object(bstore, "active_subscription",
+                               side_effect=RuntimeError("db down")), \
+             mock.patch.object(settings, "is_production", return_value=True):
+            res = self.usage.record_prospect_use("out_u", "acme.com", limit=50)
+        self.assertFalse(res["allowed"])       # blocked
+        self.assertTrue(res["error"])          # flagged as an infra failure
+        self.assertFalse(res.get("fallback"))  # NOT a dev fallback
+        # And nothing was recorded — no unmetered quota was granted.
+        self.assertEqual(self.usage.prospects_used("out_u"), 0)
+
+    def test_duplicate_cannot_bypass_during_outage(self):
+        # A real prior use exists...
+        self.usage.record_prospect_use("dupout_u", "acme.com", limit=50)
+        self.assertEqual(self.usage.prospects_used("dupout_u"), 1)
+        # ...but during an outage even a duplicate is not confirmed => blocked in prod.
+        from billing import store as bstore
+        with mock.patch.object(bstore, "active_subscription",
+                               side_effect=RuntimeError("db down")), \
+             mock.patch.object(settings, "is_production", return_value=True):
+            res = self.usage.record_prospect_use("dupout_u", "acme.com", limit=50)
+        self.assertFalse(res["allowed"])
+        self.assertTrue(res["error"])
+
+    def test_dev_fallback_only_off_production(self):
+        from billing import store as bstore
+        with mock.patch.object(bstore, "active_subscription",
+                               side_effect=RuntimeError("db down")), \
+             mock.patch.object(settings, "is_production", return_value=False):
+            res = self.usage.record_prospect_use("dev_u", "acme.com", limit=50)
+        self.assertTrue(res["allowed"])        # dev is not blocked by a missing DB
+        self.assertTrue(res.get("fallback"))   # ...but it is explicitly a fallback
+
+    def test_tool_blocks_research_before_provider_call_on_outage(self):
+        # The end-to-end guarantee: when the durable store is unavailable in
+        # production, chat.tools._tool_research must NOT call the paid research
+        # provider and must return a temporary-unavailable result.
+        from chat import tools
+        from chat.models import Conversation
+        conv = Conversation()
+        conv._user_id = "toolout_u"
+        conv.workspace["prospect_limit"] = 50
+        unavailable = {"allowed": False, "duplicate": False, "used": None,
+                       "limit": 50, "anchor": None, "error": True}
+        with mock.patch("chat.tools.research_company") as m_research, \
+             mock.patch("billing.usage.record_prospect_use", return_value=unavailable):
+            res = tools._tool_research({"query": "acme.com"}, conv)
+        m_research.assert_not_called()                       # no paid provider call
+        self.assertIn("temporarily unavailable", res.summary.lower())
+
+    def test_claim_gate_meters_and_signals_states_when_healthy(self):
+        # Control: with a healthy store the gate claims a slot (metered durably),
+        # calls a duplicate free, and blocks past the cap.
+        from chat import tools
+        from chat.models import Conversation
+        conv = Conversation()
+        conv._user_id = "gateok_u"
+        conv.workspace["prospect_limit"] = 1                 # tiny cap for the test
+        self.assertEqual(tools._claim_prospect(conv, "acme.com"), "ok")
+        self.assertEqual(self.usage.prospects_used("gateok_u"), 1)     # metered
+        self.assertEqual(tools._claim_prospect(conv, "acme.com"), "duplicate")  # free
+        self.assertEqual(self.usage.prospects_used("gateok_u"), 1)     # no double count
+        self.assertEqual(tools._claim_prospect(conv, "other.com"), "blocked")   # over cap
+
+
+# ── Legacy migration never consumes a paid period ──────────────────────────
+class LegacyImportPeriodTests(unittest.TestCase):
+    def setUp(self):
+        _reset_tables()
+        from billing import usage
+        self.usage = usage
+
+    def test_legacy_does_not_consume_active_paid_period(self):
+        # User is on an active paid plan (paid period != anchor 0)...
+        webhook.handle_event(_sub_event("paid_u", "pro", "active", sub_id="s1"))
+        self.assertTrue(self.usage.usage_period("paid_u")["paid"])
+        # ...importing legacy keys lands them at the free/lifetime anchor 0, NOT the
+        # paid period, so the paid period still begins at zero used.
+        self.usage.import_legacy_keys("paid_u", ["old1.com", "old2.com", "old3.com"])
+        self.assertEqual(self.usage.prospects_used("paid_u"), 0)           # paid period
+        self.assertEqual(self.usage.prospects_used("paid_u",
+                                                   anchor=self.usage.LEGACY_ANCHOR), 3)
+
+    def test_fresh_paid_period_begins_at_zero_after_free_usage(self):
+        # Free user consumes their trial at anchor 0...
+        for i in range(3):
+            self.usage.record_prospect_use("upgr_u", f"c{i}.com",
+                                           limit=settings.FREE_PROSPECT_LIMIT)
+        self.assertEqual(self.usage.prospects_used("upgr_u"), 3)
+        # ...then upgrades: the new paid period starts at zero, free history intact.
+        webhook.handle_event(_sub_event("upgr_u", "pro", "active", sub_id="s1"))
+        self.assertEqual(self.usage.prospects_used("upgr_u"), 0)           # paid period
+        self.assertEqual(self.usage.prospects_used("upgr_u", anchor=0.0), 3)  # free history
+
+
+# ── Migration idempotency + startup schema guard ───────────────────────────
+class MigrationIdempotencyTests(unittest.TestCase):
+    def test_migration_reruns_safely(self):
+        from automation import migrate
+        db = Database()
+        # Already applied in setUpModule; a re-run applies nothing and does not error.
+        self.assertEqual(migrate.run(db, verbose=False), [])
+        # ensure_schema_columns is a no-op when the column already exists.
+        self.assertEqual(migrate.ensure_schema_columns(db), [])
+        # The quota-critical schema verifies healthy.
+        report = migrate.verify_schema(db)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["missing_tables"], [])
+        self.assertEqual(report["missing_columns"], [])
+
+    def test_verify_schema_reports_missing_table(self):
+        from automation import migrate
+        # A DB handle whose table check always says "absent" reports unhealthy.
+        with mock.patch.object(migrate, "_table_exists", return_value=False):
+            report = migrate.verify_schema(Database())
+        self.assertFalse(report["ok"])
+        self.assertIn("prospect_usage", report["missing_tables"])
 
 
 if __name__ == "__main__":

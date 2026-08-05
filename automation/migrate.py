@@ -34,6 +34,40 @@ def _ensure_ledger(db: Database) -> None:
         " version TEXT PRIMARY KEY, applied_at DOUBLE PRECISION NOT NULL);")
 
 
+# Columns added to pre-existing tables. Kept in code (not raw ALTER in a .sql file)
+# so the add is idempotent on BOTH engines: SQLite has no "ADD COLUMN IF NOT EXISTS",
+# and a portable .sql line cannot branch per dialect. Each entry is
+# (table, column, type) and is applied only when the column is genuinely absent.
+_ENSURE_COLUMNS = (
+    ("billing_subscriptions", "current_period_start", "DOUBLE PRECISION"),
+)
+
+
+def _column_exists(db: Database, table: str, column: str) -> bool:
+    if db.backend == "postgres":
+        rows = db.query(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name=? AND column_name=?", (table, column))
+        return bool(rows)
+    # SQLite: PRAGMA table_info returns one row per column.
+    rows = db.query(f"PRAGMA table_info({table})")
+    return any(r["name"] == column for r in rows)
+
+
+def ensure_schema_columns(db: Database) -> list:
+    """Idempotently add any missing columns declared in :data:`_ENSURE_COLUMNS`.
+
+    A genuine add-if-missing on Postgres (which also supports native ``ADD COLUMN IF
+    NOT EXISTS``) and SQLite (which does not) — we check the catalog first, so
+    re-running is always a no-op. Returns the columns actually added."""
+    added = []
+    for table, column, coltype in _ENSURE_COLUMNS:
+        if not _column_exists(db, table, column):
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+            added.append(f"{table}.{column}")
+    return added
+
+
 def applied(db: Database) -> set:
     _ensure_ledger(db)
     return {r["version"] for r in db.query("SELECT version FROM schema_migrations")}
@@ -62,9 +96,53 @@ def run(db: Database = None, *, verbose: bool = True) -> list:
         ran.append(fname)
         if verbose:
             print(f"  applied {fname}")
-    if verbose and not ran:
+    # Idempotent column adds (run every time; a no-op once present).
+    added = ensure_schema_columns(db)
+    for col in added:
+        if verbose:
+            print(f"  added column {col}")
+    if verbose and not ran and not added:
         print("  (no pending migrations)")
     return ran
+
+
+# Tables the running app MUST have before it can safely enforce quota. If any are
+# missing the deployment did not migrate, and the app must not serve (it would
+# otherwise fail-open or silently fall back to local state).
+_REQUIRED_TABLES = ("prospect_usage", "billing_subscriptions")
+
+
+def _table_exists(db: Database, table: str) -> bool:
+    try:
+        if db.backend == "postgres":
+            rows = db.query(
+                "SELECT 1 FROM information_schema.tables WHERE table_name=?", (table,))
+            return bool(rows)
+        rows = db.query(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,))
+        return bool(rows)
+    except Exception:  # noqa: BLE001 - an unreachable DB counts as "schema missing"
+        return False
+
+
+def verify_schema(db: Database = None) -> dict:
+    """Check the quota-critical schema is present. Returns
+    ``{"ok": bool, "missing_tables": [...], "missing_columns": [...]}``.
+
+    Used by the app's startup guard so a process that came up against an unmigrated
+    database reports UNHEALTHY instead of silently failing open on the quota."""
+    db = db or Database()
+    missing_tables = [t for t in _REQUIRED_TABLES if not _table_exists(db, t)]
+    missing_columns = []
+    if "billing_subscriptions" not in missing_tables:
+        for table, column, _type in _ENSURE_COLUMNS:
+            try:
+                if not _column_exists(db, table, column):
+                    missing_columns.append(f"{table}.{column}")
+            except Exception:  # noqa: BLE001 - treat an errored catalog read as missing
+                missing_columns.append(f"{table}.{column}")
+    return {"ok": not missing_tables and not missing_columns,
+            "missing_tables": missing_tables, "missing_columns": missing_columns}
 
 
 def status(db: Database = None) -> dict:

@@ -76,9 +76,10 @@ def register(app, *, rl_read=None, rl_write=None, store_for=None,
     @app.get("/api/billing")
     def get_billing(request: Request, _=Depends(_read),
                     user: str = Depends(member_or_demo)):
-        usage = store_for(user).load_usage()
-        used = len(usage.get("prospects") or [])
-        ent = billing.entitlements(user, used)
+        # Usage is read from the durable, billing-period-scoped store (Postgres/
+        # SQLite) — never the old ephemeral _usage.json. entitlements() resolves the
+        # count itself so the period scoping stays in one place.
+        ent = billing.entitlements(user)
         # Whether a real Lemon Squeezy checkout can be started. A demo visitor can
         # never transact (no account), so the upgrade UI routes them to /pricing
         # instead of a dead checkout button.

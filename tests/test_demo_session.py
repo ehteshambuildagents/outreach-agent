@@ -34,6 +34,24 @@ from server import demo_session  # noqa: E402
 import server.api as api  # noqa: E402
 
 
+def _reset_demo_budget() -> None:
+    """Clear the process-global demo budget state so tests don't leak into each
+    other. Two backstops accumulate across a suite run: the in-memory Redis
+    run-count/rate-limit buckets (reset by the callers via ``redis.reset()``), and
+    the DB-backed dollar-spend ledger for the shared DEMO_LEDGER_USER — which
+    ``redis.reset()`` does NOT touch, so a later test would otherwise inherit an
+    already-exhausted daily budget and see spurious 429s / capacity blocks."""
+    try:
+        from automation.db import Database
+        from limits import store as _limits_store
+        db = Database()
+        _limits_store.ensure(db)
+        db.execute("DELETE FROM usage_ledger WHERE user_id=?",
+                   (settings.DEMO_LEDGER_USER,))
+    except Exception:  # noqa: BLE001 - best-effort test isolation
+        pass
+
+
 class TokenTests(unittest.TestCase):
     """The signed-token primitive — the only way to become a demo principal."""
 
@@ -120,6 +138,7 @@ class DemoDependencyTests(unittest.TestCase):
         from automation import redis
         os.environ["WAITLIST_REQUIRE_SHARED_REDIS"] = "0"
         redis.reset()
+        _reset_demo_budget()
         api.app.dependency_overrides.clear()
         api._STORE_BASE = tempfile.mkdtemp()
         api._BUCKETS.clear()
@@ -290,6 +309,7 @@ class DemoSessionEndpointTests(unittest.TestCase):
         from automation import redis
         os.environ["WAITLIST_REQUIRE_SHARED_REDIS"] = "0"
         redis.reset()
+        _reset_demo_budget()
         self._join = mock.patch("waitlist.join")
         self._join.start()
         self.c = TestClient(api.app)
@@ -435,6 +455,7 @@ class DemoPersistenceTests(unittest.TestCase):
         from automation import redis
         os.environ["WAITLIST_REQUIRE_SHARED_REDIS"] = "0"
         redis.reset()
+        _reset_demo_budget()
         api.app.dependency_overrides.clear()
         api._STORE_BASE = tempfile.mkdtemp()
         api._BUCKETS.clear()

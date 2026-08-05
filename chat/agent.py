@@ -277,11 +277,23 @@ def _run_turn(conversation, user_text: str, store, user_id, emit):
             conversation.workspace["company_profile"] = store.load_company()
         except Exception:  # noqa: BLE001 - never let company IO break a reply
             pass
-    # Free-tier usage (distinct prospects worked) — loaded so the research tools
-    # can enforce the plan cap, persisted per-user (not per-thread) below.
+    # Prospect usage is now DURABLE and billing-period-scoped (billing.usage on
+    # Postgres/SQLite), keyed on the authenticated user id — it is no longer read
+    # from the ephemeral _usage.json. We still load that legacy file to (a) provide
+    # a no-identity fallback mirror for the tools, and (b) MIGRATE any surviving
+    # counts into the durable store exactly once, so moving off the JSON never zeros
+    # a user's trial. Nothing is deleted; counts are imported, not reset.
     if store is not None and hasattr(store, "load_usage"):
         try:
-            conversation.workspace["usage"] = store.load_usage()
+            legacy = store.load_usage()
+            conversation.workspace["usage"] = legacy
+            keys = legacy.get("prospects") or []
+            if user_id and keys and not legacy.get("_migrated"):
+                from billing import usage as _usage
+                _usage.import_legacy_keys(user_id, keys)
+                legacy["_migrated"] = True
+                if hasattr(store, "save_usage"):
+                    store.save_usage(legacy)
         except Exception:  # noqa: BLE001 - never let usage IO break a reply
             pass
     # The user's plan allowance (Free / Starter / Growth / Enterprise), resolved

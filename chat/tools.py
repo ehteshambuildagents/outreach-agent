@@ -168,7 +168,14 @@ def _plan_limit(conversation) -> int:
     return _free_limit()
 
 
+def _user_id(conversation):
+    return getattr(conversation, "_user_id", None)
+
+
 def _usage_prospects(conversation) -> list:
+    """The in-thread usage mirror (no-identity fallback only). The DURABLE,
+    period-scoped source of truth is ``billing.usage`` keyed on the user id; this
+    list is used solely when there is no user id to key durable usage on."""
     u = conversation.workspace.get("usage")
     if isinstance(u, dict) and isinstance(u.get("prospects"), list):
         return u["prospects"]
@@ -176,19 +183,39 @@ def _usage_prospects(conversation) -> list:
 
 
 def _prospect_key(company=None, url=None) -> str:
-    if url:
-        host = urlparse(url).hostname or url or ""
-        host = host[4:] if host.startswith("www.") else host
-        if host:
-            return host.lower().strip()
-    return re.sub(r"[^a-z0-9]", "", (company or "").lower())
+    # Canonical normalization lives in billing.usage so the gate and the durable
+    # store dedupe on exactly the same key. Kept as a thin alias for call sites.
+    from billing import usage
+    return usage.prospect_key(company=company, url=url)
+
+
+def _durable_used(conversation) -> int:
+    uid = _user_id(conversation)
+    if not uid:
+        return len(_usage_prospects(conversation))
+    try:
+        from billing import usage
+        return usage.prospects_used(uid)
+    except Exception:  # noqa: BLE001 - never break a reply on a usage read
+        return len(_usage_prospects(conversation))
 
 
 def _free_slot_blocked(conversation, key: str) -> bool:
-    """True if working a NEW prospect `key` would exceed the user's plan cap."""
+    """True if working a NEW prospect `key` would exceed the user's plan cap.
+
+    Reads the durable, billing-period-scoped usage store for the signed-in user
+    (so the cap survives restarts, sessions, and browsers); falls back to the
+    in-thread mirror only when there is no user id."""
     limit = _plan_limit(conversation)
     if limit <= 0 or not key:
         return False
+    uid = _user_id(conversation)
+    if uid:
+        try:
+            from billing import usage
+            return usage.would_block(uid, key, limit=limit)
+        except Exception:  # noqa: BLE001 - never block on an infra hiccup
+            return False
     used = _usage_prospects(conversation)
     return key not in used and len(used) >= limit
 
@@ -197,11 +224,13 @@ def _remaining_prospects(conversation) -> int:
     limit = _plan_limit(conversation)
     if limit <= 0:
         return 10 ** 9
-    return max(0, limit - len(_usage_prospects(conversation)))
+    return max(0, limit - _durable_used(conversation))
 
 
-def _record_prospect(conversation, *keys) -> dict:
-    """An updated usage dict with each non-empty `key` recorded (deduped)."""
+def _mirror_prospect(conversation, *keys) -> dict:
+    """Update ONLY the in-thread usage mirror (no durable write). Used on the success
+    path after a slot was already claimed durably by :func:`_claim_prospect`, so the
+    workspace ``usage`` the UI/no-identity fallback reads stays in sync."""
     u = conversation.workspace.get("usage")
     u = dict(u) if isinstance(u, dict) else {}
     lst = list(u.get("prospects") or [])
@@ -210,6 +239,90 @@ def _record_prospect(conversation, *keys) -> dict:
             lst.append(key)
     u["prospects"] = lst
     return u
+
+
+def _claim_prospect(conversation, key: str) -> str:
+    """Atomically CLAIM a prospect slot BEFORE any paid research runs. Returns:
+
+      * ``"ok"``          — a new slot was claimed; go research.
+      * ``"duplicate"``   — already worked this period; go research (no new slot).
+      * ``"blocked"``     — over the plan cap; do not research (upgrade prompt).
+      * ``"unavailable"`` — the durable store could not be reached; in production do
+                            NOT research (fail closed). Off production this never
+                            happens (the store call returns an explicit dev fallback).
+
+    Claiming before research is what makes enforcement fail-closed: if the durable
+    check/record fails we never call a paid research provider, and a duplicate cannot
+    slip through during an outage because the store was never confirmed."""
+    limit = _plan_limit(conversation)
+    if limit <= 0 or not key:
+        return "ok"
+    uid = _user_id(conversation)
+    if not uid:
+        # No identity to key durable usage on: the in-thread mirror is all we have.
+        return "blocked" if _free_slot_blocked(conversation, key) else "ok"
+    from billing import usage
+    res = usage.record_prospect_use(uid, key, limit=limit)
+    if res.get("error"):
+        # Production => fail closed (unavailable). Dev fallback => proceed.
+        return "ok" if res.get("fallback") else "unavailable"
+    if res.get("duplicate"):
+        return "duplicate"
+    return "ok" if res.get("allowed") else "blocked"
+
+
+def _release_prospect(conversation, key: str) -> None:
+    """Release a slot claimed by :func:`_claim_prospect` when the research it guarded
+    did not produce a usable result, so a failed/too-thin research never permanently
+    consumes quota."""
+    uid = _user_id(conversation)
+    if not uid or not key:
+        return
+    try:
+        from billing import usage
+        usage.release_prospect_use(uid, key)
+    except Exception:  # noqa: BLE001 - release is best-effort
+        pass
+
+
+def _batch_quota(conversation):
+    """``(remaining, status)`` for the batch discovery path, where research happens in
+    bulk and cannot claim per-company beforehand. ``status`` is ``"ok"`` or
+    ``"unavailable"``. Fails CLOSED: if the durable usage read fails in production the
+    batch is NOT researched. Off production it falls back to the in-thread mirror."""
+    limit = _plan_limit(conversation)
+    if limit <= 0:
+        return (10 ** 9, "ok")
+    uid = _user_id(conversation)
+    if not uid:
+        return (max(0, limit - len(_usage_prospects(conversation))), "ok")
+    from billing import usage
+    try:
+        used = usage.prospects_used(uid, strict=True)
+        return (max(0, limit - used), "ok")
+    except Exception:  # noqa: BLE001 - durable read failed
+        from config import settings
+        if settings.is_production():
+            return (None, "unavailable")
+        return (max(0, limit - len(_usage_prospects(conversation))), "ok")
+
+
+def _record_prospect(conversation, *keys) -> dict:
+    """Durably record each researched prospect `key` against the user's quota (the
+    BATCH path, where slots are metered after bulk research rather than claimed
+    up-front), then mirror into the thread workspace. Dedup + cap are enforced inside
+    the atomic store call; recording is a no-op for keys already used this period."""
+    uid = _user_id(conversation)
+    limit = _plan_limit(conversation)
+    if uid:
+        try:
+            from billing import usage
+            for key in keys:
+                if key:
+                    usage.record_prospect_use(uid, key, limit=limit)
+        except Exception:  # noqa: BLE001 - persistence must never break a reply
+            pass
+    return _mirror_prospect(conversation, *keys)
 
 
 def _upgrade_result(conversation) -> ToolResult:
@@ -221,6 +334,18 @@ def _upgrade_result(conversation) -> ToolResult:
         f"to upgrade to keep going — point them to Pricing (in Settings, or the "
         f"/pricing page). They can still revisit the prospects they've already "
         f"worked."))
+
+
+def _unavailable_result() -> ToolResult:
+    """Returned when the durable quota store cannot be reached: research is NOT run
+    (we never research without metering it), and the model is told to relay a
+    temporary, no-fault error rather than claim any work happened."""
+    return ToolResult(summary=(
+        "The prospect-usage service is temporarily unavailable, so I did not run "
+        "research — I never research a prospect without recording it against the "
+        "user's plan. Tell the user plainly that this is a temporary problem on our "
+        "side, nothing was counted against their plan, and to try again in a moment. "
+        "Do NOT claim any research was performed or invent any findings."))
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -328,17 +453,28 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
             workspace_updates={"research": cached, "company": label,
                                "company_url": url})
 
-    # Free-tier gate: a new prospect beyond the plan cap is not researched.
-    if _free_slot_blocked(conversation, _prospect_key(company=query, url=url)):
+    # Quota gate — CLAIM a slot atomically BEFORE paying for research. If the durable
+    # store is unreachable (production), we do not research at all (fail closed); an
+    # over-cap NEW prospect prompts an upgrade; a duplicate is allowed for free.
+    prospect_key = _prospect_key(company=query, url=url)
+    claim = _claim_prospect(conversation, prospect_key)
+    if claim == "unavailable":
+        return _unavailable_result()
+    if claim == "blocked":
         return _upgrade_result(conversation)
+    claimed_new = (claim == "ok")   # a duplicate consumed nothing, so never release it
 
     try:
         result = research_company(url, find_founder=find_founder)
     except Exception:  # noqa: BLE001 - research is designed not to raise, belt-and-braces
+        if claimed_new:
+            _release_prospect(conversation, prospect_key)   # failed research consumes nothing
         return ToolResult(summary=f"Research failed unexpectedly for {url}.")
 
     status = result.get("status")
     if status == "error":
+        if claimed_new:
+            _release_prospect(conversation, prospect_key)   # unreachable => no slot spent
         hint = (" I guessed that URL from the name — ask the user for the exact "
                 "company website." if guessed else "")
         # The error text already explains WHAT was tried and what the user can do
@@ -362,6 +498,8 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
     # so plainly: the facts are second-hand and the user should know that.
     note = result.get("evidence_note") or ""
     if status == "skip":
+        if claimed_new:
+            _release_prospect(conversation, prospect_key)   # too thin to count
         return ToolResult(
             summary=(f"Researched {label} but found too little to personalize: "
                      f"{result.get('reason')}. Tell the user honestly; do not invent. "
@@ -369,9 +507,9 @@ def _tool_research(inp: dict, conversation) -> ToolResult:
                      "paste, or from a different URL."),
             workspace_updates=updates)
 
-    # A usable prospect was researched — count it against the free-tier cap.
-    updates["usage"] = _record_prospect(
-        conversation, _prospect_key(company=label, url=url))
+    # A usable prospect was researched — the slot was already claimed above; keep the
+    # in-thread mirror in sync (durable usage is already recorded).
+    updates["usage"] = _mirror_prospect(conversation, prospect_key)
 
     card = Message(
         role="assistant", kind=RESEARCH,
@@ -426,13 +564,21 @@ def _tool_deep_research(inp: dict, conversation) -> ToolResult:
         return ToolResult(summary="No company or website was given to research. "
                           "Ask the user which company they'd like me to look into.")
 
-    # Free-tier gate: a new prospect beyond the plan cap is not researched.
-    if _free_slot_blocked(conversation, _prospect_key(company=company or query, url=url)):
+    # Quota gate — CLAIM a slot atomically BEFORE paying for multi-source research.
+    # Fail closed if the durable store is unreachable in production.
+    prospect_key = _prospect_key(company=company or query, url=url)
+    claim = _claim_prospect(conversation, prospect_key)
+    if claim == "unavailable":
+        return _unavailable_result()
+    if claim == "blocked":
         return _upgrade_result(conversation)
+    claimed_new = (claim == "ok")
 
     try:
         intel = orchestrator.research(company, url=url, focus=focus)
     except Exception:  # noqa: BLE001 - orchestrator is designed not to raise
+        if claimed_new:
+            _release_prospect(conversation, prospect_key)
         # Say WHICH sources were even available, so "it didn't work" becomes a
         # fact the user can act on rather than a shrug.
         from research.providers_common import provider_status
@@ -446,9 +592,13 @@ def _tool_deep_research(inp: dict, conversation) -> ToolResult:
 
     status = intel.get("status")
     if status == "error":
+        if claimed_new:
+            _release_prospect(conversation, prospect_key)
         return ToolResult(summary="Multi-source research hit a problem: "
                           + (intel.get("error") or "unknown error") + ".")
     if status == "empty":
+        if claimed_new:
+            _release_prospect(conversation, prospect_key)
         missing = ", ".join(intel.get("providers_missing") or []) or "none"
         return ToolResult(
             summary=(f"Researched {intel.get('company')} but the providers returned "
@@ -475,7 +625,8 @@ def _tool_deep_research(inp: dict, conversation) -> ToolResult:
                  "where it helps; don't dump the whole list.\n\n" + intel_digest(intel)),
         message=card, workspace_updates={
             "intel": intel, "company": label,
-            "usage": _record_prospect(conversation, _prospect_key(company=label, url=url)),
+            # Slot already claimed above; keep the in-thread mirror in sync.
+            "usage": _mirror_prospect(conversation, prospect_key),
             **({"company_url": url} if url else {})})
 
 
@@ -1517,8 +1668,12 @@ def _tool_research_prospects(inp: dict, conversation) -> ToolResult:
                           "founders hiring an SDR') or WHICH companies to evaluate "
                           "(a list of names or websites).")
 
-    # Free-tier gate: research at most the remaining prospect allowance.
-    remaining = _remaining_prospects(conversation)
+    # Quota gate — research at most the remaining allowance. This is the batch path,
+    # where discovery+research happen in bulk, so the durable read gates it up-front;
+    # if that read fails in production we do NOT research (fail closed).
+    remaining, quota_status = _batch_quota(conversation)
+    if quota_status == "unavailable":
+        return _unavailable_result()
     if remaining <= 0:
         return _upgrade_result(conversation)
     truncated = len(leads) > remaining

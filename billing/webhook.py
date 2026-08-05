@@ -148,6 +148,11 @@ def handle_event(event: dict, *, event_name: str = None, event_id: str = None,
         status = attrs.get("status") or "active"
         plan = _plan_from_attrs(custom, attrs)
         period_end = _iso_to_epoch(attrs.get("renews_at") or attrs.get("ends_at"))
+        # On CREATE, the subscription's created_at is the accurate first-period start
+        # (correct for monthly and yearly alike). On later events we leave it None so
+        # billing.store carries the period forward from the previous end on renewal.
+        period_start = (_iso_to_epoch(attrs.get("created_at"))
+                        if etype == "subscription_created" else None)
         customer = attrs.get("customer_id")
         portal_url = ((attrs.get("urls") or {}).get("customer_portal")) or None
         if user_id and customer is not None:
@@ -165,8 +170,8 @@ def handle_event(event: dict, *, event_name: str = None, event_id: str = None,
         if user_id and sub_id:
             store.upsert_subscription(
                 user_id, plan, status, provider_subscription_id=sub_id,
-                current_period_end=period_end, provider=PROVIDER,
-                portal_url=portal_url, db=db)
+                current_period_end=period_end, current_period_start=period_start,
+                provider=PROVIDER, portal_url=portal_url, db=db)
             # A paying customer must not stay stuck behind the soft-launch access
             # gate: the moment their subscription is active, grant product access.
             # Best-effort — never let an access-store hiccup fail the billing event.

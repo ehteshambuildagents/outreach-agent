@@ -100,12 +100,35 @@ def limit_for_user(user_id: str) -> int:
     return plan_limit(plan_for_user(user_id))
 
 
-def entitlements(user_id: str, prospects_used: int) -> dict:
-    """The full billing view for /api/billing: plan, allowance, usage, status."""
+def prospects_used(user_id: str) -> int:
+    """Distinct prospects the user has consumed in their current billing period,
+    read from the durable usage store (Postgres/SQLite). Fail-safe: 0 on any DB
+    hiccup, so /api/billing and the gate never error on a billing read."""
+    try:
+        from billing import usage
+        return usage.prospects_used(user_id)
+    except Exception:  # noqa: BLE001 - usage read must never break a billing view
+        return 0
+
+
+def entitlements(user_id: str, prospects_used: int = None) -> dict:
+    """The full billing view for /api/billing: plan, allowance, usage, status,
+    period. ``prospects_used`` is read from the durable store when not supplied
+    (callers may still pass a value for tests or to avoid a second read)."""
     sub = store.active_subscription(user_id)
     plan = normalize_plan(sub["plan"]) if sub else "free"
     limit = plan_limit(plan)
-    used = int(prospects_used or 0)
+    if prospects_used is None:
+        used = globals()["prospects_used"](user_id)
+    else:
+        used = int(prospects_used or 0)
+    # Billing-period window (paid = subscription period; free = lifetime trial).
+    try:
+        from billing import usage
+        period = usage.usage_period(user_id)
+    except Exception:  # noqa: BLE001
+        period = {"period_start": None, "period_end": None}
+    remaining = (max(0, limit - used) if limit > 0 else None)
     # The plan to pitch on an upgrade surface: the next paid tier up (free -> pro,
     # pro -> max). None once there's nothing self-serve left to sell (max/enterprise).
     nxt = {"free": "pro", "pro": "max"}.get(plan)
@@ -116,7 +139,12 @@ def entitlements(user_id: str, prospects_used: int) -> dict:
         "prospects_used": used,
         # None communicates "unlimited" to the client (limit 0), matching the
         # existing Settings card contract.
-        "prospects_remaining": (max(0, limit - used) if limit > 0 else None),
+        "prospects_remaining": remaining,
+        # Explicit key the brief requires (alias of prospects_remaining).
+        "remaining": remaining,
+        # The billing period this usage is scoped to (epoch seconds).
+        "period_start": period.get("period_start"),
+        "period_end": period.get("period_end"),
         "status": (sub["status"] if sub else "none"),
         "current_period_end": (sub.get("current_period_end") if sub else None),
         # Whether this user is on a paid tier (upgrade surfaces hide for them).
