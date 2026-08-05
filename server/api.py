@@ -512,6 +512,13 @@ def health():
         "ok": True,
         "redis": "upstash" if redis.configured() else "in-memory",
         "production": settings.is_production(),
+        # Billing posture (no secrets): whether Lemon Squeezy can transact and which
+        # mode it is in, so a live deploy can be verified from outside to be enabled
+        # and NOT still pointing at Test mode.
+        "billing": {
+            "enabled": settings.lemonsqueezy_enabled(),
+            "mode": settings.LEMONSQUEEZY_MODE,
+        },
     }
 
 

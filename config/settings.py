@@ -344,17 +344,42 @@ FREE_PROSPECT_LIMIT = int(os.getenv("FREE_PROSPECT_LIMIT", "3"))
 # set on Railway). The older no-underscore LEMONSQUEEZY_* names are still read as a
 # fallback so an existing deployment keeps working; the Python attribute names below
 # stay LEMONSQUEEZY_* (they are not env keys).
-LEMONSQUEEZY_API_KEY = (os.getenv("LEMON_SQUEEZY_API_KEY")
-                        or os.getenv("LEMONSQUEEZY_API_KEY") or "").strip()
-LEMONSQUEEZY_STORE_ID = (os.getenv("LEMON_SQUEEZY_STORE_ID")
-                         or os.getenv("LEMONSQUEEZY_STORE_ID") or "").strip()
+# Test vs Live is selected by ONE switch, so an operator can keep BOTH sets of
+# credentials configured and flip modes without editing every var. When
+# LEMONSQUEEZY_MODE is "live"/"test", each LS setting prefers its mode-suffixed
+# variant (e.g. LEMON_SQUEEZY_API_KEY_LIVE / _TEST) and falls back to the plain,
+# unsuffixed name — so an existing single-set deployment keeps working unchanged.
+# The mode is also surfaced (backend-only) so a live deploy can be verified to not
+# be pointing at Test-mode ids.
+LEMONSQUEEZY_MODE = (os.getenv("LEMON_SQUEEZY_MODE")
+                     or os.getenv("LEMONSQUEEZY_MODE") or "live").strip().lower()
+if LEMONSQUEEZY_MODE not in ("live", "test"):
+    LEMONSQUEEZY_MODE = "live"
+_LS_MODE_SUFFIX = "_LIVE" if LEMONSQUEEZY_MODE == "live" else "_TEST"
+
+
+def _ls_env(*names: str, default: str = "") -> str:
+    """Read an LS env var, preferring the active mode's suffixed variant, then the
+    plain name. ``names`` are tried in order (new convention first, legacy fallback)."""
+    for n in names:
+        v = os.getenv(n + _LS_MODE_SUFFIX)
+        if v and v.strip():
+            return v.strip()
+    for n in names:
+        v = os.getenv(n)
+        if v and v.strip():
+            return v.strip()
+    return default
+
+
+LEMONSQUEEZY_API_KEY = _ls_env("LEMON_SQUEEZY_API_KEY", "LEMONSQUEEZY_API_KEY")
+LEMONSQUEEZY_STORE_ID = _ls_env("LEMON_SQUEEZY_STORE_ID", "LEMONSQUEEZY_STORE_ID")
 # The webhook's signing secret (Settings → Webhooks in the LS dashboard). LS signs
 # the raw body with HMAC-SHA256 and sends the hex digest in the X-Signature header.
-LEMONSQUEEZY_WEBHOOK_SECRET = (os.getenv("LEMON_SQUEEZY_WEBHOOK_SECRET")
-                               or os.getenv("LEMONSQUEEZY_WEBHOOK_SECRET") or "").strip()
-LEMONSQUEEZY_API_BASE = (os.getenv("LEMON_SQUEEZY_API_BASE")
-                         or os.getenv("LEMONSQUEEZY_API_BASE")
-                         or "https://api.lemonsqueezy.com").rstrip("/")
+LEMONSQUEEZY_WEBHOOK_SECRET = _ls_env("LEMON_SQUEEZY_WEBHOOK_SECRET",
+                                      "LEMONSQUEEZY_WEBHOOK_SECRET")
+LEMONSQUEEZY_API_BASE = _ls_env("LEMON_SQUEEZY_API_BASE", "LEMONSQUEEZY_API_BASE",
+                                default="https://api.lemonsqueezy.com").rstrip("/")
 
 # Which LS *variant* the checkout uses, per (plan, billing interval). A variant is
 # the purchasable price of a product; create the products/variants in the LS
@@ -363,17 +388,20 @@ LEMONSQUEEZY_API_BASE = (os.getenv("LEMON_SQUEEZY_API_BASE")
 # LEMON_SQUEEZY_{PRO,MAX}_VARIANT_ID, with the older LEMONSQUEEZY_VARIANT_*_MONTHLY
 # accepted as fallbacks. A plan with no variant configured simply can't be checked
 # out (clean 400).
+# Each variant id also honours the Test/Live mode suffix (e.g.
+# LEMON_SQUEEZY_PRO_VARIANT_ID_LIVE), so a Live deploy can never accidentally check
+# out against a Test-mode variant when both are configured.
 LEMONSQUEEZY_VARIANT_IDS = {
-    "pro_monthly": (os.getenv("LEMON_SQUEEZY_PRO_VARIANT_ID")
-                    or os.getenv("LEMONSQUEEZY_VARIANT_PRO_MONTHLY")
-                    or os.getenv("LEMONSQUEEZY_VARIANT_STARTER_MONTHLY") or "").strip(),
-    "pro_yearly": (os.getenv("LEMON_SQUEEZY_PRO_YEARLY_VARIANT_ID")
-                   or os.getenv("LEMONSQUEEZY_VARIANT_PRO_YEARLY") or "").strip(),
-    "max_monthly": (os.getenv("LEMON_SQUEEZY_MAX_VARIANT_ID")
-                    or os.getenv("LEMONSQUEEZY_VARIANT_MAX_MONTHLY")
-                    or os.getenv("LEMONSQUEEZY_VARIANT_GROWTH_MONTHLY") or "").strip(),
-    "max_yearly": (os.getenv("LEMON_SQUEEZY_MAX_YEARLY_VARIANT_ID")
-                   or os.getenv("LEMONSQUEEZY_VARIANT_MAX_YEARLY") or "").strip(),
+    "pro_monthly": _ls_env("LEMON_SQUEEZY_PRO_VARIANT_ID",
+                           "LEMONSQUEEZY_VARIANT_PRO_MONTHLY",
+                           "LEMONSQUEEZY_VARIANT_STARTER_MONTHLY"),
+    "pro_yearly": _ls_env("LEMON_SQUEEZY_PRO_YEARLY_VARIANT_ID",
+                          "LEMONSQUEEZY_VARIANT_PRO_YEARLY"),
+    "max_monthly": _ls_env("LEMON_SQUEEZY_MAX_VARIANT_ID",
+                           "LEMONSQUEEZY_VARIANT_MAX_MONTHLY",
+                           "LEMONSQUEEZY_VARIANT_GROWTH_MONTHLY"),
+    "max_yearly": _ls_env("LEMON_SQUEEZY_MAX_YEARLY_VARIANT_ID",
+                          "LEMONSQUEEZY_VARIANT_MAX_YEARLY"),
 }
 
 # Marketing/legacy plan name -> canonical id (kept in sync with billing.PLAN_ALIASES;

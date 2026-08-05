@@ -161,6 +161,21 @@ class PlanModelTests(unittest.TestCase):
         self.assertTrue(pro["is_paid"])
         self.assertEqual(pro["recommended_upgrade"], "max")
 
+    def test_open_subscription_flags_live_but_not_dead_subscriptions(self):
+        # The duplicate-subscription guard rests on this: a LIVE subscription blocks
+        # a second checkout; a cancelled/expired one does not (it won't re-bill).
+        bstore.upsert_subscription("uo", "pro", "active",
+                                   provider_subscription_id="o1")
+        self.assertIsNotNone(bstore.open_subscription("uo"))
+        bstore.set_subscription_status("o1", "past_due")   # still live, LS retries
+        self.assertIsNotNone(bstore.open_subscription("uo"))
+        bstore.set_subscription_status("o1", "paused")     # still live, can resume
+        self.assertIsNotNone(bstore.open_subscription("uo"))
+        bstore.set_subscription_status("o1", "cancelled")  # won't re-bill => safe
+        self.assertIsNone(bstore.open_subscription("uo"))
+        bstore.set_subscription_status("o1", "expired")    # gone
+        self.assertIsNone(bstore.open_subscription("uo"))
+
 
 # ── Env-var name mapping (regression: Railway uses LEMON_SQUEEZY_*) ──────
 class EnvNameMappingTests(unittest.TestCase):
@@ -171,7 +186,9 @@ class EnvNameMappingTests(unittest.TestCase):
 
     _KEYS = ["LEMON_SQUEEZY_API_KEY", "LEMON_SQUEEZY_STORE_ID",
              "LEMON_SQUEEZY_WEBHOOK_SECRET", "LEMONSQUEEZY_API_KEY",
-             "LEMONSQUEEZY_STORE_ID", "LEMONSQUEEZY_WEBHOOK_SECRET"]
+             "LEMONSQUEEZY_STORE_ID", "LEMONSQUEEZY_WEBHOOK_SECRET",
+             "LEMON_SQUEEZY_MODE", "LEMONSQUEEZY_MODE",
+             "LEMON_SQUEEZY_API_KEY_LIVE", "LEMON_SQUEEZY_API_KEY_TEST"]
 
     def _snapshot_with(self, env):
         """Reload config.settings under ``env`` and return a snapshot of the
@@ -186,6 +203,7 @@ class EnvNameMappingTests(unittest.TestCase):
             return {"api_key": s.LEMONSQUEEZY_API_KEY,
                     "store_id": s.LEMONSQUEEZY_STORE_ID,
                     "secret": s.LEMONSQUEEZY_WEBHOOK_SECRET,
+                    "mode": s.LEMONSQUEEZY_MODE,
                     "enabled": s.lemonsqueezy_enabled()}
         finally:
             for k in self._KEYS:
@@ -213,6 +231,35 @@ class EnvNameMappingTests(unittest.TestCase):
 
     def test_unset_is_disabled(self):
         self.assertFalse(self._snapshot_with({})["enabled"])
+
+    def test_mode_selects_the_suffixed_credentials(self):
+        # Both sets configured; the mode switch decides which is live. Test mode
+        # picks the _TEST key even though a _LIVE key is also present.
+        snap = self._snapshot_with({
+            "LEMON_SQUEEZY_MODE": "test",
+            "LEMON_SQUEEZY_API_KEY_TEST": "ls_key_test",
+            "LEMON_SQUEEZY_API_KEY_LIVE": "ls_key_live",
+            "LEMON_SQUEEZY_STORE_ID": "7", "LEMON_SQUEEZY_WEBHOOK_SECRET": "whsec"})
+        self.assertEqual(snap["mode"], "test")
+        self.assertEqual(snap["api_key"], "ls_key_test")
+
+    def test_live_mode_prefers_live_suffix_then_plain(self):
+        snap = self._snapshot_with({
+            "LEMON_SQUEEZY_MODE": "live",
+            "LEMON_SQUEEZY_API_KEY_LIVE": "ls_key_live",
+            "LEMON_SQUEEZY_API_KEY": "ls_key_plain",
+            "LEMON_SQUEEZY_STORE_ID": "7", "LEMON_SQUEEZY_WEBHOOK_SECRET": "whsec"})
+        self.assertEqual(snap["mode"], "live")
+        self.assertEqual(snap["api_key"], "ls_key_live")
+
+    def test_default_mode_is_live_and_falls_back_to_plain_names(self):
+        # No mode set, only plain names: still works (backward compatible), mode live.
+        snap = self._snapshot_with({"LEMON_SQUEEZY_API_KEY": "ls_plain",
+                                    "LEMON_SQUEEZY_STORE_ID": "1",
+                                    "LEMON_SQUEEZY_WEBHOOK_SECRET": "whsec"})
+        self.assertEqual(snap["mode"], "live")
+        self.assertEqual(snap["api_key"], "ls_plain")
+        self.assertTrue(snap["enabled"])
 
 
 # ── Webhook signature verification (LS: raw-body HMAC, hex, no timestamp) ─
@@ -506,6 +553,31 @@ class BillingApiTests(unittest.TestCase):
         self.assertEqual(kwargs["user_id"], "member1")
         self.assertEqual(kwargs["plan"], "max")
         self.assertEqual(kwargs["variant_id"], "v_max_m")
+
+    def test_active_subscriber_cannot_start_a_second_checkout(self):
+        # The core duplicate-subscription defence: an already-subscribed user is
+        # refused a new checkout (409) and pointed at the portal. LS would otherwise
+        # create a SECOND subscription and bill both.
+        bstore.upsert_subscription("member1", "pro", "active",
+                                   provider_subscription_id="sub_live")
+        import server.billing_api as bapi
+        with mock.patch.object(bapi.ls_client, "create_checkout") as m:
+            resp = self.client.post("/api/billing/checkout", json={"plan": "max"})
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("Manage Billing", resp.json()["error"])
+        m.assert_not_called()   # no checkout was ever created with the provider
+
+    def test_checkout_allowed_again_after_subscription_ends(self):
+        # A cancelled/expired subscription will not re-bill, so a fresh checkout is
+        # allowed (re-subscribe) — the guard only blocks LIVE subscriptions.
+        bstore.upsert_subscription("member1", "pro", "expired",
+                                   provider_subscription_id="sub_dead")
+        import server.billing_api as bapi
+        with mock.patch.object(bapi.ls_client, "create_checkout",
+                               return_value={"url": "https://saqua.lemonsqueezy.com/y",
+                                             "id": "chk_y"}):
+            resp = self.client.post("/api/billing/checkout", json={"plan": "pro"})
+        self.assertEqual(resp.status_code, 200)
 
     def test_checkout_accepts_marketing_alias(self):
         # "starter" (public name) normalizes to canonical "pro" + its variant.

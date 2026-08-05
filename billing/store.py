@@ -29,6 +29,13 @@ DEFAULT_PROVIDER = "lemonsqueezy"
 # drops to Free.
 ACTIVE_STATUSES = ("active", "on_trial")
 
+# Statuses that mean the user still has a LIVE Lemon Squeezy subscription that
+# could bill again — so starting a second checkout would create a duplicate and
+# double-charge them. A *cancelled* subscription is deliberately NOT here: it will
+# not renew, so re-subscribing is safe; ``expired`` is gone entirely. Plan changes
+# for an open subscription must go through the customer portal, never a new checkout.
+OPEN_STATUSES = ("active", "on_trial", "past_due", "unpaid", "paused")
+
 
 def _db() -> Database:
     return Database()
@@ -67,6 +74,29 @@ def active_subscription(user_id: str, *, now: float = None, db: Database = None)
             f") ORDER BY updated_at DESC LIMIT 1",
             (user_id, *ACTIVE_STATUSES, now))
     except Exception:  # noqa: BLE001 - unmigrated/unavailable DB => treat as Free
+        return None
+    return dict(rows[0]) if rows else None
+
+
+def open_subscription(user_id: str, *, db: Database = None):
+    """The user's newest LIVE subscription (any :data:`OPEN_STATUSES`), or None.
+
+    Unlike :func:`active_subscription` (which gates entitlement and honours the
+    cancelled grace window), this answers a different question: "does a second
+    checkout risk creating a duplicate that double-charges?" A cancelled or expired
+    subscription returns None here, because it will not bill again, so the user may
+    safely start a fresh checkout; anything still live routes plan changes to the
+    portal instead. Tolerant of an unmigrated/unavailable DB (returns None)."""
+    if not user_id:
+        return None
+    db = db or _db()
+    placeholders = ",".join("?" for _ in OPEN_STATUSES)
+    try:
+        rows = db.query(
+            f"SELECT * FROM billing_subscriptions WHERE user_id=? "
+            f"AND status IN ({placeholders}) ORDER BY updated_at DESC LIMIT 1",
+            (user_id, *OPEN_STATUSES))
+    except Exception:  # noqa: BLE001 - unmigrated/unavailable => treat as none
         return None
     return dict(rows[0]) if rows else None
 

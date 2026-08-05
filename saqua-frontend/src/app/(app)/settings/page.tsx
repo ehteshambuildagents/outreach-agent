@@ -516,8 +516,13 @@ export default function SettingsPage() {
                 </Button>
               ) : (
                 <div className="mt-5 space-y-2">
+                  {/* Plan switching is portal-only: a subscribed user never sees a
+                      checkout button (Lemon Squeezy would create a SECOND
+                      subscription and double-charge). Upgrade tiers show only for a
+                      user with no active subscription; everyone else uses Manage
+                      billing below to change or cancel. */}
                   {planTiers
-                    .filter((tier) => !billing || tier.prospects > billing.prospect_limit)
+                    .filter((tier) => !billing || (!billing.is_paid && tier.prospects > billing.prospect_limit))
                     .map((tier) => (
                       <Button
                         key={tier.id}

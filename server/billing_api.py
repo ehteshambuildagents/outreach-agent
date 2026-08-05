@@ -94,6 +94,17 @@ def register(app, *, rl_read=None, rl_write=None, store_for=None,
             raise HTTPException(
                 status_code=503,
                 detail="Billing isn't available yet. Please check back soon.")
+        # Duplicate-subscription guard. Lemon Squeezy does NOT swap plans on a new
+        # checkout — it creates a SECOND subscription and bills both. So an
+        # already-subscribed user is never allowed to start another checkout; plan
+        # changes and cancellations go through the customer portal. This is the
+        # deliberate "switching disabled, portal-only" launch posture: our flow is
+        # structurally incapable of creating two subscriptions.
+        if billing_store.open_subscription(user):
+            raise HTTPException(
+                status_code=409,
+                detail="You already have an active subscription. Use Manage "
+                       "Billing to change or cancel your plan.")
         variant_id = settings.lemonsqueezy_variant_id(body.plan, body.interval)
         if not variant_id:
             raise HTTPException(
