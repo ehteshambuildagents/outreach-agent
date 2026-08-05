@@ -132,6 +132,12 @@ _DIRECTORIES = frozenset({
     "dnb.com", "opencorporates.com", "companieshouse.gov.uk", "zippia.com",
     "comparably.com", "trycomp.com", "levels.fyi", "payscale.com",
     "salary.com",
+    # A sales-org RATING / REVIEW platform and a fintech ecosystem HUB (jobs /
+    # companies / reports / news), surfaced as false "prospects" on a live sales
+    # search (2026-08-05). Both are pages ABOUT other companies. The generic
+    # is_review_platform / is_directory_hub detectors catch their whole family;
+    # these entries make the two exact domains unconditional.
+    "repvue.com", "3xfintech.com",
 })
 
 # Listicle / SEO round-up publishers.
@@ -142,6 +148,11 @@ _LIST_SITES = frozenset({
     "aitools.fyi", "insidr.ai", "supertools.therundown.ai",
     # A directory of VC-backed startups — a page ABOUT companies, not a company.
     "vcbacked.co",
+    # A keyword-stuffed CONTENT / informational site (its home page is a "how much
+    # does SOC 2 compliance cost" article, with no product), surfaced as a false
+    # "prospect" on a live sales search (2026-08-05). The generic
+    # is_informational_content check catches the family; this pins the exact domain.
+    "soc2compliancecost.com",
 })
 
 _MEDIA = frozenset({
@@ -303,6 +314,101 @@ def is_media_content(title: str = "", content: str = "") -> bool:
     return len(content_types) >= 3
 
 
+# A ratings / reviews PLATFORM: a site whose whole purpose is collecting and
+# publishing reviews or ratings OF other companies — RepVue rates sales orgs, G2
+# rates software, Glassdoor rates employers. It self-identifies as a "rating /
+# review platform", or invites you to browse / compare / read reviews and ratings
+# of companies, employers or products IN BULK. A real company's own social proof
+# ("trusted by 500 teams", "what our customers say", "read customer stories") is
+# deliberately NOT this: the subject there is the company itself, not a directory
+# of other companies, so the phrasing below always names the reviewed THIRD PARTY.
+_REVIEW_PLATFORM_RE = re.compile(
+    r"\b(?:ratings?|reviews?)\s+(?:platform|site|website|community|directory|"
+    r"marketplace|aggregator)\b"
+    r"|\b(?:largest|leading|top|#?1|number\s+one|world'?s\s+(?:largest|biggest))"
+    r"\s+[\w\s,'-]{0,30}?(?:ratings?|reviews?)\s+(?:platform|site|community|"
+    r"directory|website)\b"
+    r"|\brate\s+(?:and\s+review\s+)?(?:your|their|companies|employers|"
+    r"sales\s+orgs?|vendors?|products?|software)\b"
+    r"|\b(?:browse|compare|read|explore|search|find)\s+(?:\d[\d,]*\+?\s+)?"
+    r"(?:company|companies|employer|employers|product|products|software|"
+    r"verified|user|employee|anonymous)\s+(?:ratings?|reviews?)\b"
+    r"|\b(?:verified|anonymous|real)\s+(?:employee|company|user|customer)\s+"
+    r"reviews\s+(?:of|from|for)\b"
+    r"|\bsales\s+org(?:anization)?s?\s+(?:ratings?|reviews?|rankings?)\b",
+    re.I)
+
+
+def is_review_platform(title: str = "", content: str = "") -> bool:
+    """True when a page IS a third-party review/rating platform (a directory of
+    reviews ABOUT other companies), not a company that happens to have reviews."""
+    return bool(_REVIEW_PLATFORM_RE.search(f"{title or ''}\n{content or ''}"))
+
+
+# A multi-section aggregation HUB: one site bundling several directory sections
+# about a whole market — jobs AND companies AND funding AND news AND reports — the
+# shape of a "fintech ecosystem hub" (3xfintech). A real operating company sells
+# ONE product; it does not offer a browse-everything index of a market. So the
+# tell is BREADTH: three or more distinct aggregation sections offered together
+# behind a browse/discover/directory verb. This is separate from _LISTING_TEXT_RE
+# (which keys on a count or an explicit "browse jobs"); this keys on the spread.
+_HUB_SECTION_RE = re.compile(
+    r"\b(jobs|companies|startups|investors|funding\s+rounds?|fundraises?|deals|"
+    r"reports|news|events|salaries|reviews|ratings|grants|accelerators|"
+    r"incubators|founders|ecosystem)\b", re.I)
+_HUB_VERB_RE = re.compile(
+    r"\b(browse|explore|discover|find|search|directory|database|listings?|"
+    r"the\s+(?:home|hub|platform|destination)\s+for|all[\s-]in[\s-]one|"
+    r"everything\s+(?:about|for)|your\s+(?:guide|gateway)\s+to)\b", re.I)
+
+
+def is_directory_hub(title: str = "", content: str = "") -> bool:
+    """True when a page is a market-wide aggregation hub: three-plus distinct
+    directory sections (jobs/companies/funding/news/reports/events…) offered
+    together behind a browse/discover verb. Catches an 'ecosystem hub' whose
+    domain looks ordinary (3xfintech.com) without a curated entry."""
+    text = f"{title or ''}\n{content or ''}"
+    sections = {m.group(0).lower() for m in _HUB_SECTION_RE.finditer(text)}
+    return len(sections) >= 3 and bool(_HUB_VERB_RE.search(text))
+
+
+# A pure CONTENT / informational asset: an article or guide answering a question
+# ("How much does SOC 2 compliance cost?") rather than selling a product. Caught
+# only when BOTH the headline shape AND an explanatory body idiom are present, and
+# left to the caller (sources._reject_reason) to additionally require the ABSENCE
+# of product/company evidence — because a real company can publish one guide, but
+# its home page still shows pricing/product/customers, whereas a content site's
+# home page is the article itself.
+_INFORMATIONAL_TITLE_RE = re.compile(
+    r"^\s*(?:"
+    r"how\s+(?:much|many|to|do(?:es)?|long|often|can|should)\b"
+    r"|what\s+(?:is|are|does|do|to)\b|why\s+(?:is|are|do|does|you|should)\b"
+    r"|when\s+(?:to|is|do|should)\b|where\s+(?:to|do|can)\b"
+    r"|(?:the\s+)?(?:true\s+)?(?:cost|price|pricing|average\s+cost)\s+of\b"
+    r"|is\s+\w+\s+worth\b"
+    r")",
+    re.I)
+_INFORMATIONAL_BODY_RE = re.compile(
+    r"\b(?:in\s+this\s+(?:article|guide|post|blog)"
+    r"|this\s+(?:article|guide|post)\s+(?:explains|covers|will|breaks?\s+down)"
+    r"|(?:we|we'?ll|let'?s)\s+(?:break\s+down|explain|explore|cover|walk\s+through)"
+    r"|learn\s+(?:how|what|why|about|everything)"
+    r"|everything\s+you\s+need\s+to\s+know"
+    r"|table\s+of\s+contents|frequently\s+asked\s+questions"
+    r"|read\s+(?:our\s+)?(?:full\s+)?(?:guide|article))\b", re.I)
+
+
+def is_informational_content(title: str = "", content: str = "") -> bool:
+    """True when a page reads as an informational article/guide (question-shaped
+    headline plus an explanatory body idiom). Intentionally requires BOTH so a
+    company home page with a marketing tagline is untouched; the product-absence
+    check is the caller's, so this alone never drops a real company."""
+    t = (title or "").strip()
+    body = f"{title or ''}\n{content or ''}"
+    return bool((_INFORMATIONAL_TITLE_RE.search(t) or _ARTICLE_TITLE_RE.search(t))
+                and _INFORMATIONAL_BODY_RE.search(body))
+
+
 # Paths that mark a listing/index page rather than a company page.
 _LISTING_PATHS = (
     "/jobs/", "/job/", "/careers/search", "/vacancies", "/openings",
@@ -377,6 +483,11 @@ def page_kind(url: str = "", title: str = "", content: str = "") -> str:
     # a media platform on an unlisted domain that a headline check would miss.
     if is_media_content(title, content):
         return MEDIA
+    # A third-party review/rating platform (RepVue rates sales orgs) or a
+    # market-wide aggregation hub (3xfintech bundles jobs+companies+news+reports):
+    # both are pages ABOUT other companies, so they are directories, dropped.
+    if is_review_platform(title, content) or is_directory_hub(title, content):
+        return DIRECTORY
     if any(part in path for part in _LISTING_PATHS):
         return LIST_SITE if any(p in path for p in ("/best-", "/top-", "/compare/",
                                                     "/alternatives")) else DIRECTORY
@@ -420,10 +531,31 @@ _STAFFING_SERVICE_RE = re.compile(
     r"\b(?:staffing|recruiting|recruitment|placement|talent)\s+"
     r"(?:agency|agencies|firm|firms|partner|services)\b"
     r"|\bexecutive\s+search\b"
-    r"|\boutsourced\s+(?:sdr|bdr|sales\s+development|recruiting)\b"
-    r"|\b(?:sdr|bdr)s?\s+as\s+a\s+service\b"
-    r"|\bsales\s+development\s+company\b"
-    r"|\bwe\s+(?:place|recruit\s+and\s+train)\b",
+    r"|\boutsourced\s+(?:sdr|bdr|sales\s+development|recruiting|sales|"
+    r"lead\s+gen(?:eration)?|prospecting)\b"
+    r"|\b(?:sdr|bdr|sales|lead\s+gen(?:eration)?|prospecting|outbound)"
+    r"\s+as\s+a\s+service\b"
+    r"|\bsales\s+development\s+(?:company|agency|as\s+a\s+service)\b"
+    r"|\bwe\s+(?:place|recruit\s+and\s+train)\b"
+    # An outbound / appointment-setting agency that sells other companies its own
+    # reps' output. The tell is that IT (or its reps) does the selling FOR a client
+    # — "our SDRs book meetings", "we book meetings through experienced SDRs",
+    # "appointment-setting service", "we provide dedicated SDRs". This must NOT
+    # catch a PRODUCT a company buys to book its OWN meetings ("book more meetings
+    # with our AI"), which is a genuine prospect — so every branch anchors on the
+    # agency, its reps, or the for-you framing, never a bare "book meetings".
+    r"|\b(?:sdrs?|bdrs?|reps?|sales\s+reps?)\s+(?:who\s+)?(?:book|set|generate)\s+"
+    r"(?:you\s+|your\s+|more\s+|qualified\s+)?(?:meetings|appointments|demos|leads)\b"
+    r"|\b(?:book(?:s|ing)?|set(?:s|ting)?|generat(?:e|es|ing)?)\s+"
+    r"(?:you\s+|your\s+|more\s+|qualified\s+)?(?:meetings|appointments|demos)\s+"
+    r"(?:for\s+you|for\s+your|on\s+your\s+behalf|through\s+(?:our\s+|experienced\s+"
+    r"|trained\s+)?(?:sdrs?|bdrs?|reps?)|with\s+our\s+(?:sdrs?|bdrs?|reps?|team))\b"
+    r"|\bappointment[- ]setting\b"
+    r"|\bwe\s+(?:provide|supply|build|train|manage)\s+"
+    r"(?:you\s+|your\s+|dedicated\s+|trained\s+|experienced\s+)?"
+    r"(?:sdrs?|bdrs?|reps?|sales\s+reps?|sales\s+teams?)\b"
+    r"|\b(?:outsourced|dedicated|fractional)\s+(?:sdr|bdr|sales)\s+"
+    r"(?:team|reps?|service|talent)\b",
     re.I)
 
 

@@ -164,6 +164,17 @@ _STAGE_FROM_SIGNAL = {
 }
 
 
+# Agencies / staffing firms / content sites the live smoke test surfaced whose
+# scraped snippets are too thin for the generic content detectors to classify.
+# The generic detectors (aggregators.sells_staffing, _SERVICE_OR_AGENCY_RE,
+# is_informational_content) catch each FAMILY when the copy describes the business;
+# these pin the exact domains that reached the page with near-empty descriptions.
+_KNOWN_NON_PROSPECTS = frozenset({
+    "caugia.com",         # software-development agency / consultancy
+    "salessourcers.com",  # outsourced-SDR staffing (books meetings via its reps)
+})
+
+
 def _is_company_domain(domain: str) -> bool:
     if not domain or "." not in domain:
         return False
@@ -200,6 +211,15 @@ def assess(raw: dict, query=None) -> tuple:
             return "", why
         if aggregators.query_requests(kind, _query_text(query)):
             return aggregators.COMPANY, ""
+        # A staffing / outbound-as-a-service firm (classified MARKETPLACE because it
+        # SELLS the labour) is the wrong entity type for an operating-company ask,
+        # not just a fallback: salessourcers.com sells outsourced SDR work, so a
+        # "SaaS companies hiring SDRs" search must drop it, not merely demote it.
+        if (kind == aggregators.MARKETPLACE
+                and aggregators.sells_staffing(raw.get("title") or "",
+                                               raw.get("content") or "")
+                and _query_wants_operating_company(query)):
+            return "", "staffing_service_not_requested_type"
         return kind, ""
     reason = _reject_reason(raw, query)
     return ("", reason) if reason else (aggregators.COMPANY, "")
@@ -223,6 +243,11 @@ def _reject_reason(raw: dict, query=None) -> str | None:
 
     if not _is_company_domain(domain):
         return "non_company_domain"
+    # Curated backstop for QA-named agencies/staffing whose live snippets are too
+    # thin to classify from content — but only when the ask is NOT for agencies, so
+    # an explicit "find me agencies" search can still surface a real one.
+    if domain in _KNOWN_NON_PROSPECTS and not _query_wants_agency(query):
+        return "known_non_prospect"
     if domain.endswith(".vc") and not _query_allows_investors(query):
         return "vc_or_investor_domain"
     if any(part in path for part in _BAD_PATH_PARTS):
@@ -235,8 +260,26 @@ def _reject_reason(raw: dict, query=None) -> str | None:
         return "media_or_reference_content"
     if _VC_INVESTOR_RE.search(text) and not _query_allows_investors(query):
         return "vc_or_investor_site"
-    if _query_targets_saas(query) and _SERVICE_OR_AGENCY_RE.search(text):
-        return "service_agency_not_saas_product"
+    # Entity-type compatibility: when the ask is for operating product companies /
+    # startups, an agency or consultancy is the wrong TYPE, not merely off-topic
+    # (caugia.com). Only when the user did not ask for agencies (that check is
+    # inside _query_wants_operating_company).
+    if _query_wants_operating_company(query) and _SERVICE_OR_AGENCY_RE.search(text):
+        return "service_agency_not_requested_type"
+    # Keyword-sense collision: for a sales-rep search, "SDR" means Sales
+    # Development Representative. A software-defined-radio page (rtl-sdr.com) with
+    # no sales vocabulary at all matched only on the acronym and must drop.
+    if (_query_role_is_sales_rep(query) and _RADIO_SENSE_RE.search(text)
+            and not _SALES_SENSE_RE.search(text)):
+        return "keyword_sense_mismatch"
+    # A purely informational article / guide with no product behind it
+    # (soc2compliancecost.com): a question-shaped headline plus an explanatory body,
+    # and none of the product-offering / pricing / customers evidence a real
+    # company's home page carries.
+    if aggregators.is_informational_content(title, content) and not (
+            any(path.startswith(p) for p in _BUSINESS_PATH_PARTS)
+            or _PROOF_RE.search(text) or _PRODUCT_OFFERING_RE.search(text)):
+        return "informational_content_no_product"
 
     root_or_home = path in ("", "/")
     business_path = any(path.startswith(part) for part in _BUSINESS_PATH_PARTS)
@@ -341,23 +384,140 @@ def _query_targets_saas(query) -> bool:
     return bool(re.search(r"\b(saas|software|devtools?|developer tools?|ai tools?|platforms?)\b", text))
 
 
+# When the user asks for AGENCIES / consultancies / staffing explicitly, those are
+# the requested type and must NOT be rejected as the wrong entity type.
+_QUERY_WANTS_AGENCY_RE = re.compile(
+    r"\b(agenc(?:y|ies)|consultanc(?:y|ies)|consultants?|consulting|staffing|"
+    r"recruit(?:ing|ment)\s+firms?|outsourc\w*|studios?|service\s+providers?|"
+    r"system\s+integrators?|dev\s+shops?)\b", re.I)
+
+# The user is asking for OPERATING PRODUCT COMPANIES / startups in a vertical: a
+# SaaS/software product, a named vertical (fintech, healthtech…), or "startups" /
+# "companies" / "vendors". This is the signal that an agency, a staffing firm, a
+# review platform or a content site is the WRONG entity type for the ask.
+_QUERY_WANTS_COMPANY_RE = re.compile(
+    r"\b(saas|software|startups?|scale-?ups?|companies|company|vendors?|"
+    r"platforms?|products?|tools?|apps?|fintech|healthtech|edtech|proptech|"
+    r"insurtech|legaltech|martech|adtech|hrtech|climate\s?tech|deeptech|biotech|"
+    r"devtools?|developer\s+tools?|cybersecurity|b2b|b2c|e-?commerce)\b", re.I)
+
+
+def _query_wants_agency(query) -> bool:
+    return bool(_QUERY_WANTS_AGENCY_RE.search(_query_text(query)))
+
+
+def _query_wants_operating_company(query) -> bool:
+    """True when the ask is for operating product companies / startups in a
+    vertical, and NOT for agencies. This is what makes an agency, a staffing firm
+    or a content/review site the wrong entity type rather than merely off-topic."""
+    return (bool(_QUERY_WANTS_COMPANY_RE.search(_query_text(query)))
+            and not _query_wants_agency(query))
+
+
+# A sales-development role (SDR/BDR/AE): the ask is about companies HIRING sales
+# reps, so the acronym "SDR" means Sales Development Representative here.
+def _query_role_is_sales_rep(query) -> bool:
+    return bool(re.search(
+        r"\b(sdrs?|bdrs?|sales\s+development|business\s+development\s+rep\w*|"
+        r"sales\s+reps?|account\s+executives?|inside\s+sales)\b",
+        _query_text(query)))
+
+
+# The OTHER sense of "SDR": software-defined radio. A page steeped in radio
+# vocabulary that carries no sales/GTM vocabulary at all matched a sales search
+# only on the acronym collision (rtl-sdr.com). Requiring the sales sense to be
+# ABSENT keeps a real sales company that happens to mention "frequency" safe.
+_RADIO_SENSE_RE = re.compile(
+    r"\b(software[- ]defined\s+radio|rtl[- ]?sdr|rtl2832|hack\s?rf|ham\s+radio|"
+    r"amateur\s+radio|radio\s+frequenc(?:y|ies)|antennas?|transceivers?|"
+    r"gnu\s+radio|spectrum\s+analy[sz]er|sdr\s+(?:dongle|receiver|radio)|"
+    r"shortwave|adsb|ads-b|\bmhz\b|\bghz\b|kilohertz|megahertz|gigahertz)\b",
+    re.I)
+_SALES_SENSE_RE = re.compile(
+    r"\b(sales\s+development|business\s+development|account\s+executives?|"
+    r"outbound|inside\s+sales|sales\s+team|sales\s+rep|quota|pipeline|"
+    r"prospect(?:s|ing)?|cold\s+(?:call|email)|\bcrm\b|revenue\s+team|"
+    r"demand\s+gen\w*|go[- ]to[- ]market|\bgtm\b|lead\s+gen\w*|\bb2b\b\s+sales)\b",
+    re.I)
+
+
+# Common startup domain wrappers: "getmercury.com" is Mercury, "tryramp.com" is
+# Ramp. When the domain core is the brand plus one of these, a title fragment that
+# equals the brand alone is still supported by the domain.
+_DOMAIN_AFFIXES = ("get", "try", "use", "go", "app", "hq", "join", "my", "the",
+                   "hey", "meet", "on", "with", "team", "join", "run", "build")
+
+# Trailing page-section words a scraped <title> appends to the brand: "Zenskar
+# Pricing Plans", "Acme Reviews", "Foo Login". Stripped so the displayed name is
+# the brand, not the landing-page section.
+_PAGE_SECTION_TAIL_RE = re.compile(
+    r"\s+(?:pricing(?:\s+plans?)?|plans?|reviews?|review|login|log\s?in|"
+    r"sign\s?in|sign\s?up|docs|documentation|blog|features?|demo|home|homepage|"
+    r"about(?:\s+us)?|contact(?:\s+us)?|overview|solutions?|products?)\s*$", re.I)
+
+
 def _name_from(title: str, domain: str) -> str:
-    """Best-effort company name: the lead fragment of the title, else the domain
-    core capitalised."""
+    """Best-effort company name: the lead fragment of the title WHEN it is backed
+    by the domain, else the domain core capitalised.
+
+    The domain-backing check is what stops two live failure modes: a headline that
+    is not the brand at all ("Looking for your next SDR role?" on nooks.ai) and a
+    fragment that is a TRUNCATION of the brand ("Victor" on victorfi.com). In both
+    the domain core is the honest name, because "company name supported by
+    official-domain evidence" is a display-gate requirement, not a nicety."""
+    core = domain.split(".")[0]
     t = (title or "").strip()
     if t:
-        # Cut at the first separator that usually precedes a tagline.
-        frag = re.split(r"\s[|\-–—:·]\s", t, maxsplit=1)[0].strip()
+        # Cut at the first separator that usually precedes a tagline. A colon or
+        # pipe needs only a trailing space ("Adyen: Fintech platform" -> "Adyen");
+        # a dash needs spaces on both sides so a hyphenated brand is left intact.
+        frag = re.split(r"\s*[|:·]\s+|\s+[–—-]\s+", t, maxsplit=1)[0].strip()
+        # Trim trailing landing-page section words ("Zenskar Pricing Plans").
+        prev = None
+        while frag and frag != prev:
+            prev, frag = frag, _PAGE_SECTION_TAIL_RE.sub("", frag).strip()
         # Reject obviously non-name fragments: listicle headings, and the
         # careers-page headings a hiring query surfaces constantly. A live run
         # returned the company "Explore SDR Sales Jobs" (really memoryblue.com),
         # where the domain core was the far better name.
         if 1 <= len(frag.split()) <= 6 and not re.search(
                 r"\b(top|best|list|companies|startups|jobs|careers|hiring|"
-                r"openings|vacancies|vacancy|\d{2,})\b", frag.lower()):
+                r"openings|vacancies|vacancy|role|roles|position|positions|"
+                r"looking\s+for|apply|\d{2,})\b", frag.lower()) \
+                and _name_supported_by_domain(frag, core):
             return frag
-    core = domain.split(".")[0]
     return core.replace("-", " ").title()
+
+
+def _name_supported_by_domain(fragment: str, core: str) -> bool:
+    """True when a title fragment is corroborated by the domain core, so it is the
+    company's real name rather than a headline that happens to sit on the domain.
+
+    Accepts: an exact match (spacing/punctuation aside); a token that IS the core
+    (brand + tagline, "Linear — Plan and build"); the brand plus a known domain
+    wrapper ("Mercury" on getmercury.com); or a fragment that fully contains the
+    core. Rejects a fragment that is a TRUNCATION of a longer core ("Victor" vs
+    "victorfi") and a headline unrelated to the core."""
+    core_norm = re.sub(r"[^a-z0-9]", "", (core or "").lower())
+    frag_norm = re.sub(r"[^a-z0-9]", "", (fragment or "").lower())
+    if len(core_norm) < 3:
+        return True                       # too short to judge; trust the title
+    if not frag_norm:
+        return False
+    if frag_norm == core_norm:
+        return True
+    tokens = [tok for tok in re.split(r"[^a-z0-9]+", (fragment or "").lower()) if tok]
+    if any(len(tok) >= 3 and tok == core_norm for tok in tokens):
+        return True                       # brand token + tagline
+    if core_norm in frag_norm:
+        return True                       # fragment includes the whole brand
+    if frag_norm in core_norm:
+        # The core has MORE than the fragment. Fine only when the leftover is a
+        # known wrapper (get/try/use…); otherwise the fragment is a truncation of
+        # the real brand and the fuller core is the honest name.
+        leftover = core_norm.replace(frag_norm, "", 1)
+        return leftover in _DOMAIN_AFFIXES
+    return False
 
 
 def _signals(text: str, query) -> list:

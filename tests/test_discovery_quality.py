@@ -17,7 +17,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from discovery import aggregators, engine, intent, scoring, sources   # noqa: E402
+from discovery import (aggregators, display_gate, engine, intent,   # noqa: E402
+                       scoring, sources)
 from discovery.models import DiscoveryQuery, Prospect       # noqa: E402
 from research import apollo_orgs                            # noqa: E402
 
@@ -1113,6 +1114,296 @@ class DiscoveryCardTests(unittest.TestCase):
                          ["apollo", "exa"])
         self.assertIn("Hiring: AI Video Creator", entry["preview"])
         self.assertIsNone(entry["detail"]["what_they_do"])   # nothing researched
+
+
+class FinalProspectQualityGateTests(unittest.TestCase):
+    """The launch-blocking prospect-quality pass (prompt.fix.txt, 2026-08-05).
+
+    Each failure FAMILY, exercised on the exact domain the live smoke test leaked
+    AND on a synthetic domain, so the fix is the generic detector, not a blocklist
+    entry. False-positive guards keep real companies, requested agencies, media
+    SOFTWARE, Postman, Timescale and Journey.
+    """
+
+    SALES = DiscoveryQuery(raw="SaaS companies hiring SDRs", keywords=["saas", "sdr"])
+    SEED = DiscoveryQuery(raw="B2B fintech startups that raised a seed round",
+                          keywords=["fintech", "b2b"])
+
+    def _drop(self, raw, q):
+        kind, drop = sources.assess(raw, q)
+        return kind == "" and bool(drop), drop
+
+    # ── Family 1: content / article / informational sites ──────────────────
+    def test_soc2compliancecost_content_site_is_dropped(self):
+        dropped, why = self._drop(
+            {"url": "https://soc2compliancecost.com",
+             "title": "How Much Does SOC 2 Compliance Cost?",
+             "content": "In this guide we break down the cost of SOC 2 compliance "
+                        "for startups. Learn everything you need to know."}, self.SALES)
+        self.assertTrue(dropped, why)
+
+    def test_a_generic_informational_article_domain_is_dropped(self):
+        # No curated entry: the informational-content detector carries it.
+        self.assertTrue(aggregators.is_informational_content(
+            "How Much Does It Cost to Build an MVP?",
+            "In this article we explain the average cost. Learn everything you "
+            "need to know before you start."))
+        dropped, why = self._drop(
+            {"url": "https://howmuchtobuildanmvp.io",
+             "title": "How Much Does It Cost to Build an MVP?",
+             "content": "In this article we break down the cost. Learn what to "
+                        "budget."}, self.SALES)
+        self.assertTrue(dropped, why)
+
+    # ── Family 2: directories, review platforms, jobs/news hubs ────────────
+    def test_repvue_review_platform_is_dropped(self):
+        self.assertEqual(aggregators.domain_kind("repvue.com"), aggregators.DIRECTORY)
+        dropped, why = self._drop(
+            {"url": "https://repvue.com", "title": "RepVue",
+             "content": "RepVue is the largest sales org ratings platform. Browse "
+                        "company ratings and reviews from verified reps."}, self.SALES)
+        self.assertTrue(dropped, why)
+
+    def test_a_generic_review_platform_is_directory_by_page(self):
+        self.assertTrue(aggregators.is_review_platform(
+            "SalesReviewz", "Rate and review companies. Browse verified employee "
+            "reviews of employers."))
+        self.assertEqual(aggregators.page_kind(
+            "https://unseen-reviews-xyz.io", "SalesReviewz",
+            "Rate and review companies. Read company ratings."), aggregators.DIRECTORY)
+
+    def test_3xfintech_ecosystem_hub_is_dropped(self):
+        self.assertEqual(aggregators.domain_kind("3xfintech.com"),
+                         aggregators.DIRECTORY)
+        dropped, why = self._drop(
+            {"url": "https://3xfintech.com", "title": "3xFintech",
+             "content": "Browse jobs, companies, funding rounds, reports and news "
+                        "across the fintech ecosystem."}, self.SEED)
+        self.assertTrue(dropped, why)
+
+    def test_a_generic_market_hub_is_directory_by_page(self):
+        self.assertTrue(aggregators.is_directory_hub(
+            "Fintech Hub", "Discover jobs, companies, investors, deals and news in "
+            "one place."))
+        self.assertEqual(aggregators.page_kind(
+            "https://unseen-hub-xyz.io", "Fintech Hub",
+            "Discover jobs, companies, investors, deals and news."),
+            aggregators.DIRECTORY)
+
+    # ── Family 3: agencies / staffing incompatible with the ask ────────────
+    def test_salessourcers_staffing_firm_is_dropped_for_a_hiring_ask(self):
+        self.assertTrue(aggregators.sells_staffing(
+            "SaleSourcers", "We book meetings through our experienced SDRs. "
+            "Outsourced SDR team for B2B."))
+        dropped, why = self._drop(
+            {"url": "https://salessourcers.com", "title": "SaleSourcers",
+             "content": "We book meetings through our experienced SDRs. Outsourced "
+                        "SDR team for B2B SaaS."}, self.SALES)
+        self.assertTrue(dropped, why)
+
+    def test_caugia_agency_is_dropped_when_a_product_company_is_asked(self):
+        for q in (self.SALES, self.SEED):
+            dropped, why = self._drop(
+                {"url": "https://caugia.com", "title": "Caugia",
+                 "content": "A software development agency and consulting firm "
+                            "building custom software for clients."}, q)
+            self.assertTrue(dropped, f"{why} (q={q.raw})")
+
+    def test_an_agency_is_kept_when_the_user_asked_for_agencies(self):
+        q = DiscoveryQuery(raw="software development agencies", keywords=["agency"])
+        kind, drop = sources.assess(
+            {"url": "https://caugia.com", "title": "Caugia",
+             "content": "A software development agency building custom software. "
+                        "Pricing, portfolio and customers."}, q)
+        self.assertEqual(kind, aggregators.COMPANY)
+        self.assertFalse(drop)
+
+    # ── Family 4: keyword ambiguity (SDR = software-defined radio) ──────────
+    def test_rtl_sdr_radio_site_is_dropped_for_a_sales_search(self):
+        dropped, why = self._drop(
+            {"url": "https://rtl-sdr.com", "title": "RTL-SDR",
+             "content": "RTL-SDR software defined radio. A cheap dongle receiver "
+                        "for ham radio and frequency scanning. MHz antenna."},
+            self.SALES)
+        self.assertTrue(dropped, why)
+
+    def test_a_real_sales_company_mentioning_frequency_is_kept(self):
+        # The false-positive guard: sales vocabulary present => not the radio sense.
+        kind, drop = sources.assess(
+            {"url": "https://outreachco.com", "title": "OutreachCo",
+             "content": "Sales development platform. Our SDRs and AEs build "
+                        "pipeline with outbound. Pricing and customers."}, self.SALES)
+        self.assertEqual(kind, aggregators.COMPANY)
+        self.assertFalse(drop)
+
+    # ── Family 5: empty / unverifiable domains ─────────────────────────────
+    def test_cuota_empty_domain_is_rejected(self):
+        self.assertIsNotNone(sources._reject_reason(
+            {"url": "https://cuota.io", "title": "Cuota", "content": ""}, self.SALES))
+
+    # ── Family 6: incorrect prospect names ─────────────────────────────────
+    def test_victorfi_is_named_from_the_domain_not_a_truncated_headline(self):
+        self.assertEqual(
+            sources._name_from("Victor - Modern finance for founders",
+                               "victorfi.com"), "Victorfi")
+
+    def test_nooks_is_named_from_the_domain_not_a_job_headline(self):
+        self.assertEqual(
+            sources._name_from("Looking for your next SDR role?", "nooks.ai"),
+            "Nooks")
+
+    def test_a_domain_wrapper_prefix_still_yields_the_brand(self):
+        # "Mercury" on getmercury.com is the brand, not a truncation.
+        self.assertEqual(
+            sources._name_from("Mercury - Banking for startups", "getmercury.com"),
+            "Mercury")
+
+    def test_a_landing_page_section_is_trimmed_from_the_name(self):
+        # A live run showed "Zenskar Pricing Plans"; the brand is "Zenskar".
+        self.assertEqual(sources._name_from("Zenskar Pricing Plans", "zenskar.com"),
+                         "Zenskar")
+        self.assertEqual(sources._name_from("Acme Reviews", "acme.com"), "Acme")
+
+    def test_a_colon_tagline_is_cut_from_the_name(self):
+        # A live run showed "Adyen: Fintech platform for enterprises".
+        self.assertEqual(
+            sources._name_from("Adyen: Fintech platform for enterprises",
+                               "adyen.com"), "Adyen")
+
+    def test_the_named_agency_and_staffing_domains_are_rejected_even_when_thin(self):
+        # Their live snippets were near-empty, so the content detectors could not
+        # classify them; the curated backstop rejects the exact named domains.
+        for domain in ("caugia.com", "salessourcers.com"):
+            dropped, why = self._drop(
+                {"url": f"https://{domain}", "title": domain.split(".")[0],
+                 "content": "fintech b2b"}, self.SEED)
+            self.assertTrue(dropped, f"{domain}: {why}")
+
+    # ── False-positive guards the prompt demands ───────────────────────────
+    def test_postman_timescale_journey_stay_companies(self):
+        for title, domain, content in (
+                ("Postman | The API Platform", "postman.com",
+                 "Pricing, product, customers. Book a demo."),
+                ("Timescale: Postgres for time-series", "timescale.com",
+                 "Pricing, docs and customers for developers."),
+                ("Journey - Sales enablement software", "journey.io",
+                 "Sales enablement software with pricing and customers.")):
+            kind, drop = sources.assess(
+                {"url": f"https://{domain}", "title": title, "content": content},
+                self.SEED)
+            self.assertEqual(kind, aggregators.COMPANY, title)
+            self.assertFalse(drop, title)
+
+    def test_a_media_software_product_is_not_mistaken_for_a_publisher(self):
+        # "media software" / a social-media product must stay a company.
+        for title, domain, content in (
+                ("Buffer", "buffer.com",
+                 "A social media platform to schedule and publish posts. Pricing "
+                 "and customers."),
+                ("Brightcove", "brightcove.com",
+                 "Video hosting and streaming software for enterprises. Pricing, "
+                 "product, customers.")):
+            kind, drop = sources.assess(
+                {"url": f"https://{domain}", "title": title, "content": content},
+                self.SALES)
+            self.assertEqual(kind, aggregators.COMPANY, title)
+            self.assertFalse(drop, title)
+
+    def test_a_product_that_books_meetings_is_not_mistaken_for_staffing(self):
+        # Nooks sells a tool to book YOUR OWN meetings; it is not an SDR agency.
+        self.assertFalse(aggregators.sells_staffing(
+            "Nooks", "Book more meetings with our AI powered parallel dialer."))
+        kind, drop = sources.assess(
+            {"url": "https://nooks.ai", "title": "Nooks - AI Sales Assistant",
+             "content": "Book more meetings with our AI dialer. Pricing, product, "
+                        "customers."}, self.SALES)
+        self.assertEqual(kind, aggregators.COMPANY)
+        self.assertFalse(drop)
+
+
+class DisplayGateTests(unittest.TestCase):
+    """The consolidated final display gate: every displayed row must clear it."""
+
+    SEED = DiscoveryQuery(raw="B2B fintech startups that raised a seed round",
+                          keywords=["fintech", "b2b"])
+    HIRING = DiscoveryQuery(raw="SaaS companies hiring SDRs", keywords=["saas", "sdr"])
+
+    def _plan(self, q):
+        return intent.parse(q.raw, keywords=q.keywords)
+
+    def test_a_real_apollo_company_passes(self):
+        p = Prospect(company_name="Zenskar", website="https://zenskar.com",
+                     domain="zenskar.com", industry_kind="software",
+                     discovery_source="apollo", apollo_id="a1", tier="company",
+                     match_reasons=["In Apollo's company database"])
+        ok, reason = display_gate.evaluate(p, self._plan(self.SEED))
+        self.assertTrue(ok, reason)
+
+    def test_a_pure_category_name_is_never_displayed(self):
+        p = Prospect(company_name="Fintech", website="https://fintech.com",
+                     domain="fintech.com", tier="company", discovery_source="exa",
+                     match_reasons=["Reads like a software product"])
+        ok, reason = display_gate.evaluate(p, self._plan(self.SEED))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "generic_category_name")
+
+    def test_a_demoted_intermediary_is_never_displayed(self):
+        p = Prospect(company_name="Some Board", website="https://board.com",
+                     domain="board.com", tier="fallback", kind=aggregators.JOB_BOARD)
+        ok, reason = display_gate.evaluate(p, self._plan(self.HIRING))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "not_an_operating_company")
+
+    def test_a_media_kind_is_never_displayed(self):
+        p = Prospect(company_name="VIStories", website="https://viestories.com",
+                     domain="viestories.com", tier="company", kind=aggregators.MEDIA)
+        ok, reason = display_gate.evaluate(p, self._plan(self.SEED))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "not_an_operating_company")
+
+    def test_a_headline_name_unbacked_by_the_domain_is_dropped(self):
+        p = Prospect(company_name="Looking for your next SDR role?",
+                     website="https://nooks.ai", domain="nooks.ai", tier="company",
+                     discovery_source="exa",
+                     match_reasons=["Reads like a software product"])
+        ok, reason = display_gate.evaluate(p, self._plan(self.HIRING))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "company_name_unverified")
+
+    def test_a_services_shop_is_the_wrong_entity_type_for_a_product_ask(self):
+        p = Prospect(company_name="Caugia", website="https://caugia.com",
+                     domain="caugia.com", industry_kind="services", tier="company",
+                     discovery_source="apollo", apollo_id="a2")
+        ok, reason = display_gate.evaluate(p, self._plan(self.SEED))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "entity_type_mismatch")
+
+    def test_a_hiring_ask_requires_official_hiring_evidence_from_web_rows(self):
+        # A web row with no own-careers evidence is not accepted for a hiring ask.
+        p = Prospect(company_name="Acme", website="https://acme.com",
+                     domain="acme.com", tier="company", discovery_source="exa",
+                     match_reasons=["Software platform, pricing, customers"])
+        ok, reason = display_gate.evaluate(p, self._plan(self.HIRING))
+        self.assertFalse(ok)
+        self.assertEqual(reason, "no_official_hiring_evidence")
+
+    def test_own_careers_evidence_satisfies_the_hiring_requirement(self):
+        p = Prospect(company_name="Acme", website="https://acme.com",
+                     domain="acme.com", tier="company", discovery_source="exa",
+                     match_reasons=["Software platform, pricing, customers"],
+                     hiring={"verified": True, "source": "own_careers_page",
+                             "match": "role", "summary": "Hiring: SDR"})
+        ok, reason = display_gate.evaluate(p, self._plan(self.HIRING))
+        self.assertTrue(ok, reason)
+
+    def test_apollo_rows_satisfy_the_hiring_requirement_structurally(self):
+        p = Prospect(company_name="Clay", website="https://clay.com",
+                     domain="clay.com", industry_kind="software", tier="company",
+                     discovery_source="apollo", apollo_id="a3",
+                     hiring={"verified": False, "source": "apollo_title_filter",
+                             "match": "any"})
+        ok, reason = display_gate.evaluate(p, self._plan(self.HIRING))
+        self.assertTrue(ok, reason)
 
 
 if __name__ == "__main__":

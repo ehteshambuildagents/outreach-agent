@@ -33,7 +33,8 @@ from config.settings import (
     DISCOVERY_PROVIDER_POOL,
     DISCOVERY_STRONG_CONFIDENCE,
 )
-from discovery import aggregators, intent, narration, scoring, sources
+from discovery import (aggregators, display_gate, intent, narration, scoring,
+                       sources)
 from discovery.models import DiscoveryQuery, registrable_domain
 from discovery.store import ProspectStore
 
@@ -136,6 +137,15 @@ def discover(owner, query, *, store=None, exclude_domains=None,
         except Exception:  # noqa: BLE001 - dedupe is best-effort, never fatal
             log.info("seen_domains lookup failed; continuing without dedupe")
 
+    # Parse the plan HERE (not only inside _search_until_good) so the final display
+    # gate below judges against the same plan the search ran on.
+    if plan is None:
+        plan = intent.parse(
+            query.raw or query.search_string(), industry=query.industry,
+            keywords=query.keywords, employee_range=query.employee_range,
+            funding_stage=query.funding_stage, location=query.location,
+            exclude_keywords=query.exclude_keywords, limit=query.limit)
+
     search_query = query.search_string()
     pool = min(DISCOVERY_PROVIDER_POOL, max(query.limit * 2, DISCOVERY_PROVIDER_POOL))
     log.info("discovery_start query=%r limit=%s pool=%s", search_query, query.limit, pool)
@@ -154,7 +164,17 @@ def discover(owner, query, *, store=None, exclude_domains=None,
     # Intermediaries are a FALLBACK, never a primary result: fill the page with
     # real companies first, and only top up with demoted results if the page
     # would otherwise be short (and the operator allows it at all).
-    companies = [p for p in ranked if p.tier == "company"]
+    # The FINAL DISPLAY GATE: every company shown must clear it (real operating
+    # org, compatible entity type, product/service evidence, domain-backed name, no
+    # listing/directory/review kind, official hiring evidence for a hiring ask).
+    # Applied to the company tier so pagination and back-fill only ever draw from
+    # gate-passed rows. Fallback intermediaries are already never a primary result.
+    gate_passed, gate_dropped = display_gate.filter_displayable(
+        [p for p in ranked if p.tier == "company"], plan)
+    if gate_dropped:
+        log.info("discovery_display_gate query=%r dropped=%s", search_query, gate_dropped)
+    quality["display_gate_dropped"] = gate_dropped
+    companies = gate_passed
     fallback = [p for p in ranked if p.tier != "company"]
     start = 0 if skip_seen else query.page * query.limit
     page_items = companies[start:start + query.limit]
