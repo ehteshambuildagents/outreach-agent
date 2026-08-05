@@ -709,8 +709,14 @@ admin_api.register(app)                          # internal ops views (X-Admin-T
 automation_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
 oauth_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
 campaign_api.register(app, rl_read=_rl_read, rl_write=_rl_write)
+# Buying is the ON-RAMP to access, so checkout/portal require only a VERIFIED
+# identity (require_user), never soft-launch approval: a brand-new account must be
+# able to pay. This grants no product access — data routes stay on
+# require_approved_user and spend stays capped by plan entitlements, so an unpaid
+# account gets nothing. Access is granted the moment a subscription goes active
+# (billing.webhook auto-approves the buyer).
 billing_api.register(app, rl_read=_rl_read, rl_write=_rl_write, store_for=_store_for,
-                     member=require_approved_user, member_or_demo=require_member_or_demo)
+                     member=require_user, member_or_demo=require_member_or_demo)
 
 # Public (unauthenticated) waitlist. Deliberately NOT given _rl_read/_rl_write:
 # those count per-process and key on the proxy's IP, which is not good enough for

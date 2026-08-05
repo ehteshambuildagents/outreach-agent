@@ -485,11 +485,15 @@ def billing_config_error(plan: str = "", interval: str = "monthly", *,
     return ""
 
 
-# Where Lemon Squeezy Checkout returns the browser. The frontend origin owns these
-# pages; the query flag lets Settings refresh the plan and show a confirm/cancel note.
+# Where Lemon Squeezy Checkout returns the browser after a successful purchase. This
+# MUST be a PUBLIC frontend route: a brand-new buyer's session claims and the
+# webhook-granted approval may not have propagated the instant LS redirects them, so
+# a gated page could bounce them straight back off the product they just paid for.
+# /checkout/success is public (see saqua-frontend middleware) and carries a
+# "Continue to dashboard" hand-off. Override with BILLING_SUCCESS_URL if needed.
 BILLING_SUCCESS_URL = (os.getenv("BILLING_SUCCESS_URL")
                        or (os.getenv("FRONTEND_URL", "http://localhost:3200").rstrip("/")
-                           + "/settings?checkout=success"))
+                           + "/checkout/success"))
 BILLING_CANCEL_URL = (os.getenv("BILLING_CANCEL_URL")
                       or (os.getenv("FRONTEND_URL", "http://localhost:3200").rstrip("/")
                           + "/settings?checkout=cancel"))

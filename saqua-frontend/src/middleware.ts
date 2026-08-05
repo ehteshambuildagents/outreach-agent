@@ -1,22 +1,18 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse, type NextRequest } from "next/server";
+import { appRouteDecision } from "@/lib/access-gate";
 
-// Pre-launch lockdown. The only thing a visitor can reach is the marketing site
-// and the waitlist; every authenticated app page redirects to the landing page.
-//
-// Review-access exception (TEMPORARY, for Google OAuth verification): a signed-in
-// user whose Clerk publicMetadata carries `appAccess: true` may reach the app, so a
-// Google reviewer can exercise the Gmail consent + reply-detection flow. The flag
-// lives server-side on the Clerk user record — no env var, no secret — surfaced to
-// the edge via a session-token claim (Dashboard → Sessions → edit session token:
-// {"appAccess": "{{user.public_metadata.appAccess}}"}). It grants PAGE reachability
-// only; actual data is still gated by the DB approved-users store
-// (server require_approved_user), so a reviewer needs BOTH the flag and DB approval.
-// /sign-in is reopened so the reviewer can log in; /sign-up stays closed.
-//
-// To re-seal after verification: remove "/sign-in(.*)" and the appAccess check
-// below, and clear the flag from the reviewer's Clerk user. Full step-by-step
-// checklist (code + Clerk + DB): see REVIEWER_ACCESS_RESEAL.md at the repo root.
+// PUBLIC LAUNCH access model. The former pre-launch lockdown — which redirected
+// every authenticated app page away unless the signed-in user carried the Clerk
+// `appAccess` publicMetadata flag — is LIFTED here: reaching an app page no longer
+// depends on that per-account flag, so a customer who has just paid is never
+// bounced off the product they bought. Page reachability is granted to any
+// authenticated account; product DATA stays gated server-side by
+// require_approved_user and spend by plan entitlements, and the Lemon Squeezy
+// webhook grants that server-side approval the instant a subscription goes active.
+// The routing decision itself lives in lib/access-gate.ts (appRouteDecision) so it
+// can be unit-tested. /sign-in is always reachable; the /sign-up route is reachable
+// for the paid-checkout funnel but the page keeps itself gated (buyers only).
 const isPublicRoute = createRouteMatcher([
   "/",
   "/about(.*)",
@@ -26,6 +22,18 @@ const isPublicRoute = createRouteMatcher([
   "/privacy(.*)",
   "/terms(.*)",
   "/sign-in(.*)",
+  // The post-payment confirmation page is deliberately PUBLIC: Lemon Squeezy returns
+  // the browser here after a successful purchase, and it must render even before the
+  // buyer's session claims have caught up. It carries a "Continue to dashboard"
+  // button and exposes no data of its own.
+  "/checkout(.*)",
+  // The sign-up ROUTE is reachable so the paid-checkout funnel can create an
+  // account; the sign-up PAGE itself stays gated (it renders the form only for a
+  // visitor arriving with a valid checkout return path, and otherwise sends a
+  // pre-launch visitor to the waitlist). Creating an account grants no app access
+  // on its own: data stays gated by the backend, so reopening the route does not
+  // reopen the product.
+  "/sign-up(.*)",
 ]);
 
 // /sign-in must ALWAYS render, for anyone, regardless of PRELAUNCH state or
@@ -35,20 +43,6 @@ const isPublicRoute = createRouteMatcher([
 // never again be closed by accident, e.g. by reordering or by pruning the public
 // list the way removing the founder bypass did.
 const isSignInRoute = createRouteMatcher(["/sign-in(.*)"]);
-
-// True when the signed-in user carries publicMetadata.appAccess === true. Accepts
-// the boolean or its string form (the claim's type depends on the session-token
-// template) and tolerates it arriving either as a top-level `appAccess` claim or
-// nested under a `metadata` claim, so it works whichever way the token is shaped.
-function hasAppAccess(claims: unknown): boolean {
-  if (!claims || typeof claims !== "object") return false;
-  const c = claims as Record<string, unknown>;
-  const meta = c["metadata"];
-  const nested =
-    meta && typeof meta === "object" ? (meta as Record<string, unknown>)["appAccess"] : undefined;
-  const v = c["appAccess"] ?? nested;
-  return v === true || v === "true";
-}
 
 // A live demo session grants PAGE reachability (not data): the readable expiry
 // cookie carries the token's expiry epoch, so the edge allows app routes only
@@ -78,13 +72,15 @@ export default clerkMiddleware(
     if (hasLiveDemoCookie(request)) {
       return;
     }
-    const { userId, sessionClaims } = await auth();
-    if (userId && hasAppAccess(sessionClaims)) {
+    // Public launch: any authenticated account reaches the app (backend gates data
+    // and spend); a logged-out visitor goes to the marketing home. The Clerk
+    // appAccess flag is no longer consulted, so a just-paid buyer is never blocked.
+    const { userId } = await auth();
+    const target = appRouteDecision({ isSignedIn: Boolean(userId) });
+    if (target === null) {
       return;
     }
-    // Not public, not demo, not review-flagged → the landing page. Covers direct-
-    // URL navigation to any app page and to /sign-in or /sign-up.
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL(target, request.url));
   },
   {
     // Clerk's bot protection uses Cloudflare Turnstile. Let Clerk inject the

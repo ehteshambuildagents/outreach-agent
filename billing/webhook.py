@@ -76,6 +76,19 @@ def _plan_from_attrs(custom: dict, attrs: dict) -> str:
     return normalize_plan(settings.variant_to_plan(attrs.get("variant_id")))
 
 
+def _grant_access(user_id: str, *, db=None) -> None:
+    """Approve a paying customer in the soft-launch access store, so an active
+    subscription clears ``require_approved_user`` immediately. Imported lazily and
+    fully swallowed on error — access is a soft gate and must never fail a paid
+    billing event."""
+    try:
+        import access
+        access.approve(user_id, note="active subscription", db=db)
+    except Exception:  # noqa: BLE001 - access is best-effort; never break billing
+        log.debug("could not auto-approve paid user %s", (user_id or "?")[:12],
+                  exc_info=True)
+
+
 def _resolve_user(custom: dict, attrs: dict, *, db=None) -> str:
     """Internal user id for an event: prefer custom_data, else the customer map
     recorded from the first event that carried it."""
@@ -154,6 +167,11 @@ def handle_event(event: dict, *, event_name: str = None, event_id: str = None,
                 user_id, plan, status, provider_subscription_id=sub_id,
                 current_period_end=period_end, provider=PROVIDER,
                 portal_url=portal_url, db=db)
+            # A paying customer must not stay stuck behind the soft-launch access
+            # gate: the moment their subscription is active, grant product access.
+            # Best-effort — never let an access-store hiccup fail the billing event.
+            if status in store.ACTIVE_STATUSES:
+                _grant_access(user_id, db=db)
         elif sub_id and not user_id:
             # Could not attribute the subscription to an internal user (no
             # custom_data.user_id and no customer map yet). Loud, because it means

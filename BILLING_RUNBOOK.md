@@ -111,9 +111,9 @@ Once `ends_at` passes (or LS sends `subscription_expired`), the user drops to Fr
 1. Settings → **Your plan** → **Upgrade to Pro**. The browser is redirected to
    Lemon Squeezy's hosted Checkout.
 2. Pay with `4242 4242 4242 4242`. LS redirects back to the product's `redirect_url`
-   = `/settings?checkout=success`; the page shows the success note and refetches the
-   plan. (LS has no "cancel URL": a user who abandons checkout just navigates back,
-   so `?checkout=cancel` is only reachable if you wire a link to it — harmless.)
+   = the public `/checkout/success` confirmation page, which reports the payment and
+   offers **Continue to dashboard**. (LS has no "cancel URL": a user who abandons
+   checkout just navigates back.)
 3. Watch the LS webhook log (Settings → Webhooks → your endpoint): you should see
    `order_created` + `subscription_created` delivered and answered `200`.
 4. The **Your plan** card now reads **Pro — 50 prospects**. Confirm the API agrees:
@@ -126,7 +126,7 @@ Repeat with **Max** to confirm **100** (`{"plan":"max","prospect_limit":100}`).
 
 ## 5. Acceptance checklist (billing is "done" only when ALL pass)
 
-- [ ] **Test checkout completes** and returns to `/settings?checkout=success`.
+- [ ] **Test checkout completes** and returns to the public `/checkout/success` page.
 - [ ] **Webhook verified + processed**: the LS webhook log shows the events answered
       `200`; a bad-signature POST returns `400` (already unit-tested).
 - [ ] **Pro receives 50**: after a Pro checkout, `GET /api/billing` →

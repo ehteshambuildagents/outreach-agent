@@ -1,31 +1,34 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, ArrowRight, ShieldCheck, Sparkles } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
+import { ArrowRight, Check, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SiteNav } from "@/components/marketing/site-nav";
 import { SiteFooter } from "@/components/marketing/site-footer";
 import { HeroForm } from "@/components/marketing/hero-form";
 import { PRELAUNCH } from "@/lib/launch";
+import { api } from "@/lib/api";
+import { checkoutPlanId, resolveCta, resumeCheckoutPlan, type CheckoutPlanId } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
-
-type Billing = "monthly" | "yearly";
 
 // Cost-based. All-in cost per researched prospect is ~$0.35: website crawl
 // (Firecrawl) + deep research (Tavily/Exa/Jina) ~$0.11, research/qualify/strategy
 // on Haiku-4.5 ~$0.03, email + refine + 2 follow-ups on Sonnet ~$0.06, and the
 // chat orchestration loop ~$0.14. So 50 => ~$17.50 cost @ $65 (73% margin),
-// 100 => ~$35 @ $100 (65%). Enterprise is quoted per account. Yearly = 2 months
-// free. Numbers are still being finalized against real telemetry.
+// 100 => ~$35 @ $100 (65%). Enterprise is quoted per account. Only monthly Lemon
+// Squeezy variants exist today, so the page prices per month and hides any yearly
+// option until annual variants are configured.
 const PLANS = [
   {
     name: "Starter",
     prospects: "50",
     tagline: "Validate outbound without hiring anyone.",
     monthly: 65,
-    yearly: 54,
-    cta: "Coming soon",
+    // Maps to the canonical "pro" plan the backend expects (Lemon Squeezy variant
+    // 1984306). See lib/pricing.ts for the single source of that name→id mapping.
+    cta: "Start with Starter",
     // The prospect allowance is already the headline under the price, so it is
     // deliberately NOT repeated as the first bullet: every card used to print it
     // twice, a few lines apart, which reads like a rendering bug.
@@ -42,9 +45,10 @@ const PLANS = [
     prospects: "100",
     tagline: "For founders running weekly outbound.",
     monthly: 100,
-    yearly: 83,
     featured: true,
-    cta: "Coming soon",
+    // Maps to the canonical "max" plan the backend expects (Lemon Squeezy variant
+    // 1984314).
+    cta: "Start with Growth",
     features: [
       "Everything in Starter",
       "Priority research queue",
@@ -57,10 +61,10 @@ const PLANS = [
     name: "Enterprise",
     prospects: "300+",
     tagline: "For teams scaling outbound properly.",
-    // No monthly/yearly: Enterprise is quoted per account, so the card renders
-    // "Custom" where the other two render a figure.
+    // No monthly price: Enterprise is quoted per account, so the card renders
+    // "Custom" where the other two render a figure, and its CTA stays on the
+    // sales-assisted "Talk to us" (contact) flow — never a self-serve checkout.
     monthly: null,
-    yearly: null,
     cta: "Talk to us",
     features: [
       "Everything in Growth",
@@ -72,9 +76,103 @@ const PLANS = [
   },
 ] as const;
 
-export default function PricingPage() {
-  const [billing, setBilling] = useState<Billing>("monthly");
+/**
+ * The per-plan call to action. Enterprise is a plain contact link; the two paid
+ * tiers run the REAL checkout: a logged-out visitor is sent through sign-in and
+ * returned here to resume, and a signed-in member goes straight to the Lemon
+ * Squeezy hosted checkout via the existing POST /api/billing/checkout endpoint.
+ * No plan id or price is hardcoded against Lemon Squeezy here — only the canonical
+ * backend plan id ("pro"/"max"), resolved in lib/pricing.ts.
+ */
+function PlanCta({ name, cta, featured }: { name: string; cta: string; featured: boolean }) {
+  const { isLoaded, isSignedIn } = useUser();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
+  const planId = checkoutPlanId(name); // null for Enterprise / non-purchasable
+
+  const startCheckout = useCallback((id: CheckoutPlanId) => {
+    setBusy(true); // also disables the button, so a double click can't open two checkouts
+    setError("");
+    void api.checkout(id).then((r) => {
+      if (!r.ok) {
+        setBusy(false);
+        setError(r.error || "Could not start checkout. Please try again.");
+        return;
+      }
+      // Hand off to Lemon Squeezy's hosted checkout — this leaves the app, so we
+      // deliberately keep `busy` true (no reset) to hold the loading state.
+      window.location.href = r.data.url;
+    });
+  }, []);
+
+  // Resume checkout after the sign-in round-trip: /sign-in returns the visitor to
+  // /pricing?checkout=<planId>, and the card whose id matches auto-starts once Clerk
+  // reports them signed in. The flag is cleared first so a refresh can't loop.
+  useEffect(() => {
+    if (!planId || !isLoaded || !isSignedIn || busy) return;
+    if (resumeCheckoutPlan(window.location.search) !== planId) return;
+    // Clear the flag first so a refresh can't loop, then start the matching checkout.
+    const params = new URLSearchParams(window.location.search);
+    params.delete("checkout");
+    const qs = params.toString();
+    window.history.replaceState({}, "", `/pricing${qs ? `?${qs}` : ""}`);
+    startCheckout(planId);
+  }, [planId, isLoaded, isSignedIn, busy, startCheckout]);
+
+  // Enterprise (and any non-purchasable plan): the sales-assisted contact flow.
+  if (!planId) {
+    return (
+      <Button asChild variant="secondary" className="mt-5 w-full">
+        <Link href="/contact">
+          {cta} <ArrowRight className="size-4" />
+        </Link>
+      </Button>
+    );
+  }
+
+  const onClick = () => {
+    if (busy) return; // prevent duplicate clicks
+    const action = resolveCta(name, { isLoaded, isSignedIn: isSignedIn === true });
+    if (action.kind === "wait") return; // Clerk not hydrated yet; button is disabled anyway
+    if (action.kind === "signin") {
+      window.location.href = action.url; // sign in, then return to resume checkout
+      return;
+    }
+    if (action.kind === "checkout") startCheckout(action.planId);
+  };
+
+  return (
+    <div className="mt-5">
+      <Button
+        type="button"
+        variant={featured ? "primary" : "secondary"}
+        className="w-full"
+        onClick={onClick}
+        disabled={busy || !isLoaded}
+        aria-busy={busy}
+        data-plan={planId}
+      >
+        {busy ? (
+          <>
+            <Loader2 className="size-4 animate-spin" /> Opening checkout…
+          </>
+        ) : (
+          <>
+            {cta} <ArrowRight className="size-4" />
+          </>
+        )}
+      </Button>
+      {error && (
+        <p role="alert" className="mt-2 text-xs leading-5 text-[color:var(--danger,#b42318)]">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export default function PricingPage() {
   return (
     // No bg here: it would paint over the -z-10 glow (see globals.css .page-light).
     <main className="relative min-h-screen overflow-clip text-text">
@@ -94,36 +192,10 @@ export default function PricingPage() {
           detection. You&apos;re paying for prospects Saqua actually works, not seats.
         </p>
 
-        {/* Billing toggle — updates every price together */}
-        <div className="mt-8 inline-flex items-center gap-1 rounded-full border border-border bg-card p-1 text-sm shadow-[0_1px_2px_rgba(17,17,17,.04)]">
-          {(["monthly", "yearly"] as const).map((b) => (
-            <button
-              key={b}
-              onClick={() => setBilling(b)}
-              className={cn(
-                "relative rounded-full px-4 py-1.5 capitalize transition-colors",
-                billing === b ? "bg-accent text-[color:var(--accent-ink)]" : "text-text-2 hover:text-text",
-              )}
-            >
-              {b}
-              {b === "yearly" && (
-                <span
-                  className={cn(
-                    "ml-1.5 text-[10px] font-semibold",
-                    billing === "yearly" ? "text-white/80" : "text-accent",
-                  )}
-                >
-                  2 months free
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
         <div className="mt-12 grid items-start gap-5 lg:grid-cols-3">
           {PLANS.map((p) => {
-            const price = billing === "monthly" ? p.monthly : p.yearly;
-            const featured = "featured" in p && p.featured;
+            const price = p.monthly;
+            const featured = "featured" in p && p.featured === true;
             return (
               <div
                 key={p.name}
@@ -154,7 +226,7 @@ export default function PricingPage() {
                     ) : (
                       <>
                         <span className="font-display text-5xl font-semibold tracking-[-0.03em] text-text">${price}</span>
-                        <span className="text-xs text-muted">/ mo{billing === "yearly" ? ", billed yearly" : ""}</span>
+                        <span className="text-xs text-muted">/ mo</span>
                       </>
                     )}
                   </div>
@@ -162,11 +234,7 @@ export default function PricingPage() {
                     <span className="font-mono">{p.prospects}</span> researched prospects / month
                   </div>
 
-                  <Button asChild variant={featured ? "primary" : "secondary"} className="mt-5 w-full">
-                    <Link href={price === null ? "/contact" : PRELAUNCH ? "#waitlist" : "/sign-up"}>
-                      {p.cta} <ArrowRight className="size-4" />
-                    </Link>
-                  </Button>
+                  <PlanCta name={p.name} cta={p.cta} featured={featured} />
 
                   <ul className="mt-6 space-y-2.5">
                     {p.features.map((f) => (
@@ -193,15 +261,15 @@ export default function PricingPage() {
         </div>
 
         {PRELAUNCH ? (
-          // Every plan CTA on this page scrolls here, so the waitlist form has to
-          // live on the page rather than bouncing people to the homepage.
+          // The paid tiers now run real checkout; this block is only the free-plan /
+          // "not open yet" path, where public signup is still closed.
           <div id="waitlist" className="mx-auto mt-14 max-w-md scroll-mt-24 text-center">
             <h2 className="font-display text-2xl font-semibold tracking-tight">
-              Not open yet.
+              New here?
             </h2>
             <p className="mx-auto mt-3 text-sm leading-6 text-muted">
-              Join the waitlist and we will email you the moment Saqua opens, with founding
-              pricing locked in. Nothing else.
+              Public signup for the free plan is still closed. Join the waitlist and we will email
+              you the moment it opens, with founding pricing locked in. Nothing else.
             </p>
             <HeroForm className="mt-6" source="pricing" />
           </div>

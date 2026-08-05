@@ -717,5 +717,95 @@ class BillingApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
 
 
+# ── New-customer on-ramp: pay first, access follows (never the reverse) ─────
+class NewCustomerCheckoutAccessTests(unittest.TestCase):
+    """A brand-new account created through the paid funnel must be able to PAY even
+    though the soft-launch gate hasn't approved it (buying is the on-ramp), must get
+    NO product access while unpaid, and must be granted access the moment its
+    subscription goes active."""
+
+    def setUp(self):
+        _reset_tables()
+        import server.api as api
+        import access
+        self.api = api
+        self.access = access
+        api._STORE_BASE = tempfile.mkdtemp()
+        api._BUCKETS.clear()
+        api.app.dependency_overrides.clear()
+        # A verified-but-UNAPPROVED identity. Deliberately do NOT override
+        # require_approved_user, so the real soft-launch gate runs against "newbie".
+        api.app.dependency_overrides[api.require_user] = lambda: "newbie"
+        # Force the access gate ON in this process, and start from a clean slate.
+        self._prev_gating = os.environ.get("ACCESS_GATING")
+        os.environ["ACCESS_GATING"] = "1"
+        access.store.reset_ensured()
+        self._clear_access()
+        settings.LEMONSQUEEZY_API_KEY = "ls_test_dummy"
+        settings.LEMONSQUEEZY_STORE_ID = "1"
+        settings.LEMONSQUEEZY_WEBHOOK_SECRET = _SECRET
+        settings.LEMONSQUEEZY_VARIANT_IDS["pro_monthly"] = "v_pro_m"
+        settings.LEMONSQUEEZY_VARIANT_IDS["max_monthly"] = "v_max_m"
+        self.client = TestClient(api.app)
+
+    def tearDown(self):
+        self.api.app.dependency_overrides.clear()
+        if self._prev_gating is None:
+            os.environ.pop("ACCESS_GATING", None)
+        else:
+            os.environ["ACCESS_GATING"] = self._prev_gating
+        self._clear_access()
+
+    @staticmethod
+    def _clear_access():
+        try:
+            Database().execute("DELETE FROM pending_users")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def test_new_unapproved_member_can_start_checkout(self):
+        # Sanity: the gate really would deny this user product access...
+        allowed, status = self.access.check_access("newbie")
+        self.assertFalse(allowed)
+        self.assertEqual(status, "pending")
+        # ...yet checkout (the on-ramp) must still succeed for them.
+        import server.billing_api as bapi
+        with mock.patch.object(bapi.ls_client, "create_checkout",
+                               return_value={"url": "https://saqua.lemonsqueezy.com/n",
+                                             "id": "chk_n"}) as m:
+            resp = self.client.post("/api/billing/checkout", json={"plan": "pro"})
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = m.call_args
+        self.assertEqual(kwargs["user_id"], "newbie")
+        self.assertEqual(kwargs["plan"], "pro")   # Starter → pro
+
+    def test_growth_alias_from_new_member_maps_to_max(self):
+        import server.billing_api as bapi
+        with mock.patch.object(bapi.ls_client, "create_checkout",
+                               return_value={"url": "u", "id": "i"}) as m:
+            resp = self.client.post("/api/billing/checkout", json={"plan": "growth"})
+        self.assertEqual(resp.status_code, 200)
+        _, kwargs = m.call_args
+        self.assertEqual(kwargs["plan"], "max")    # Growth → max
+        self.assertEqual(kwargs["variant_id"], "v_max_m")
+
+    def test_unpaid_new_account_has_no_paid_access(self):
+        # No subscription ⇒ Free tier, not paid, and not approved for the app.
+        ent = billing.entitlements("newbie", 0)
+        self.assertEqual(ent["plan"], "free")
+        self.assertFalse(ent.get("is_paid"))
+        self.assertEqual(ent["prospect_limit"], settings.FREE_PROSPECT_LIMIT)
+        self.assertFalse(self.access.is_approved("newbie"))
+
+    def test_active_subscription_grants_access_and_paid_plan(self):
+        # The webhook that activates a subscription auto-approves the buyer, so a
+        # paying customer is never stranded behind the soft-launch gate.
+        webhook.handle_event(_sub_event("newbie", "pro", "active", sub_id="ns1"))
+        self.assertTrue(self.access.is_approved("newbie"))
+        ent = billing.entitlements("newbie", 0)
+        self.assertEqual(ent["plan"], "pro")
+        self.assertTrue(ent.get("is_paid"))
+
+
 if __name__ == "__main__":
     unittest.main()
