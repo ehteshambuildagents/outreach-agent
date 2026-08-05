@@ -56,6 +56,10 @@ _EXTRA_EXCLUDE = frozenset({
     # purpose — hard-excluding them would break a legitimate role search.
     "natlawreview.com", "thisweekinfintech.com", "siliconsnark.com",
     "vcbacked.co",
+    # A "business media platform" (startup news / articles / magazines /
+    # newsletters) surfaced as a false prospect on a live fintech search
+    # (2026-08-05). Classified MEDIA by domain; also excluded here defensively.
+    "viestories.com",
 })
 _EXCLUDE = frozenset(EXCLUDED_RESOLUTION_DOMAINS) | _EXTRA_EXCLUDE
 
@@ -243,7 +247,76 @@ def _reject_reason(raw: dict, query=None) -> str | None:
         return "missing_company_likeness"
     if _query_targets_saas(query) and not (business_path or _SAAS_PRODUCT_RE.search(text)):
         return "missing_saas_product_signals"
+    # Final acceptance bar: a valid domain alone is not a company. A displayed
+    # prospect must carry at least two independent company signals, so a parked
+    # page, a thin content site, or a bare listing that reached here can't be shown
+    # as a prospect on the strength of its domain alone. The signal set is broad on
+    # purpose ("such as" in the spec) so a real but sparsely-described company still
+    # clears it; the bar catches the empty case, not the terse one.
+    if _company_signal_count(title, text, path, domain, query) < 2:
+        return "insufficient_company_signals"
     return None
+
+
+def _title_name_matches_domain(title: str, domain: str) -> bool:
+    """True when a word in the page title matches the domain's core — evidence of
+    an identifiable organisation whose name is the domain (Stripe/stripe.com),
+    rather than a headline that happens to sit on some domain."""
+    core = re.sub(r"[^a-z0-9]", "", (domain or "").split(".")[0].lower())
+    if len(core) < 3:
+        return False
+    for tok in re.split(r"[^a-z0-9]+", (title or "").lower()):
+        if len(tok) >= 3 and (tok in core or core in tok):
+            return True
+    return False
+
+
+# Strong-signal detectors for the final acceptance bar. Each fires on evidence a
+# real operating company almost always exposes; a bare/parked domain exposes none.
+_PRODUCT_OFFERING_RE = re.compile(
+    r"\b(product|platform|software|app|application|api|sdk|service|solution|tool|"
+    r"saas)\b", re.I)
+_ABOUT_PAGE_RE = re.compile(
+    r"\b(about us|our team|our mission|our company|who we are|founded in|"
+    r"our story|meet the team)\b", re.I)
+_PROOF_RE = re.compile(
+    r"\b(pricing|customers?|clients?|case stud(?:y|ies)|documentation|"
+    r"book a demo|request a demo|trusted by|get started|free trial|"
+    r"testimonials?)\b", re.I)
+_HIRING_RE = re.compile(r"\b(careers?|hiring|join our team|open roles?|we'?re hiring)\b", re.I)
+_FUNDING_RE = re.compile(
+    r"\b(seed|series\s+[a-e]\b|raised|bootstrapp?ed|funding|backed by|"
+    r"pre-seed|venture-backed)\b", re.I)
+
+
+def _company_signal_count(title: str, text: str, path: str, domain: str, query) -> int:
+    """How many independent company signals a web result exposes (0-7). Used only
+    as a floor: two of these, not a valid domain alone, is what makes a prospect."""
+    n = 0
+    if any(path.startswith(p) for p in ("/pricing", "/customers", "/case-studies",
+                                        "/docs", "/product", "/features")) or \
+            _PRODUCT_OFFERING_RE.search(text):
+        n += 1
+    if any(path.startswith(p) for p in ("/about", "/company", "/team")) or \
+            _ABOUT_PAGE_RE.search(text):
+        n += 1
+    if any(path.startswith(p) for p in ("/pricing", "/customers", "/case-studies",
+                                        "/docs")) or _PROOF_RE.search(text):
+        n += 1
+    if _title_name_matches_domain(title, domain):
+        n += 1
+    if any(path.startswith(p) for p in ("/careers", "/jobs")) or _HIRING_RE.search(text):
+        n += 1
+    if _FUNDING_RE.search(text):
+        n += 1
+    low = text.lower()
+    industry = (getattr(query, "industry", "") or "").lower() if query else ""
+    keywords = [k for k in (getattr(query, "keywords", []) or []) if k] if query else []
+    location = (getattr(query, "location", "") or "").lower() if query else ""
+    if (industry and industry in low) or any(k in low for k in keywords) or \
+            (location and location in low):
+        n += 1
+    return n
 
 
 def _query_text(query) -> str:
