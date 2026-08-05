@@ -63,12 +63,25 @@ class Conversation:
     #   "research"     -> the full research_company() result (reused, not re-run)
     #   "email"        -> the current write_email() result ({subject, body, ...})
     workspace: dict = field(default_factory=dict)
+    # Canonical research-trail events (chat.research_trail), persisted so a restored
+    # thread still shows the honest, evidence-backed trail of what the agent did.
+    # Capped to the most recent events; never replayed as if live.
+    research_trail: List[dict] = field(default_factory=list)
 
     # ── transcript helpers ─────────────────────────────────────────────
     def add(self, message: Message) -> Message:
         self.messages.append(message)
         self.updated_at = time.time()
         return message
+
+    def add_trail_event(self, evt: dict, *, cap: int = 60) -> dict:
+        """Append a canonical research-trail event, keeping only the newest ``cap``.
+        Does not bump ``updated_at`` — the turn's messages already do, and a trail
+        event must not reorder the sidebar on its own."""
+        self.research_trail.append(evt)
+        if len(self.research_trail) > cap:
+            del self.research_trail[:-cap]
+        return evt
 
     def add_user(self, text: str) -> Message:
         return self.add(Message(role="user", content=text))
@@ -88,6 +101,7 @@ class Conversation:
             "updated_at": self.updated_at,
             "messages": [m.to_dict() for m in self.messages],
             "workspace": self.workspace,
+            "research_trail": self.research_trail,
         }
 
     @classmethod
@@ -99,4 +113,5 @@ class Conversation:
             updated_at=d.get("updated_at", time.time()),
             messages=[Message.from_dict(m) for m in d.get("messages", [])],
             workspace=d.get("workspace") or {},
+            research_trail=d.get("research_trail") or [],
         )

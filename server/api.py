@@ -420,6 +420,10 @@ def _conversation_public(conv: Conversation) -> dict:
         # The TRUE active research target (workspace.company), so the UI can show a
         # persistent "Researching: X" tied to real state, not guessed from messages.
         "active_company": (conv.workspace or {}).get("company") or None,
+        # The persisted, canonical research trail (chat.research_trail): completed +
+        # failed steps with their evidence, so a restored thread shows the honest
+        # trail instead of replaying a fake animation.
+        "research_trail": list(getattr(conv, "research_trail", None) or []),
     }
 
 

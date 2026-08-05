@@ -17,6 +17,7 @@ import threading
 
 import telemetry
 from config.settings import CHAT_HISTORY_MAX_TURNS, CHAT_MAX_TOOL_HOPS
+from chat import research_trail as trail
 from chat import style, tools
 from chat.models import NOTICE, EMAIL, RESEARCH, TEXT
 from chat.prompts import build_system_prompt
@@ -203,6 +204,49 @@ def _emit_message(conversation, emit, message):
     return message
 
 
+# ── Research trail (canonical, persisted, evidence-bearing) ─────────────
+def _emit_trail(conversation, emit, evt):
+    """Persist a canonical trail event on the conversation AND stream it, so the
+    live trail and the restored one are the same records. Never raises."""
+    try:
+        conversation.add_trail_event(evt, cap=trail.MAX_TRAIL)
+        emit("trail", evt)
+    except Exception:  # noqa: BLE001 - the trail is observability; it must never
+        log.debug("trail emit failed", exc_info=True)   # break a real turn
+    return evt
+
+
+def _trail_target(conversation, call):
+    """The company a tool call is about: the thread's active company, else a
+    company/website named in the call input. Used to label the trail honestly and
+    to detect a target switch."""
+    ws = getattr(conversation, "workspace", {}) or {}
+    inp = call.get("input") or {}
+    return (ws.get("company") or inp.get("company") or inp.get("website")
+            or inp.get("company_name") or inp.get("domain") or None)
+
+
+def _trail_sources(conversation, result):
+    """Validated evidence sources for a COMPLETED tool step, drawn ONLY from data the
+    tool actually produced: the company's own pages it crawled (first-party), any
+    corroborating third-party links on the card, and the researched website. Every
+    URL is scheme-validated and the set is de-duplicated."""
+    out = []
+    ws = getattr(conversation, "workspace", {}) or {}
+    site = ws.get("company_url") or ws.get("website")
+    if site:
+        out.append(trail.source(ws.get("company") or trail.domain_of(site), site,
+                                official=True))
+    data = getattr(getattr(result, "message", None), "data", None) or {}
+    for page in (data.get("pages_crawled") or [])[:5]:
+        out.append(trail.source(None, page, official=True))   # the company's own site
+    for s in (data.get("sources") or [])[:6]:
+        if isinstance(s, dict):
+            out.append(trail.source(s.get("title") or s.get("domain"), s.get("url"),
+                                    official=bool(s.get("official"))))
+    return trail.dedupe_sources([s for s in out if s])[:8]
+
+
 def _emit_assistant(conversation, emit, text, kind=TEXT):
     from chat.models import Message
     return _emit_message(conversation, emit,
@@ -214,6 +258,7 @@ def _run_turn(conversation, user_text: str, store, user_id, emit):
     ``conversation`` and calls ``emit(event, data)`` at each streamable moment; the
     blocking path passes a no-op emitter, so behaviour is identical either way."""
     conversation._user_id = user_id
+    conversation._run_id = trail.new_run_id()   # groups this turn's trail events
     conversation.add_user(user_text)
 
     # Hydrate the per-user writing-style profile so the writer already matches
@@ -308,6 +353,14 @@ def _run_turn(conversation, user_text: str, store, user_id, emit):
             for call in resp["tool_uses"]:
                 log.info("tool call: %s %s", call["name"], call["input"])
                 _announce_tool(call["name"], emit)
+                # A canonical trail event for the tool STARTING — real execution,
+                # named by the tool that actually runs (never a fabricated provider).
+                run_id = getattr(conversation, "_run_id", None) or trail.new_run_id()
+                _label = _TOOL_LABEL.get(call["name"], "Working on that step")
+                _emit_trail(conversation, emit, trail.event(
+                    run_id=run_id, event_type=call["name"], label=_label,
+                    status=trail.RUNNING, target=_trail_target(conversation, call),
+                    provider=call["name"]))
                 # Tools that stream their own stages get a live progress sink; the rest
                 # already announced a single step above. Cleared after so a later tool
                 # never inherits a stale sink. ``kind`` separates WHAT is happening
@@ -324,6 +377,12 @@ def _run_turn(conversation, user_text: str, store, user_id, emit):
                 except Exception:  # noqa: BLE001
                     log.exception("tool %s failed", call["name"])
                     label = _TOOL_LABEL.get(call["name"], "that step")
+                    # A transparent, retryable FAILED trail event (not a silent stall).
+                    _emit_trail(conversation, emit, trail.event(
+                        run_id=run_id, event_type=call["name"],
+                        label=f"{_label} did not complete", status=trail.FAILED,
+                        target=_trail_target(conversation, call), provider=call["name"],
+                        detail="This step hit a problem. You can ask me to try it again."))
                     _emit_assistant(
                         conversation, emit,
                         f"I hit a problem while {label[0].lower() + label[1:]}. "
@@ -350,6 +409,13 @@ def _run_turn(conversation, user_text: str, store, user_id, emit):
                         produced_email = True
                 results.append({"type": "tool_result", "tool_use_id": call["id"],
                                 "content": result.summary})
+                # The tool COMPLETED — record it with the evidence it actually used,
+                # so a restored thread can show why the result is trustworthy.
+                _emit_trail(conversation, emit, trail.event(
+                    run_id=run_id, event_type=call["name"], label=_label,
+                    status=trail.COMPLETED, target=_trail_target(conversation, call),
+                    provider=call["name"],
+                    sources=_trail_sources(conversation, result)))
             messages.append({"role": "user", "content": results})
         else:
             # Ran out of tool hops without a final answer.

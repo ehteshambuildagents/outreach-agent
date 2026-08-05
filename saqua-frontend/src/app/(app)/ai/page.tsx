@@ -13,6 +13,7 @@ import { DraftCard } from "@/components/chat/draft-card";
 import { StatsCard } from "@/components/chat/stats-card";
 import { RepliesCard } from "@/components/chat/replies-card";
 import { CampaignsCard } from "@/components/chat/campaigns-card";
+import { ResearchTrail } from "@/components/chat/research-trail";
 import { ArtifactPanel } from "@/components/chat/artifact-panel";
 import { useStreamedText } from "@/components/chat/use-streamed-text";
 import { useChatNav } from "@/components/chat/chat-nav";
@@ -29,6 +30,7 @@ import {
   type StatsCardData,
   type RepliesCardData,
   type CampaignsCardData,
+  type ResearchTrailEvent,
 } from "@/lib/api";
 
 const EXAMPLES = [
@@ -62,6 +64,10 @@ export default function AIChatPage() {
   // The in-flight turn's live trace, streamed from the backend: `step` is WHAT it
   // is doing, `thought` is WHY (grounded in the run's real state, never canned).
   const [steps, setSteps] = useState<TraceLine[]>([]);
+  // The canonical, evidence-bearing research trail: the persisted trail on load,
+  // plus live events (deduped by event_id) as a turn streams. One view serves both
+  // so nothing is ever replayed as if it were happening again.
+  const [trail, setTrail] = useState<ResearchTrailEvent[]>([]);
   const [artifact, setArtifact] = useState<{ idx: number; data: EmailCardData } | null>(null);
   // The TRUE active research target, from the server (workspace.company). Shown as a
   // persistent "Researching: X" chip and updated the moment a turn changes it.
@@ -98,6 +104,7 @@ export default function AIChatPage() {
       setMessages([]);
       setArtifact(null);
       setSteps([]);
+      setTrail([]);
       setError("");
       setActiveCompany(null);
       return;
@@ -105,6 +112,7 @@ export default function AIChatPage() {
     let cancelled = false;
     setArtifact(null);
     setSteps([]);
+    setTrail([]);
     setError("");
     void api.conversation(activeId).then((res) => {
       if (cancelled) return;
@@ -118,6 +126,7 @@ export default function AIChatPage() {
       turnStartRef.current = loaded.length;
       setMessages(loaded);
       setActiveCompany(res.data.active_company ?? null);
+      setTrail(res.data.research_trail ?? []);   // restore the persisted trail
     });
     return () => {
       cancelled = true;
@@ -193,14 +202,25 @@ export default function AIChatPage() {
         onStep: append("step"),
         // The reasoning between stages ("Most of these are recruiters, dropping them").
         onThought: append("thought"),
+        // Canonical trail events (real tool start/finish/failure + evidence).
+        // Dedupe by event_id so an SSE reconnect never double-appends.
+        onTrail: (ev) =>
+          setTrail((prev) =>
+            prev.some((e) => e.event_id === ev.event_id)
+              ? prev.map((e) => (e.event_id === ev.event_id ? ev : e))
+              : [...prev, ev],
+          ),
         // Each assistant message (narration, a card, the reply) as it is produced.
         onMessage: (m) => setMessages((prev) => [...prev, m]),
         onError: (msg) => setError(reachError(msg)),
         onDone: () => setSteps([]),
-        // The final canonical state carries the true active target, so an explicit
-        // target change ("research Apple") updates the indicator the moment the
-        // turn lands, not from guessing at message content.
-        onFinal: (conv) => setActiveCompany(conv.active_company ?? null),
+        // The final canonical state carries the true active target AND the
+        // authoritative persisted trail, so we reconcile any event a reconnect
+        // might have missed.
+        onFinal: (conv) => {
+          setActiveCompany(conv.active_company ?? null);
+          if (conv.research_trail) setTrail(conv.research_trail);
+        },
       });
 
       setSending(false);
@@ -254,6 +274,10 @@ export default function AIChatPage() {
             )}
             {pending && <Bubble role="user">{pending}</Bubble>}
             {sending && <LiveSteps steps={steps} />}
+            {/* The canonical research trail — live during a turn, and restored on a
+                reloaded thread — with clickable evidence. Inline (never a modal), so
+                the composer stays visible on every screen size. */}
+            {trail.length > 0 && <ResearchTrail events={trail} live={sending} defaultOpen={sending} />}
             {error && (
               <Card className="border-[color:var(--danger-soft)]">
                 <div className="flex items-center gap-2.5 px-5 py-3 text-sm text-danger">

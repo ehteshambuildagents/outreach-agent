@@ -347,6 +347,34 @@ export interface ChatMessage {
   data: unknown | null;
 }
 
+/** A validated evidence source attached to a research-trail event or a card. */
+export interface TrailSource {
+  title: string;
+  url: string;
+  domain: string | null;
+  /** True for a first-party source (the company's own site), so the UI can
+   *  distinguish it from third-party corroboration. */
+  official: boolean;
+}
+
+/** One canonical research-trail event (backend chat/research_trail.py). Emitted
+ *  from REAL tool execution and persisted, so a restored thread shows the same
+ *  honest trail. Never a fabricated "AI thinking" line. */
+export interface ResearchTrailEvent {
+  event_id: string;
+  run_id: string;
+  event_type: string;
+  label: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  target?: string | null;
+  detail?: string | null;
+  /** The tool/provider that actually ran (never a claimed-but-unused one). */
+  provider?: string | null;
+  sources: TrailSource[];
+  confidence?: number | null;
+  ts: number;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -355,6 +383,9 @@ export interface Conversation {
   /** The true active research target (workspace.company), for the "Researching: X"
    *  indicator. Null when no company is on file yet. */
   active_company?: string | null;
+  /** The persisted, canonical research trail, so a restored thread still shows the
+   *  evidence-backed steps the agent ran. */
+  research_trail?: ResearchTrailEvent[];
 }
 
 /** Sidebar row from GET /api/conversations (list_summaries). */
@@ -628,6 +659,9 @@ export interface StreamHandlers {
   /** WHY it is doing it, or what it just decided. Derived server-side from the
    *  run's actual state (discovery/narration.py), never canned copy. */
   onThought?: (label: string) => void;
+  /** A canonical research-trail event (real tool start/finish/failure, with any
+   *  evidence links). Persisted server-side; dedupe by `event_id` on reconnect. */
+  onTrail?: (event: ResearchTrailEvent) => void;
   onMessage?: (message: ChatMessage) => void;
   onError?: (message: string) => void;
   onDone?: () => void;
@@ -704,6 +738,9 @@ export async function sendMessageStream(
         break;
       case "thought":
         handlers.onThought?.((data as { label?: string }).label || "");
+        break;
+      case "trail":
+        handlers.onTrail?.(data as ResearchTrailEvent);
         break;
       case "message":
         handlers.onMessage?.((data as { message: ChatMessage }).message);
