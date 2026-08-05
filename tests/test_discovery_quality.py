@@ -684,6 +684,123 @@ class PublicationAndDirectoryRejectionTests(unittest.TestCase):
             self.assertEqual(kind, aggregators.COMPANY, title)
 
 
+class MediaPlatformRejectionTests(unittest.TestCase):
+    """A live 'B2B fintech startups' run (2026-08-05) returned viestories.com as a
+    top 'prospect'. VIStories explicitly describes itself as a business media
+    platform publishing startup news, stories, articles, magazines and
+    newsletters — it covers the startup market, it is not a fintech buyer. A valid
+    domain is not proof of a company; a self-described publisher must drop."""
+
+    Q = DiscoveryQuery(raw="B2B fintech startups that raised a seed round",
+                       keywords=["fintech", "b2b"])
+
+    # The wording the prompt calls out, as it reads on VIStories' own About page.
+    ABOUT = ("VIStories is a business media platform publishing the latest "
+             "startup news, stories, articles, magazines and our newsletter for "
+             "founders and the startup ecosystem.")
+
+    def test_viestories_domain_is_classified_media(self):
+        self.assertEqual(aggregators.domain_kind("viestories.com"),
+                         aggregators.MEDIA)
+
+    def test_viestories_is_excluded_from_prospect_results(self):
+        kind, drop = sources.assess(
+            {"url": "https://viestories.com", "title": "VIStories",
+             "content": self.ABOUT}, self.Q)
+        self.assertEqual(kind, "", "viestories.com must be dropped")
+        self.assertTrue(drop)
+        # And it never survives into a built Prospect.
+        self.assertIsNone(sources._build(
+            {"url": "https://viestories.com", "title": "VIStories",
+             "content": self.ABOUT}, self.Q, "exa"))
+
+    def test_about_wording_is_treated_as_publication_evidence(self):
+        # The exact phrases the prompt names, judged as publication evidence even
+        # on a domain the curated set has never seen (that is how the list stays
+        # finite): "business media platform", plus publishing of startup news,
+        # articles, magazines and a newsletter.
+        self.assertTrue(aggregators.is_media_content("VIStories", self.ABOUT))
+        self.assertEqual(
+            aggregators.page_kind("https://unseen-media-xyz.com", "VIStories",
+                                  self.ABOUT),
+            aggregators.MEDIA)
+        # An unseen media platform is dropped by assess on content alone.
+        kind, drop = sources.assess(
+            {"url": "https://unseen-media-xyz.com", "title": "VIStories",
+             "content": self.ABOUT}, self.Q)
+        self.assertEqual(kind, "")
+        self.assertTrue(drop)
+
+    def test_each_named_publication_signal_counts(self):
+        # The wordings the prompt names are publication evidence in context. A
+        # strong identity phrase qualifies alone; ambiguous phrasing plus content
+        # types, or a spread of three-plus publisher content types, also qualifies.
+        for phrase in (
+                "a business media platform for founders",           # strong identity
+                "an online magazine for the startup ecosystem",     # strong identity
+                "a digital media platform publishing startup news and interviews",
+                "read our latest startup news, stories, articles, "
+                "magazines and newsletter"):                        # content spread
+            self.assertTrue(aggregators.is_media_content("", phrase), phrase)
+
+    def test_real_companies_are_not_mistaken_for_media_platforms(self):
+        # The false-positive guard the prompt demands: Postman, Timescale and
+        # Journey — and a social-media MARTECH product, the nearest miss — must
+        # stay COMPANY. None self-identify as a publisher.
+        safe = (
+            ("Postman", "Postman is the API platform for building and using APIs."),
+            ("Timescale", "Timescale is Postgres for time-series, events and analytics."),
+            ("Journey", "Journey is sales enablement software with pricing and customers."),
+            ("Buffer", "Buffer is a social media platform to schedule and publish posts."),
+            ("Contentful", "A content platform and CMS; publish content to any channel."),
+        )
+        for title, content in safe:
+            self.assertFalse(aggregators.is_media_content(title, content), title)
+            kind, drop = sources.assess(
+                {"url": f"https://{title.lower()}.com", "title": title,
+                 "content": content + " Pricing, product, customers, book a demo."},
+                self.Q)
+            self.assertEqual(kind, aggregators.COMPANY, title)
+
+
+class AcceptanceGateTests(unittest.TestCase):
+    """A valid domain alone is not a company (prompt requirement #4): a displayed
+    prospect needs at least two independent company signals. The bar catches the
+    empty/parked case without rejecting a real but tersely-described company."""
+
+    Q = DiscoveryQuery(raw="B2B fintech startups", keywords=["fintech"])
+
+    def test_bare_domain_with_one_signal_is_rejected(self):
+        # peopletech.cloud reached the list on its domain alone. With only its
+        # name matching the domain and no product / about / proof / funding /
+        # industry-match evidence, the final bar rejects it. ("compliance" clears
+        # the earlier company-likeness check without adding a strong signal.)
+        reason = sources._reject_reason(
+            {"url": "https://peopletech.cloud", "title": "PeopleTech",
+             "content": "b2b compliance."}, self.Q)
+        self.assertEqual(reason, "insufficient_company_signals")
+
+    def test_parked_or_empty_page_is_rejected(self):
+        reason = sources._reject_reason(
+            {"url": "https://parked-xyz.cloud", "title": "parked-xyz.cloud",
+             "content": "This domain is for sale."}, self.Q)
+        self.assertIsNotNone(reason)
+
+    def test_two_signals_is_enough_to_be_accepted(self):
+        # Product offering + pricing/customers proof: two independent signals.
+        self.assertIsNone(sources._reject_reason(
+            {"url": "https://acme.io", "title": "Acme",
+             "content": "Acme is a software platform. See our pricing and customers."},
+            self.Q))
+
+    def test_real_but_terse_company_still_clears_the_bar(self):
+        # The guard against over-rejection: a sparsely-described fintech company
+        # with a name that matches its domain plus a funding signal still passes.
+        self.assertIsNone(sources._reject_reason(
+            {"url": "https://acmefintech.com", "title": "Acme Fintech",
+             "content": "fintech, raised a seed round, hiring."}, self.Q))
+
+
 class QueryInterpretationTests(unittest.TestCase):
     """Turning the ASK into the right query for each source."""
 

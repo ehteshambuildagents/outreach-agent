@@ -162,6 +162,10 @@ _MEDIA = frozenset({
     # fintechfutures.com) are intentionally NOT hard-dropped here — they are
     # demoted via industry code so a genuine role posting still keeps them.
     "natlawreview.com", "thisweekinfintech.com", "siliconsnark.com",
+    # A "business media platform" publishing startup news, stories, articles,
+    # magazines and newsletters — surfaced as a false "prospect" on a live fintech
+    # search (2026-08-05). It covers the startup market; it does not operate in it.
+    "viestories.com",
 })
 
 _BY_KIND = (
@@ -236,6 +240,69 @@ _ARTICLE_TITLE_RE = re.compile(
     re.I,
 )
 
+# A page whose BODY text self-identifies as a media / publishing operation, so a
+# publisher on a domain the curated set has never seen (e.g. viestories.com) is
+# classified like the known ones. Judged from content, not the title, because a
+# media platform's home page states its identity in prose ("a business media
+# platform publishing startup news, stories, articles, magazines and
+# newsletters") rather than in a newsletter-style headline.
+#
+# Deliberately narrow, to protect real companies (Postman, Timescale, Journey):
+#   * a STRONG identity phrase — "business/startup/tech/online/… media
+#     platform/company/house/…", a news portal/outlet, an online magazine — is a
+#     publisher self-description on its face and qualifies alone. "social media
+#     platform" and "software platform" are NOT in it, so a martech product is safe;
+#   * a WEAK identity — "digital media platform" (ambiguous with ad-tech),
+#     "publishing platform" (ambiguous with a CMS) — qualifies only when backed by
+#     a spread of publisher content types (news/articles/magazines/newsletters);
+#   * with no identity phrase at all, only the unmistakable shape of a publisher —
+#     publishing THREE or more distinct content types — qualifies.
+_MEDIA_IDENTITY_STRONG_RE = re.compile(
+    r"\b(?:business|startup|tech|technology|online|independent|news)\s+"
+    r"media\s+(?:platform|company|house|outlet|brand|network|portal|publication|"
+    r"site|website)\b"
+    r"|\bnews\s+(?:portal|outlet|publication|magazine)\b"
+    r"|\bonline\s+(?:magazine|publication|newspaper)\b",
+    re.I)
+
+_MEDIA_IDENTITY_WEAK_RE = re.compile(
+    r"\bdigital\s+media\s+(?:platform|company|house|outlet|brand|network|portal)\b"
+    r"|\bmedia\s+and\s+publishing\b"
+    r"|\bpublishing\s+(?:platform|company|house|business)\b",
+    re.I)
+
+_PUBLISHING_ACTIVITY_RE = re.compile(r"\bpublish(?:es|ing|ed)?\b|\bpublication\b", re.I)
+
+# Distinct content-type nouns a publisher lists. "blog"/"posts"/"content" are
+# deliberately ABSENT: a normal SaaS site has those, so counting them would
+# manufacture false media out of a legitimate company's blog or CMS copy.
+_CONTENT_TYPE_RE = re.compile(
+    r"\b(news|stories|story|articles?|magazines?|newsletters?|"
+    r"editorials?|op-eds?|press\s+releases?|interviews?)\b", re.I)
+
+
+def is_media_content(title: str = "", content: str = "") -> bool:
+    """True when a page's OWN words identify it as a media / publishing operation.
+
+    Tiered so a strong self-description (VIStories' "business media platform")
+    qualifies alone, while ambiguous phrasing a real SaaS might use ("digital
+    media platform", "publishing platform") is admitted as media only when a
+    spread of publisher content types backs it up.
+    """
+    text = f"{title or ''}\n{content or ''}"
+    if _MEDIA_IDENTITY_STRONG_RE.search(text):
+        return True
+    content_types = {m.group(0).lower().rstrip("s")
+                     for m in _CONTENT_TYPE_RE.finditer(text)}
+    if _MEDIA_IDENTITY_WEAK_RE.search(text) and len(content_types) >= 2:
+        return True
+    # No identity phrase: only the unmistakable spread of a publisher — three or
+    # more DISTINCT content types (news + stories + articles + magazines …) — where
+    # a normal SaaS enumerates at most one or two. The publishing verb is a further
+    # hint but not required; the spread is the signal.
+    return len(content_types) >= 3
+
+
 # Paths that mark a listing/index page rather than a company page.
 _LISTING_PATHS = (
     "/jobs/", "/job/", "/careers/search", "/vacancies", "/openings",
@@ -305,6 +372,10 @@ def page_kind(url: str = "", title: str = "", content: str = "") -> str:
     # on the TITLE specifically so a body-copy mention can't misclassify a real site.
     t = (title or "").strip()
     if t and (_PUBLICATION_TITLE_RE.search(t) or _ARTICLE_TITLE_RE.search(t)):
+        return MEDIA
+    # Body-text self-identification as a publisher (see is_media_content): catches
+    # a media platform on an unlisted domain that a headline check would miss.
+    if is_media_content(title, content):
         return MEDIA
     if any(part in path for part in _LISTING_PATHS):
         return LIST_SITE if any(p in path for p in ("/best-", "/top-", "/compare/",
