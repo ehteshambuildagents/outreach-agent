@@ -178,6 +178,16 @@ def _store_for(user_id: str) -> ConversationStore:
     return ConversationStore(directory=str(Path(_STORE_BASE) / safe))
 
 
+def _demo_quota_subject(request: Request, user: str) -> str:
+    """The identity a demo turn is charged against. Conversations live under the
+    browser-bound ``demo_id`` (``user``), but the turn allowance is keyed on the
+    email tag carried in the signed token, so it can't be reset by clearing the
+    cookie. Falls back to ``user`` for legacy tokens with no tag."""
+    tok = (request.headers.get(demo_session.HEADER_NAME)
+           or request.cookies.get(demo_session.COOKIE_NAME))
+    return (demo_session.quota_subject(tok) if tok else None) or user
+
+
 # ── Security headers (applied to every response) ───────────────────────
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
@@ -584,7 +594,7 @@ def send_message(cid: str, body: SendMessage, request: Request,
     # Demo principals spend real API money per turn, so each turn passes the same
     # global budget ceiling as a pipeline run plus a per-session turn cap.
     if demo_session.is_demo_id(user):
-        allowed, message = demo_api.reserve_demo_turn(user)
+        allowed, message = demo_api.reserve_demo_turn(_demo_quota_subject(request, user))
         if not allowed:
             raise HTTPException(status_code=429, detail=message)
     store = _store_for(user)
@@ -627,7 +637,7 @@ def send_message_stream(cid: str, body: SendMessage, request: Request,
     ``step`` (a real stage), ``message`` (a transcript message), ``error``, ``done``.
     """
     if demo_session.is_demo_id(user):
-        allowed, message = demo_api.reserve_demo_turn(user)
+        allowed, message = demo_api.reserve_demo_turn(_demo_quota_subject(request, user))
         if not allowed:
             raise HTTPException(status_code=429, detail=message)
     store = _store_for(user)

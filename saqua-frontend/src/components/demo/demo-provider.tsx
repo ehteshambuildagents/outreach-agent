@@ -104,13 +104,14 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
   const turnsLeft = isDemo && turnsLimit > 0 ? Math.max(0, turnsLimit - turnsUsed) : null;
   void tick; // referenced so the interval re-render isn't optimised away
 
-  const endSession = async () => {
-    try {
-      await fetch("/api/demo/session", { method: "DELETE", cache: "no-store" });
-    } catch {
-      /* best-effort; the cookie also expires on its own */
-    }
+  // "Exit demo" navigates away but PRESERVES the persistent demo identity, so the
+  // same visitor returning in this browser restores their conversations and their
+  // remaining allowance. It deliberately does NOT call DELETE (that is the explicit
+  // "reset demo data" action, which clears the cookie but — because the quota is
+  // email-keyed server-side — still cannot hand out a fresh five-message allowance).
+  const endSession = (): Promise<void> => {
     window.location.href = "/";
+    return Promise.resolve();
   };
 
   return (

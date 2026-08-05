@@ -569,7 +569,15 @@ DEMO_LEDGER_USER = "__demo__"          # synthetic user_id the demo meters its s
 # session token (HMAC); with no secret set, a random per-process one is used —
 # fine for dev, and in prod it only means sessions die on restart.
 DEMO_SESSION_SECRET = os.getenv("DEMO_SESSION_SECRET", "")
-DEMO_SESSION_TTL_SECONDS = int(os.getenv("DEMO_SESSION_TTL_SECONDS", "3600"))
+# The demo identity is PERSISTENT (browser-bound cookie) so a returning visitor in
+# the same browser restores their conversations, and the email-keyed turn quota
+# lives exactly this long — long enough that clearing the cookie or re-entering
+# the demo can never earn a fresh five-message allowance within a normal trial. It
+# doubles as the cookie/token lifetime and the quota window; the banner shows no
+# countdown, so a long window has no UX cost. Default: 7 days. NOTE for prod: if a
+# short value (e.g. 3600) is pinned in the environment, RAISE it — a 1-hour window
+# lets the allowance reset after an hour of inactivity.
+DEMO_SESSION_TTL_SECONDS = int(os.getenv("DEMO_SESSION_TTL_SECONDS", str(7 * 86400)))
 DEMO_SESSION_TURNS = int(os.getenv("DEMO_SESSION_TURNS", "5"))   # agent turns / session
 
 # Minting a session is CHEAP (an HMAC + a waitlist row), unlike a pipeline run,

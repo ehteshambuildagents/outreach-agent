@@ -74,6 +74,44 @@ class TokenTests(unittest.TestCase):
         signed = payload + "." + demo_session._sign(payload)
         self.assertIsNone(demo_session.verify_token(signed))
 
+    def test_email_tag_roundtrips_in_token(self):
+        # The email tag is signed into the token and is what the quota is charged
+        # against — so it cannot be swapped without invalidating the signature.
+        did = demo_session.new_demo_id()
+        tag = demo_session.email_hmac("alice@gmail.com")
+        tok, _ = demo_session.mint_token(did, tag)
+        self.assertEqual(demo_session.verify_token(tok), did)
+        self.assertEqual(demo_session.token_email_hmac(tok), tag)
+        self.assertEqual(demo_session.quota_subject(tok), tag)
+
+    def test_email_hmac_is_deterministic_and_hides_the_address(self):
+        a = demo_session.email_hmac("alice@gmail.com")
+        self.assertEqual(a, demo_session.email_hmac("alice@gmail.com"))  # stable
+        self.assertNotEqual(a, demo_session.email_hmac("bob@gmail.com"))  # per-email
+        self.assertNotIn("alice", a)          # discloses nothing about the address
+        self.assertNotIn(".", a)              # can't corrupt the dotted grammar
+        self.assertEqual(len(a), 32)
+        self.assertEqual(demo_session.email_hmac(""), "")  # empty in, empty out
+
+    def test_tampered_email_tag_rejected(self):
+        # Flipping the tag (to charge another email's quota, or dodge one's own)
+        # breaks the signature, so the whole token is refused.
+        did = demo_session.new_demo_id()
+        tok, _ = demo_session.mint_token(did, demo_session.email_hmac("alice@gmail.com"))
+        demo_id, _tag, exp_s, sig = tok.split(".")
+        forged = f"{demo_id}.{demo_session.email_hmac('bob@gmail.com')}.{exp_s}.{sig}"
+        self.assertIsNone(demo_session.verify_token(forged))
+
+    def test_legacy_three_part_token_still_authenticates(self):
+        # A token minted before the email dimension existed must not log the
+        # visitor out; it verifies, and its quota falls back to the demo id.
+        did = demo_session.new_demo_id()
+        payload = f"{did}.{int(__import__('time').time()) + 3600}"
+        legacy = payload + "." + demo_session._sign(payload)
+        self.assertEqual(demo_session.verify_token(legacy), did)
+        self.assertIsNone(demo_session.token_email_hmac(legacy))
+        self.assertEqual(demo_session.quota_subject(legacy), did)
+
 
 class DemoDependencyTests(unittest.TestCase):
     """The demo-aware auth dependencies on the real routes."""
@@ -380,6 +418,201 @@ class DemoSessionEndpointTests(unittest.TestCase):
             for _ in range(4):
                 self.assertFalse(demo_api.reserve_demo_turn(did)[0])
             self.assertEqual(demo_api.demo_turns_used(did), 5)
+
+
+class DemoPersistenceTests(unittest.TestCase):
+    """The production regression this pins end-to-end: a returning demo visitor in
+    the SAME browser restores their identity, conversations and remaining
+    allowance, while the five-message quota can never be reset by exiting and
+    re-entering — and history is never exposed to someone who merely types the
+    same email in a different browser.
+
+    A fresh ``TestClient`` models one browser: httpx keeps a cookie jar, so the
+    signed session cookie round-trips exactly as it would for a real visitor.
+    """
+
+    def setUp(self):
+        from automation import redis
+        os.environ["WAITLIST_REQUIRE_SHARED_REDIS"] = "0"
+        redis.reset()
+        api.app.dependency_overrides.clear()
+        api._STORE_BASE = tempfile.mkdtemp()
+        api._BUCKETS.clear()
+        self._join = mock.patch("waitlist.join")
+        self._join.start()
+        # Keep the demo turn off the real spend ledger during these tests.
+        from server import demo_api
+        self._budget = mock.patch.object(demo_api, "_global_budget_reached",
+                                         return_value=False)
+        self._usage = mock.patch.object(demo_api.limits_store, "add_usage")
+        self._budget.start()
+        self._usage.start()
+
+    def tearDown(self):
+        self._join.stop()
+        self._budget.stop()
+        self._usage.stop()
+        api.app.dependency_overrides.clear()
+        os.environ.pop("WAITLIST_REQUIRE_SHARED_REDIS", None)
+
+    @staticmethod
+    def _browser():
+        return TestClient(api.app)               # its own cookie jar == one browser
+
+    @staticmethod
+    def _id_of(client):
+        return demo_session.verify_token(client.cookies.get(demo_session.COOKIE_NAME))
+
+    def _enter(self, client, email):
+        return client.post("/api/demo/session", json={"email": email})
+
+    _FAKE_TURN = {"stop_reason": "end_turn", "text": "ok", "tool_uses": [],
+                  "assistant_content": [{"type": "text", "text": "ok"}]}
+
+    def _send_one(self, client, cid):
+        with mock.patch("chat.agent.claude_client.call_with_tools",
+                        return_value=self._FAKE_TURN):
+            r = client.post(f"/api/conversations/{cid}/messages/stream",
+                            json={"text": "who should we target?"})
+            _ = r.text                            # drain the SSE body
+            return r
+
+    def test_first_entry_mints_a_fresh_identity(self):
+        c = self._browser()
+        r = self._enter(c, "alice@gmail.com")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["active"])
+        self.assertFalse(r.json()["restored"])
+        self.assertEqual(r.json()["turns_used"], 0)
+        self.assertTrue(demo_session.is_demo_id(self._id_of(c)))
+
+    def test_same_browser_reentry_restores_id_conversation_and_turns(self):
+        c = self._browser()
+        self._enter(c, "alice@gmail.com")
+        id1 = self._id_of(c)
+        cid = c.post("/api/conversations").json()["id"]
+        self._send_one(c, cid)                    # consume one turn, persist a thread
+
+        # "Exit demo" navigates away but keeps the cookie; a re-entry through the
+        # gate must REUSE the principal, not mint a new one.
+        r = self._enter(c, "alice@gmail.com")
+        self.assertTrue(r.json()["restored"])
+        self.assertEqual(self._id_of(c), id1)     # same principal
+        self.assertEqual(r.json()["turns_used"], 1)   # allowance NOT reset
+
+        listed = [x["id"] for x in c.get("/api/conversations").json()["conversations"]]
+        self.assertIn(cid, listed)                # the conversation is still there
+        conv = c.get(f"/api/conversations/{cid}").json()
+        self.assertIn("user", [m["role"] for m in conv["messages"]])
+
+    def test_refresh_and_new_tab_see_authoritative_turns(self):
+        c = self._browser()
+        self._enter(c, "alice@gmail.com")
+        cid = c.post("/api/conversations").json()["id"]
+        self._send_one(c, cid)
+        # A "refresh" is just another status read; a "new tab" is a second client
+        # carrying the same cookie. Both report the server's authoritative count.
+        self.assertEqual(c.get("/api/demo/session").json()["turns_used"], 1)
+        tab2 = self._browser()
+        tab2.cookies.set(demo_session.COOKIE_NAME,
+                         c.cookies.get(demo_session.COOKIE_NAME))
+        self.assertEqual(tab2.get("/api/demo/session").json()["turns_used"], 1)
+
+    def test_different_email_same_browser_gets_separate_identity_and_allowance(self):
+        c = self._browser()
+        self._enter(c, "alice@gmail.com")
+        id_a = self._id_of(c)
+        cid = c.post("/api/conversations").json()["id"]
+        self._send_one(c, cid)
+        # Switching email in the same browser is a different person: fresh identity,
+        # fresh allowance, and none of the first email's conversations.
+        r = self._enter(c, "bob@gmail.com")
+        self.assertFalse(r.json()["restored"])
+        self.assertNotEqual(self._id_of(c), id_a)
+        self.assertEqual(r.json()["turns_used"], 0)
+        listed = [x["id"] for x in c.get("/api/conversations").json()["conversations"]]
+        self.assertNotIn(cid, listed)
+
+    def test_five_then_429_cannot_be_reset_by_reentry(self):
+        from server import demo_api
+        import waitlist
+        tag = demo_session.email_hmac(waitlist.normalize("carol@gmail.com"))
+        with mock.patch.object(settings, "DEMO_SESSION_TURNS", 5):
+            for _ in range(5):
+                self.assertTrue(demo_api.reserve_demo_turn(tag)[0])
+            self.assertFalse(demo_api.reserve_demo_turn(tag)[0])   # 6th refused
+
+            # A BRAND-NEW browser (cleared cookies) re-entering with the same email
+            # inherits the exhausted allowance — it cannot be reset.
+            c = self._browser()
+            r = self._enter(c, "carol@gmail.com")
+            self.assertEqual(r.json()["turns_used"], 5)
+            cid = c.post("/api/conversations").json()["id"]
+            blocked = c.post(f"/api/conversations/{cid}/messages/stream",
+                             json={"text": "hi"})
+            self.assertEqual(blocked.status_code, 429)
+
+    def test_email_only_impersonation_reveals_no_history(self):
+        # Victim builds a conversation in their browser.
+        victim = self._browser()
+        self._enter(victim, "victim@gmail.com")
+        cid = victim.post("/api/conversations").json()["id"]
+        self._send_one(victim, cid)
+
+        # An attacker in a DIFFERENT browser types the same email. They get a fresh
+        # principal (not the victim's), so the victim's conversation is a 404 —
+        # history is never restored from an email alone.
+        attacker = self._browser()
+        r = self._enter(attacker, "victim@gmail.com")
+        self.assertFalse(r.json()["restored"])
+        self.assertNotEqual(self._id_of(attacker), self._id_of(victim))
+        self.assertEqual(attacker.get(f"/api/conversations/{cid}").status_code, 404)
+        # (The shared email-keyed allowance IS inherited — that is the anti-reset
+        # property, not a data leak.)
+        self.assertEqual(r.json()["turns_used"], 1)
+
+    def test_expired_cookie_mints_fresh_identity(self):
+        c = self._browser()
+        dead, _ = demo_session.mint_token(demo_session.new_demo_id(),
+                                          demo_session.email_hmac("x@gmail.com"),
+                                          ttl_seconds=-5)
+        c.cookies.set(demo_session.COOKIE_NAME, dead)
+        r = self._enter(c, "x@gmail.com")
+        self.assertTrue(r.json()["active"])
+        self.assertFalse(r.json()["restored"])   # a dead token is never adopted
+
+    def test_legacy_cookie_is_adopted_and_upgraded(self):
+        import time as _t
+        import waitlist
+        did = demo_session.new_demo_id()
+        payload = f"{did}.{int(_t.time()) + 3600}"
+        legacy = payload + "." + demo_session._sign(payload)
+        c = self._browser()
+        c.cookies.set(demo_session.COOKIE_NAME, legacy)
+        r = self._enter(c, "leg@gmail.com")
+        self.assertTrue(r.json()["restored"])     # same principal kept
+        # Read the re-issued token from the response (the jar holds both the
+        # pre-seeded legacy cookie and the new one, which would make .get ambiguous).
+        upgraded = r.cookies.get(demo_session.COOKIE_NAME)
+        self.assertEqual(demo_session.verify_token(upgraded), did)
+        self.assertEqual(demo_session.token_email_hmac(upgraded),
+                         demo_session.email_hmac(waitlist.normalize("leg@gmail.com")))
+
+    def test_reset_endpoint_clears_cookie_without_restoring_allowance(self):
+        from server import demo_api
+        import waitlist
+        c = self._browser()
+        self._enter(c, "dana@gmail.com")
+        tag = demo_session.email_hmac(waitlist.normalize("dana@gmail.com"))
+        with mock.patch.object(settings, "DEMO_SESSION_TURNS", 5):
+            for _ in range(5):
+                demo_api.reserve_demo_turn(tag)
+            # Explicit reset clears the cookie…
+            end = c.delete("/api/demo/session")
+            self.assertFalse(end.json()["active"])
+            # …but re-entering still sees the exhausted, email-keyed allowance.
+            r = self._enter(c, "dana@gmail.com")
+            self.assertEqual(r.json()["turns_used"], 5)
 
 
 class DemoToolPolicyTests(unittest.TestCase):

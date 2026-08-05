@@ -330,19 +330,42 @@ def register(app) -> None:
 
     @app.post("/api/demo/session")
     def demo_session_start(body: DemoRequest, request: Request):
-        """Mint a sandboxed demo session for an anonymous visitor: the same email
-        gate as a run but the CHEAP limit profile, then a signed short-lived
-        cookie that lets the real app pages render under a ``demo_*`` principal
-        (disjoint from real users)."""
+        """Mint (or RESTORE) a sandboxed demo session for a visitor: the same email
+        gate as a run but the CHEAP limit profile, then a signed persistent cookie
+        that lets the real app pages render under a ``demo_*`` principal (disjoint
+        from real users).
+
+        Persistence is the whole point of re-minting through the gate: if the
+        browser already presents a valid session for the SAME email, its
+        ``demo_id`` is REUSED, so the visitor's conversations restore instead of
+        vanishing behind a fresh principal. A different email in the same browser
+        (or any browser with no valid cookie) gets a fresh identity. Either way the
+        turn quota is keyed on the email tag, so the five-message allowance can
+        never be reset by exiting and re-entering."""
         admitted = _gate(body, request, _SESSION_LIMITS)
         if not isinstance(admitted, tuple):
             return admitted
         email, ip = admitted
-        demo_id = demo_session.new_demo_id()
-        token, exp = demo_session.mint_token(demo_id)
-        log.info("demo session start ip=%s email=%s id=%s", ip, email, demo_id)
+        tag = demo_session.email_hmac(email)
+
+        # Reuse the browser-bound principal when the presented cookie is valid AND
+        # belongs to this email (legacy tokens carry no email tag, so we adopt
+        # them). Otherwise mint a fresh, unguessable id.
+        tok = (request.headers.get(demo_session.HEADER_NAME)
+               or request.cookies.get(demo_session.COOKIE_NAME))
+        existing_id = demo_session.verify_token(tok) if tok else None
+        existing_tag = demo_session.token_email_hmac(tok) if tok else None
+        if existing_id and existing_tag in (None, tag):
+            demo_id, restored = existing_id, True
+        else:
+            demo_id, restored = demo_session.new_demo_id(), False
+
+        token, exp = demo_session.mint_token(demo_id, tag)
+        log.info("demo session %s ip=%s id=%s", "restore" if restored else "start",
+                 ip, demo_id)   # email is never logged (only ip/id)
         resp = JSONResponse({"active": True, "expires_at": exp,
-                             "turns_used": 0,
+                             "restored": restored,
+                             "turns_used": demo_turns_used(tag),
                              "turns_limit": settings.DEMO_SESSION_TURNS})
         _set_session_cookies(resp, request, token, exp)
         return resp
@@ -350,21 +373,26 @@ def register(app) -> None:
     @app.get("/api/demo/session")
     def demo_session_status(request: Request):
         """Report the current demo session (or ``{active: false}``). Unauthenticated
-        and cheap: a real logged-in user simply has no demo cookie."""
+        and cheap: a real logged-in user simply has no demo cookie. ``turns_used``
+        is the AUTHORITATIVE, email-keyed count, so a refresh or a new tab always
+        sees the true remaining allowance."""
         tok = (request.headers.get(demo_session.HEADER_NAME)
                or request.cookies.get(demo_session.COOKIE_NAME))
-        demo_id = demo_session.verify_token(tok) if tok else None
-        if not demo_id:
+        subject = demo_session.quota_subject(tok) if tok else None
+        if not subject:
             return JSONResponse({"active": False})
         return JSONResponse({"active": True,
                              "expires_at": demo_session.token_expiry(tok),
-                             "turns_used": demo_turns_used(demo_id),
+                             "turns_used": demo_turns_used(subject),
                              "turns_limit": settings.DEMO_SESSION_TURNS})
 
     @app.delete("/api/demo/session")
     def demo_session_end(request: Request):
-        """End the demo session by clearing its cookies (the token is stateless, so
-        there is nothing server-side to revoke; expiry does the rest)."""
+        """Reset demo data by clearing the session cookies. This is the explicit
+        "reset" action, NOT the "Exit demo" navigation (which now preserves the
+        cookie). Clearing the cookie deliberately does NOT restore the allowance:
+        the turn quota is keyed on the email tag and survives, so a reset cannot be
+        abused to earn five more messages."""
         resp = JSONResponse({"active": False})
         _clear_session_cookies(resp)
         return resp
