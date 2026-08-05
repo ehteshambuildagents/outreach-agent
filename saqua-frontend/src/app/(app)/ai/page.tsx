@@ -129,6 +129,15 @@ export default function AIChatPage() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, pending, sending]);
 
+  // Broadcast "an agent turn is running" so app-wide surfaces (the upgrade prompt)
+  // never interrupt an active stream. Cleared when the turn settles.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("saqua:busy", { detail: sending }));
+    return () => {
+      window.dispatchEvent(new CustomEvent("saqua:busy", { detail: false }));
+    };
+  }, [sending]);
+
   // A demo visitor who has spent every message can't send another — the server
   // would 429 anyway, so stop it here and point at the waitlist instead.
   const demoExhausted = isDemo && turnsLeft === 0;

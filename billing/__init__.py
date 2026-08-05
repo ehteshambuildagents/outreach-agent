@@ -39,6 +39,44 @@ PLAN_ORDER = ("free", "pro", "max", "enterprise")
 # checkouts, and the public pricing copy all use starter/growth.
 PLAN_ALIASES = {"starter": "pro", "growth": "max"}
 
+# Human plan names for the UI (the canonical ids are terse). The public /pricing
+# page still MARKETS pro/max as Starter/Growth, but the in-app upgrade surfaces use
+# the canonical Pro/Max names the brief asks for.
+PLAN_DISPLAY_NAMES = {"free": "Free", "pro": "Pro", "max": "Max",
+                      "enterprise": "Enterprise"}
+
+# Canonical PRICE catalog — the single source the upgrade UI reads so no price is
+# ever hardcoded in a component. Numbers mirror the /pricing page ($65 Pro / $100
+# Max monthly); yearly = 10x monthly (two months free). All env-overridable so a
+# price change is a config edit, not a code change. Currency is display-only here;
+# Lemon Squeezy is the source of truth for what is actually charged.
+BILLING_CURRENCY = os.getenv("BILLING_CURRENCY", "USD")
+_PLAN_PRICES = {
+    "pro": {"monthly": int(os.getenv("PLAN_PRICE_PRO_MONTHLY", "65")),
+            "yearly": int(os.getenv("PLAN_PRICE_PRO_YEARLY", "650"))},
+    "max": {"monthly": int(os.getenv("PLAN_PRICE_MAX_MONTHLY", "100")),
+            "yearly": int(os.getenv("PLAN_PRICE_MAX_YEARLY", "1000"))},
+}
+
+# The purchasable, self-serve plans in upgrade order (Free/Enterprise excluded:
+# Free needs no purchase, Enterprise is sales-assisted).
+CHECKOUT_PLANS = ("pro", "max")
+
+
+def plan_catalog(interval: str = "monthly") -> list[dict]:
+    """The purchasable plans with display name, price, interval and allowance — the
+    canonical data an upgrade card/popup renders, so prices live here, not in the
+    frontend. ``interval`` selects the monthly/yearly price."""
+    interval = "yearly" if (interval or "").lower() == "yearly" else "monthly"
+    return [{
+        "plan": pid,
+        "name": PLAN_DISPLAY_NAMES[pid],
+        "price": _PLAN_PRICES[pid][interval],
+        "currency": BILLING_CURRENCY,
+        "interval": interval,
+        "prospect_limit": PLAN_LIMITS[pid],
+    } for pid in CHECKOUT_PLANS]
+
 
 def normalize_plan(plan) -> str:
     p = (plan or "").strip().lower()
@@ -68,8 +106,12 @@ def entitlements(user_id: str, prospects_used: int) -> dict:
     plan = normalize_plan(sub["plan"]) if sub else "free"
     limit = plan_limit(plan)
     used = int(prospects_used or 0)
+    # The plan to pitch on an upgrade surface: the next paid tier up (free -> pro,
+    # pro -> max). None once there's nothing self-serve left to sell (max/enterprise).
+    nxt = {"free": "pro", "pro": "max"}.get(plan)
     return {
         "plan": plan,
+        "plan_name": PLAN_DISPLAY_NAMES.get(plan, plan.title()),
         "prospect_limit": limit,
         "prospects_used": used,
         # None communicates "unlimited" to the client (limit 0), matching the
@@ -77,4 +119,10 @@ def entitlements(user_id: str, prospects_used: int) -> dict:
         "prospects_remaining": (max(0, limit - used) if limit > 0 else None),
         "status": (sub["status"] if sub else "none"),
         "current_period_end": (sub.get("current_period_end") if sub else None),
+        # Whether this user is on a paid tier (upgrade surfaces hide for them).
+        "is_paid": plan != "free",
+        # Canonical purchasable plans + the recommended upgrade, so the upgrade UI
+        # renders name/price/limit without hardcoding anything.
+        "catalog": plan_catalog(),
+        "recommended_upgrade": nxt,
     }

@@ -157,9 +157,21 @@ export interface CompanyProfile {
   tone: string;
 }
 
+/** One purchasable plan in the canonical catalog (billing.plan_catalog). */
+export interface PlanCatalogEntry {
+  plan: string;
+  name: string;
+  price: number;
+  currency: string;
+  interval: "monthly" | "yearly";
+  prospect_limit: number;
+}
+
 /** The user's real plan + usage (GET /api/billing). */
 export interface Billing {
   plan: string;
+  /** Human name for the current plan ("Free" | "Pro" | "Max" | "Enterprise"). */
+  plan_name?: string;
   prospect_limit: number;
   prospects_used: number;
   prospects_remaining: number | null;
@@ -167,6 +179,16 @@ export interface Billing {
   status?: string;
   /** Unix seconds the current paid period ends, when on a paid plan. */
   current_period_end?: number | null;
+  /** True on any paid tier — upgrade surfaces hide for these users. */
+  is_paid?: boolean;
+  /** Canonical purchasable plans (name/price/limit) — the ONLY source the upgrade
+   *  UI reads, so no price is ever hardcoded in a component. */
+  catalog?: PlanCatalogEntry[];
+  /** The next paid tier to pitch ("pro" | "max"), or null when nothing is left. */
+  recommended_upgrade?: string | null;
+  /** Whether a real Lemon Squeezy checkout can be started (false for demo visitors,
+   *  who have no account and must be routed to /pricing instead). */
+  checkout_enabled?: boolean;
 }
 
 export interface CampaignSummary {

@@ -132,6 +132,35 @@ class PlanModelTests(unittest.TestCase):
         self.assertEqual(ent["status"], "active")
         self.assertEqual(ent["current_period_end"], 999.0)
 
+    def test_plan_catalog_is_the_canonical_price_source(self):
+        # The upgrade UI reads price/name/limit from here — never hardcoded.
+        cat = billing.plan_catalog()
+        by_plan = {p["plan"]: p for p in cat}
+        self.assertEqual({"pro", "max"}, set(by_plan))
+        self.assertEqual(by_plan["pro"]["name"], "Pro")
+        self.assertEqual(by_plan["pro"]["price"], 65)
+        self.assertEqual(by_plan["pro"]["interval"], "monthly")
+        self.assertEqual(by_plan["pro"]["prospect_limit"], 50)
+        self.assertEqual(by_plan["max"]["price"], 100)
+        # Yearly is the two-months-free price.
+        self.assertEqual(
+            {p["plan"]: p["price"] for p in billing.plan_catalog("yearly")},
+            {"pro": 650, "max": 1000})
+
+    def test_entitlements_carry_upgrade_fields(self):
+        # Free user: not paid, pitched Pro, catalog present.
+        free = billing.entitlements("u_free", prospects_used=1)
+        self.assertFalse(free["is_paid"])
+        self.assertEqual(free["recommended_upgrade"], "pro")
+        self.assertEqual(free["plan_name"], "Free")
+        self.assertTrue(free["catalog"])
+        # Pro user: paid, pitched Max.
+        bstore.upsert_subscription("u_pro", "pro", "active",
+                                   provider_subscription_id="sub_p")
+        pro = billing.entitlements("u_pro", prospects_used=0)
+        self.assertTrue(pro["is_paid"])
+        self.assertEqual(pro["recommended_upgrade"], "max")
+
 
 # ── Env-var name mapping (regression: Railway uses LEMON_SQUEEZY_*) ──────
 class EnvNameMappingTests(unittest.TestCase):
@@ -450,6 +479,20 @@ class BillingApiTests(unittest.TestCase):
         self.assertEqual(body["plan"], "max")
         self.assertEqual(body["prospect_limit"], 100)
         self.assertEqual(body["status"], "active")
+
+    def test_get_billing_reports_checkout_enabled_for_member(self):
+        # LS is configured and the caller is a member, so a real checkout is on.
+        body = self.client.get("/api/billing").json()
+        self.assertTrue(body["checkout_enabled"])
+        self.assertIn("catalog", body)
+
+    def test_get_billing_disables_checkout_for_demo_visitor(self):
+        # A demo visitor can never transact: the upgrade UI must route them to
+        # /pricing instead of a checkout that would 401.
+        self.api.app.dependency_overrides[self.api.require_member_or_demo] = \
+            lambda: "demo_" + "a" * 32
+        body = self.client.get("/api/billing").json()
+        self.assertFalse(body["checkout_enabled"])
 
     def test_checkout_returns_url(self):
         import server.billing_api as bapi

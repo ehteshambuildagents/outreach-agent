@@ -33,6 +33,7 @@ from billing import store as billing_store
 from billing import lemonsqueezy_client as ls_client
 from billing import webhook
 from config import settings
+from server import demo_session
 
 log = logging.getLogger("saqua.billing_api")
 
@@ -77,7 +78,13 @@ def register(app, *, rl_read=None, rl_write=None, store_for=None,
                     user: str = Depends(member_or_demo)):
         usage = store_for(user).load_usage()
         used = len(usage.get("prospects") or [])
-        return billing.entitlements(user, used)
+        ent = billing.entitlements(user, used)
+        # Whether a real Lemon Squeezy checkout can be started. A demo visitor can
+        # never transact (no account), so the upgrade UI routes them to /pricing
+        # instead of a dead checkout button.
+        ent["checkout_enabled"] = bool(ls_client.enabled()
+                                       and not demo_session.is_demo_id(user))
+        return ent
 
     # ── Start a Checkout (members only; a demo visitor cannot pay) ─────
     @app.post("/api/billing/checkout")
