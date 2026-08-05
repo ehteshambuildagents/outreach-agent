@@ -351,11 +351,27 @@ FREE_PROSPECT_LIMIT = int(os.getenv("FREE_PROSPECT_LIMIT", "3"))
 # unsuffixed name — so an existing single-set deployment keeps working unchanged.
 # The mode is also surfaced (backend-only) so a live deploy can be verified to not
 # be pointing at Test-mode ids.
-LEMONSQUEEZY_MODE = (os.getenv("LEMON_SQUEEZY_MODE")
-                     or os.getenv("LEMONSQUEEZY_MODE") or "live").strip().lower()
-if LEMONSQUEEZY_MODE not in ("live", "test"):
-    LEMONSQUEEZY_MODE = "live"
-_LS_MODE_SUFFIX = "_LIVE" if LEMONSQUEEZY_MODE == "live" else "_TEST"
+# The mode MUST be explicit in production. A blank or invalid value there is left
+# UNRESOLVED ("") so checkout fails closed — we never silently fall back to Live and
+# transact against real money on a misconfiguration. Off production, an *unset* mode
+# safely defaults to Test, so local/dev/tests can never mint a Live checkout by
+# accident; an *invalid* value fails closed everywhere (a typo must not silently pick
+# a mode). See billing_config_error() for the fail-closed checks the checkout uses.
+_LS_MODE_RAW = (os.getenv("LEMON_SQUEEZY_MODE")
+                or os.getenv("LEMONSQUEEZY_MODE") or "").strip().lower()
+if _LS_MODE_RAW in ("live", "test"):
+    LEMONSQUEEZY_MODE = _LS_MODE_RAW
+elif _LS_MODE_RAW == "" and not is_production():
+    LEMONSQUEEZY_MODE = "test"   # unset off production -> safe Test default
+else:
+    LEMONSQUEEZY_MODE = ""       # unset in prod, OR any invalid value -> fail closed
+_LS_MODE_SUFFIX = {"live": "_LIVE", "test": "_TEST"}.get(LEMONSQUEEZY_MODE, "")
+
+
+def billing_mode_resolved() -> bool:
+    """True only when the mode is an explicit, valid 'test' or 'live'. A missing or
+    invalid mode is NOT resolved — checkout must fail closed rather than guess."""
+    return LEMONSQUEEZY_MODE in ("live", "test")
 
 
 def _ls_env(*names: str, default: str = "") -> str:
@@ -437,8 +453,36 @@ def variant_to_plan(variant_id) -> str:
 
 
 def lemonsqueezy_enabled() -> bool:
-    """True when LS can transact (API key + store id both configured)."""
-    return bool(LEMONSQUEEZY_API_KEY and LEMONSQUEEZY_STORE_ID)
+    """True when LS can transact: a RESOLVED Test/Live mode AND both credentials.
+
+    A missing or invalid mode is not enabled — we never fall back to Live on a
+    misconfiguration. Off production an unset mode resolves to Test, so a correctly
+    credentialed dev/test environment stays enabled; a production deploy with no
+    explicit mode is disabled here and its checkout fails closed."""
+    return bool(billing_mode_resolved() and LEMONSQUEEZY_API_KEY and LEMONSQUEEZY_STORE_ID)
+
+
+def billing_config_error(plan: str = "", interval: str = "monthly", *,
+                         require_webhook: bool = False) -> str:
+    """A human, NON-SECRET reason billing cannot transact for this request, or '' when
+    the configuration is complete and unambiguous. Fails CLOSED: an unresolved/invalid
+    mode, missing credentials, a missing webhook secret (when required), or a plan with
+    no configured variant each return an error rather than letting checkout proceed
+    against the wrong — or Live — store. Never includes any secret value."""
+    if not billing_mode_resolved():
+        # The critical production guard: a blank/invalid mode never silently picks Live.
+        return ("Billing configuration is unavailable: the Lemon Squeezy mode is not "
+                "explicitly set to 'test' or 'live'.")
+    if not LEMONSQUEEZY_API_KEY or not LEMONSQUEEZY_STORE_ID:
+        return ("Billing configuration is unavailable: the Lemon Squeezy API key or "
+                "store id is not configured for the selected mode.")
+    if require_webhook and not LEMONSQUEEZY_WEBHOOK_SECRET:
+        return ("Billing configuration is unavailable: the Lemon Squeezy webhook "
+                "secret is not configured.")
+    if plan and not lemonsqueezy_variant_id(plan, interval):
+        return (f"The {plan.title()} plan isn't purchasable right now: no Lemon Squeezy "
+                "variant is configured for the selected mode.")
+    return ""
 
 
 # Where Lemon Squeezy Checkout returns the browser. The frontend origin owns these

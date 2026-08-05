@@ -188,7 +188,10 @@ class EnvNameMappingTests(unittest.TestCase):
              "LEMON_SQUEEZY_WEBHOOK_SECRET", "LEMONSQUEEZY_API_KEY",
              "LEMONSQUEEZY_STORE_ID", "LEMONSQUEEZY_WEBHOOK_SECRET",
              "LEMON_SQUEEZY_MODE", "LEMONSQUEEZY_MODE",
-             "LEMON_SQUEEZY_API_KEY_LIVE", "LEMON_SQUEEZY_API_KEY_TEST"]
+             "LEMON_SQUEEZY_API_KEY_LIVE", "LEMON_SQUEEZY_API_KEY_TEST",
+             # Deployment-environment vars: cleared so each snapshot resolves the
+             # billing mode hermetically (production vs. not is part of the policy).
+             "RAILWAY_ENVIRONMENT", "ENVIRONMENT", "APP_ENV"]
 
     def _snapshot_with(self, env):
         """Reload config.settings under ``env`` and return a snapshot of the
@@ -204,7 +207,10 @@ class EnvNameMappingTests(unittest.TestCase):
                     "store_id": s.LEMONSQUEEZY_STORE_ID,
                     "secret": s.LEMONSQUEEZY_WEBHOOK_SECRET,
                     "mode": s.LEMONSQUEEZY_MODE,
-                    "enabled": s.lemonsqueezy_enabled()}
+                    "enabled": s.lemonsqueezy_enabled(),
+                    "mode_resolved": s.billing_mode_resolved(),
+                    "config_error": s.billing_config_error(),
+                    "config_error_pro": s.billing_config_error("pro", "monthly")}
         finally:
             for k in self._KEYS:
                 os.environ.pop(k, None)
@@ -252,14 +258,76 @@ class EnvNameMappingTests(unittest.TestCase):
         self.assertEqual(snap["mode"], "live")
         self.assertEqual(snap["api_key"], "ls_key_live")
 
-    def test_default_mode_is_live_and_falls_back_to_plain_names(self):
-        # No mode set, only plain names: still works (backward compatible), mode live.
+    def test_unset_mode_off_production_defaults_to_test_not_live(self):
+        # No mode set, only plain names, NOT production: resolves to Test (safe),
+        # never Live. Credentials still read from the plain names (backward compat).
         snap = self._snapshot_with({"LEMON_SQUEEZY_API_KEY": "ls_plain",
                                     "LEMON_SQUEEZY_STORE_ID": "1",
                                     "LEMON_SQUEEZY_WEBHOOK_SECRET": "whsec"})
-        self.assertEqual(snap["mode"], "live")
+        self.assertEqual(snap["mode"], "test")   # was "live" — unsafe silent fallback
         self.assertEqual(snap["api_key"], "ls_plain")
         self.assertTrue(snap["enabled"])
+
+
+# ── Mode safety: fail closed on an ambiguous Lemon Squeezy mode ──────────
+class BillingModeSafetyTests(EnvNameMappingTests):
+    """The mode must be EXPLICIT in production; a missing/invalid mode must never
+    silently select Live. Off production an unset mode safely defaults to Test, and
+    an invalid mode fails closed everywhere. Reuses EnvNameMappingTests' hermetic
+    snapshot (which now also clears the deployment-environment vars)."""
+
+    _CREDS = {"LEMON_SQUEEZY_API_KEY": "k", "LEMON_SQUEEZY_STORE_ID": "7",
+              "LEMON_SQUEEZY_WEBHOOK_SECRET": "whsec"}
+
+    def test_production_missing_mode_blocks_checkout(self):
+        snap = self._snapshot_with({**self._CREDS, "ENVIRONMENT": "production"})
+        self.assertEqual(snap["mode"], "")            # unresolved, NOT "live"
+        self.assertFalse(snap["mode_resolved"])
+        self.assertFalse(snap["enabled"])
+        self.assertIn("mode is not explicitly set", snap["config_error"])
+
+    def test_production_invalid_mode_blocks_checkout(self):
+        snap = self._snapshot_with({**self._CREDS, "ENVIRONMENT": "production",
+                                    "LEMON_SQUEEZY_MODE": "prod"})
+        self.assertEqual(snap["mode"], "")
+        self.assertFalse(snap["enabled"])
+        self.assertTrue(snap["config_error"])
+
+    def test_production_explicit_live_is_enabled(self):
+        snap = self._snapshot_with({**self._CREDS, "ENVIRONMENT": "production",
+                                    "LEMON_SQUEEZY_MODE": "live"})
+        self.assertEqual(snap["mode"], "live")
+        self.assertTrue(snap["enabled"])
+        self.assertEqual(snap["config_error"], "")    # mode+creds complete
+
+    def test_non_production_missing_mode_defaults_to_test(self):
+        snap = self._snapshot_with({**self._CREDS})
+        self.assertEqual(snap["mode"], "test")
+        self.assertTrue(snap["enabled"])
+
+    def test_invalid_mode_fails_closed_off_production_too(self):
+        snap = self._snapshot_with({**self._CREDS, "LEMON_SQUEEZY_MODE": "bogus"})
+        self.assertEqual(snap["mode"], "")
+        self.assertFalse(snap["enabled"])
+
+    def test_explicit_test_mode_is_enabled(self):
+        snap = self._snapshot_with({**self._CREDS, "LEMON_SQUEEZY_MODE": "test"})
+        self.assertEqual(snap["mode"], "test")
+        self.assertTrue(snap["enabled"])
+
+    def test_incomplete_credentials_block_even_with_valid_mode(self):
+        snap = self._snapshot_with({"LEMON_SQUEEZY_MODE": "live",
+                                    "ENVIRONMENT": "production"})
+        self.assertEqual(snap["mode"], "live")
+        self.assertFalse(snap["enabled"])             # no api key / store id
+        self.assertIn("API key or", snap["config_error"])
+
+    def test_missing_variant_reported_for_plan(self):
+        # Mode + creds are fine, but no variant is configured for the plan.
+        snap = self._snapshot_with({**self._CREDS, "LEMON_SQUEEZY_MODE": "live",
+                                    "ENVIRONMENT": "production"})
+        self.assertEqual(snap["config_error"], "")            # base config OK
+        self.assertTrue(snap["config_error_pro"])             # plan not purchasable
 
 
 # ── Webhook signature verification (LS: raw-body HMAC, hex, no timestamp) ─

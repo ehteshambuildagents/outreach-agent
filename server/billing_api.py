@@ -90,10 +90,13 @@ def register(app, *, rl_read=None, rl_write=None, store_for=None,
     @app.post("/api/billing/checkout")
     def start_checkout(body: CheckoutRequest, request: Request, _=Depends(_write),
                        user: str = Depends(member)):
-        if not ls_client.enabled():
-            raise HTTPException(
-                status_code=503,
-                detail="Billing isn't available yet. Please check back soon.")
+        # Fail CLOSED on any ambiguous/incomplete billing configuration (an
+        # unresolved or invalid mode, or missing credentials). We NEVER silently
+        # transact against Live on a misconfiguration; a clear, non-secret config
+        # error is returned instead. (Read-only /api/billing still works below.)
+        config_error = settings.billing_config_error()
+        if config_error:
+            raise HTTPException(status_code=503, detail=config_error)
         # Duplicate-subscription guard. Lemon Squeezy does NOT swap plans on a new
         # checkout — it creates a SECOND subscription and bills both. So an
         # already-subscribed user is never allowed to start another checkout; plan
